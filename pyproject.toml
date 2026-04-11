@@ -1,0 +1,21 @@
+[project]
+name = "katz"
+version = "0.1.0"
+description = "Version-aware ledger for paper review artifacts"
+readme = "SPEC.md"
+requires-python = ">=3.11"
+dependencies = [
+  "typer>=0.23",
+  "pyyaml>=6.0",
+]
+
+[project.scripts]
+katz = "katz.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
