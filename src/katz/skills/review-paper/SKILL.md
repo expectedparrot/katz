@@ -26,7 +26,7 @@ Then follow the typical workflow:
 3. `katz guide skill configure-spotters` — choose what to look for
 4. `katz guide skill edsl-find-issues` — find issues in parallel (3 models × N spotters × M sections)
 5. `katz guide skill investigate-issues` — verify flagged issues (expect ~5–10% confirmation rate)
-6. Generate report and optionally file GitHub issues
+6. (Optional) Generate HTML report and/or file a GitHub issue
 
 At each step, read the skill instructions and follow them. Use `katz guide script <path>` to inspect any scripts before running them.
 
@@ -43,9 +43,9 @@ A typical review of a 30-page paper with 14 spotters takes:
 | Report + GitHub issue | 1–2 min |
 | **Total** | **~15–30 min** |
 
-## Generating the HTML report
+## (Optional) Generating the HTML report
 
-After investigation, generate an HTML report:
+After investigation, you can generate an HTML report:
 
 ```bash
 python <katz-skills-path>/find-issues/scripts/generate_review_report.py
@@ -57,9 +57,9 @@ This writes `.katz/review.html`. Copy it to the repo root if desired:
 cp .katz/review.html REVIEW.html
 ```
 
-## Creating a GitHub issue
+## (Optional) Creating a GitHub issue
 
-After the review, create a single GitHub issue summarizing all confirmed issues. Use `gh issue create` with a markdown body that includes:
+After the review, you can create a single GitHub issue summarizing all confirmed issues. Use `gh issue create` with a markdown body that includes:
 
 1. **Pipeline summary** — how many calls, candidates, confirmed/rejected/uncertain
 2. **Confirmed issues grouped by category** — e.g., "Identification & Design", "Statistical Interpretation", "Methodology", "Presentation"

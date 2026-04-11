@@ -34,7 +34,7 @@ Run `katz issue list` with appropriate filters to get the set of issues. If no a
 
 ### 2. Read the full manuscript first
 
-Before investigating individual issues, read the **entire** canonical manuscript at `.katz/versions/<commit>/paper/manuscript.md`. Also locate the LaTeX source (look for `.tex` files in `writeup/`). Having the full paper in context is essential — many flagged issues are resolved by content in other sections.
+Before investigating individual issues, read the **entire** canonical manuscript at `.katz/versions/<commit>/paper/manuscript.md`. Also locate the LaTeX source (look for the main `.tex` file — it preserves macros, cross-references, and footnotes that PDF conversion loses). Having the full paper in context is essential — many flagged issues are resolved by content in other sections.
 
 ### 3. Batch investigation (recommended for large sets)
 
