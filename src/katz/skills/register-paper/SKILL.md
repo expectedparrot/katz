@@ -18,7 +18,6 @@ Converts the paper PDF to canonical markdown using `paper2md` and registers the 
 ## Prerequisites
 
 - The repo must have a `.katz` directory (run `katz init` if not).
-- The working tree must be clean and committed (the registration is pinned to HEAD).
 - `paper2md` and `katz` must be on PATH.
 
 ## Workflow
@@ -26,39 +25,49 @@ Converts the paper PDF to canonical markdown using `paper2md` and registers the 
 ### 1. Validate preconditions
 
 1. Confirm `.katz/` exists in the repo root. If not, run `katz init`.
-2. Confirm there are no uncommitted changes by running `git status --porcelain`. If there are changes, stop and tell the user they need to commit first — `katz paper register` pins to the current HEAD commit.
+2. A clean working tree is recommended but not required — `katz paper register` pins to the current HEAD commit regardless.
 
-### 2. Convert PDF to markdown
+### 2. Find the paper PDF
 
-1. Run `paper2md` on the paper PDF:
+Look for the manuscript PDF in the repo. Common locations:
+
+- `writeup/<name>.pdf`
+- `paper/<name>.pdf`
+- Root directory
+
+Use `find . -name "*.pdf" -not -path "./.katz/*"` or Glob to locate it.
+
+### 3. Convert PDF to markdown
+
+Run `paper2md` on the paper PDF. Use the PDF stem for the output directory:
 
 ```bash
-paper2md writeup/job_prefs.pdf --output writeup/job_prefs_md
+paper2md writeup/paper.pdf --output writeup/paper_md
 ```
 
-2. The output directory `writeup/job_prefs_md/` will contain `paper.md` and extracted figure PNGs.
+The output directory will contain `paper.md` and extracted figure PNGs.
 
-### 3. Register with katz
+### 4. Register with katz
 
-Katz now auto-generates sentence segmentation from the canonical markdown. No `paper_map.json` is needed. Run:
+Katz auto-generates sentence segmentation from the canonical markdown. Run:
 
 ```bash
 katz paper register \
-  --canonical writeup/job_prefs_md/paper.md \
+  --canonical writeup/paper_md/paper.md \
   --source-format pdf \
   --source-method paper2md \
-  --source-root writeup/job_prefs.pdf
+  --source-root writeup/paper.pdf
 ```
 
-This will:
+Adjust the paths to match what you found in step 2. This will:
 - Read the markdown and segment it into sentences automatically
 - Write `paper_map.jsonl` (a typed JSONL ledger with header + sentence records)
 - Pin the registration to the current HEAD commit
 
-### 4. Verify
+### 5. Verify
 
 Run `katz paper status` and confirm the registration succeeded. Report the output to the user, including the sentence count.
 
-### 5. Cleanup
+### 6. Cleanup
 
-The `writeup/job_prefs_md/` directory is an intermediate artifact. Do NOT commit it or add it to git — it is regenerated on each registration. If `writeup/job_prefs_md/` is already in `.gitignore`, leave it. If not, suggest adding it.
+The output directory (e.g., `writeup/paper_md/`) is an intermediate artifact. Do NOT commit it or add it to git — it is regenerated on each registration. If it is already in `.gitignore`, leave it. If not, suggest adding it.

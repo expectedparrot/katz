@@ -5,11 +5,11 @@ katz is a version-aware ledger for paper review artifacts. It stores manuscripts
 ## Typical workflow
 
 1. **Register the paper**: Convert PDF to markdown, register with katz
-2. **Configure spotters**: Read the paper, decide what to look for, enable appropriate spotters
-3. **Find issues**: Run spotters across the manuscript (parallelized via EDSL or sequentially)
-4. **Investigate issues**: Verify each flagged issue against the full manuscript and code
-5. **Update status**: Mark issues as confirmed, rejected, resolved, etc.
-6. **Report**: Generate an HTML review report
+2. **Chunk the paper**: Add section boundaries for the manuscript
+3. **Configure spotters**: Read the paper, decide what to look for, enable appropriate spotters
+4. **Find issues**: Run spotters across the manuscript (parallelized via EDSL or sequentially)
+5. **Investigate issues**: Verify each flagged issue against the full manuscript and code (expect ~5–10% confirmation rate)
+6. **Report**: Generate an HTML review report and optionally file a GitHub issue
 
 ## Key concepts
 

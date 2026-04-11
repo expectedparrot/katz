@@ -55,10 +55,11 @@ katz spotter enable unclear_writing
 ```
 
 Use judgment. For example:
-- A straightforward experiment report doesn't need `literature_positioning` or `identification_threats`
+- A straightforward experiment report doesn't need `literature_positioning` (but DOES benefit from `identification_threats` — SUTVA, spillovers, etc.)
 - A pure theory paper doesn't need `statistical_errors`, `methodology_concerns`, or `results_interpretation`
 - A descriptive/stylized-facts paper doesn't need `causal_language`
 - `overclaiming`, `logical_gaps`, `unclear_writing`, `internal_contradictions`, and `narrative_consistency` apply to nearly all papers
+- When in doubt, enable more rather than fewer — the investigation phase filters out false positives. The cost of a missed real issue is higher than the cost of investigating a few extra false positives.
 
 ### 4. Add paper-specific custom spotters
 

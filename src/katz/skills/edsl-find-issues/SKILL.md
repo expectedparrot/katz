@@ -38,18 +38,30 @@ Run `katz paper status` and confirm `"valid": true` and that sections exist. If 
 
 ### 2. Build and run the command
 
+**Preferred**: Use katz-enabled spotters (configured via `/configure-spotters`) rather than the 5 built-in spotters. The enabled spotters are stored as `.md` files in the version's spotters directory:
+
 ```bash
-# All sections
+# Find the spotters directory
+COMMIT=$(katz paper status | python3 -c "import sys,json; print(json.load(sys.stdin)['commit'])")
+SPOTTERS_DIR=".katz/versions/${COMMIT}/spotters"
+
+# Dry run first to see the matrix size
+python <katz-skills-path>/edsl-find-issues/scripts/edsl_find_issues.py \
+  --spotters-dir "$SPOTTERS_DIR" --dry-run
+
+# Run the full sweep
+python <katz-skills-path>/edsl-find-issues/scripts/edsl_find_issues.py \
+  --spotters-dir "$SPOTTERS_DIR"
+```
+
+**Fallback**: Without `--spotters-dir`, the script uses 5 built-in spotters:
+
+```bash
+# All sections with built-in spotters
 python <katz-skills-path>/edsl-find-issues/scripts/edsl_find_issues.py
 
 # Single section
 python <katz-skills-path>/edsl-find-issues/scripts/edsl_find_issues.py --section introduction
-
-# Custom spotters
-python <katz-skills-path>/edsl-find-issues/scripts/edsl_find_issues.py --spotters-dir ./my_spotters
-
-# Dry run (shows scenario count without calling models)
-python <katz-skills-path>/edsl-find-issues/scripts/edsl_find_issues.py --dry-run
 ```
 
 The script will:
@@ -61,15 +73,14 @@ The script will:
 
 Issues are filed in `draft` state. Each issue body is tagged with the spotter and model that found it, e.g., `[overclaiming] [gpt-5.4] ...`.
 
-### 3. After filing: investigate and triage
+### 3. Expect a high false-positive rate
 
-Issues from EDSL are raw — many will be false positives (especially conversion artifacts or context the model couldn't see). The next step is to investigate them:
+EDSL sweeps are intentionally broad. From experience:
+- A 14-spotter × 13-section × 3-model sweep (546 calls) produces ~200–250 candidate issues.
+- After investigation, only **5–10% are confirmed** as genuine issues.
+- Common false positives: PDF conversion artifacts, issues resolved by context in other sections, "ambiguous pronoun" that isn't ambiguous, missing caveats that appear elsewhere, and many duplicates across models.
 
-```
-/investigate-issues
-```
-
-This reviews each draft issue against the actual manuscript and code, records an investigation verdict (`confirmed`, `rejected`, or `uncertain`), and updates the issue state accordingly.
+The next step is always `/investigate-issues` to separate signal from noise.
 
 ### 4. Report
 
@@ -88,4 +99,4 @@ The script includes 5 built-in issue spotters:
 - `unclear_writing` — passages difficult to understand
 - `methodology_errors` — problems with research design or statistics
 
-Custom spotters can be added as `.md` files in a directory and passed with `--spotters-dir`.
+Custom spotters can be added as `.md` files in a directory and passed with `--spotters-dir`. The recommended approach is to use `/configure-spotters` to curate spotters via katz, then pass the version's spotters directory to the script.
