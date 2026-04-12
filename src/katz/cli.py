@@ -553,6 +553,13 @@ def paper_register(
             directory.mkdir(parents=True, exist_ok=True)
 
         shutil.copyfile(canonical, paper_dest / "manuscript.md")
+
+        # Copy sibling image files referenced by the manuscript
+        image_exts = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
+        canonical_dir = canonical.parent
+        for img_file in canonical_dir.iterdir():
+            if img_file.suffix.lower() in image_exts and img_file.is_file():
+                shutil.copyfile(img_file, paper_dest / img_file.name)
         write_jsonl(dest / "paper_map.jsonl", records)
 
         symbol_table = dest / "symbol_table.json"

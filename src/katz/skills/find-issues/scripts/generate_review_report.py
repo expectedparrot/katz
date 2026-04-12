@@ -207,7 +207,23 @@ def md_to_html_simple(md_text):
     return "\n".join(html_lines)
 
 
-def build_html(status, sections, issues, manuscript=None, eval_criteria=None, eval_results=None, referee_report=None):
+def load_images_as_data_uris(commit):
+    """Load images from the paper directory as base64 data URIs."""
+    import base64
+    paper_dir = Path(f".katz/versions/{commit}/paper")
+    images = {}
+    image_exts = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                  ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp"}
+    if paper_dir.is_dir():
+        for f in paper_dir.iterdir():
+            if f.suffix.lower() in image_exts and f.is_file():
+                mime = image_exts[f.suffix.lower()]
+                b64 = base64.b64encode(f.read_bytes()).decode("ascii")
+                images[f.name] = f"data:{mime};base64,{b64}"
+    return images
+
+
+def build_html(status, sections, issues, manuscript=None, eval_criteria=None, eval_results=None, referee_report=None, images=None):
     commit = status["commit"]
     short_commit = commit[:8]
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -386,8 +402,9 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
     nav_items.append('<a href="#issues">Issues</a>')
     nav_html = '<nav class="nav-bar">' + ' &middot; '.join(nav_items) + '</nav>'
 
-    # Embed manuscript as JSON for the viewer
+    # Embed manuscript and images as JSON for the viewer
     manuscript_json = json.dumps(manuscript or "")
+    images_json = json.dumps(images or {})
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -479,6 +496,7 @@ MathJax = {{
   .ms-p.highlighted {{ background: var(--hl); }}
   .ms-blank {{ height: 0.5rem; }}
   .ms-img {{ color: var(--muted); font-style: italic; margin: 0.5rem 0; padding: 0.5rem; background: var(--card-bg); border-radius: 4px; text-align: center; }}
+  .ms-img img {{ max-width: 100%; height: auto; border-radius: 4px; }}
   .ms-math {{ font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.8rem; margin: 0.3rem 0; color: #6b21a8; }}
   .ms-li {{ margin-left: 1.5rem; margin-bottom: 0.3rem; }}
   .ms-li::before {{ content: "•"; margin-left: -1rem; margin-right: 0.5rem; color: var(--muted); }}
@@ -768,6 +786,7 @@ MathJax = {{
 
 <script>
 const manuscript = {manuscript_json};
+const images = {images_json};
 const msSource = document.getElementById('ms-source');
 const msRendered = document.getElementById('ms-rendered');
 const msModeToggle = document.getElementById('ms-mode-toggle');
@@ -837,9 +856,20 @@ lines.forEach((text, i) => {{
       html += anchor + '<h3 class="ms-h3">' + escapeHtml(trimmed.slice(4).replace(/\*\*/g,'')) + '</h3>';
     }} else if (trimmed.startsWith('#### ')) {{
       html += anchor + '<h4 class="ms-h4">' + escapeHtml(trimmed.slice(5).replace(/\*\*/g,'')) + '</h4>';
-    }} else if (trimmed.startsWith('![')) {{
-      const alt = (trimmed.match(/!\[([^\]]*)\]/) || ['','image'])[1];
-      html += anchor + '<div class="ms-img">[Figure: ' + escapeHtml(alt || 'image') + ']</div>';
+    }} else if (trimmed.startsWith('![') || (trimmed.includes('![') && trimmed.includes('](') )) {{
+      const match = trimmed.match(/!\[([^\]]*)\]\(([^)]+)\)/);
+      if (match) {{
+        const alt = match[1] || 'image';
+        const src = match[2];
+        const dataUri = images[src];
+        if (dataUri) {{
+          html += anchor + '<div class="ms-img"><img src="' + dataUri + '" alt="' + escapeHtml(alt) + '"></div>';
+        }} else {{
+          html += anchor + '<div class="ms-img">[Figure: ' + escapeHtml(alt) + ' (' + escapeHtml(src) + ')]</div>';
+        }}
+      }} else {{
+        html += anchor + '<div class="ms-img">[Figure]</div>';
+      }}
     }} else if (trimmed.startsWith('$$')) {{
       html += anchor + '<div class="ms-math">' + trimmed + '</div>';
     }} else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {{
@@ -985,7 +1015,8 @@ def main():
     eval_criteria = load_eval_criteria(commit)
     eval_results = load_eval_results(commit)
     referee_report = load_referee_report(commit)
-    html = build_html(status, sections, issues, manuscript, eval_criteria, eval_results, referee_report)
+    images = load_images_as_data_uris(commit)
+    html = build_html(status, sections, issues, manuscript, eval_criteria, eval_results, referee_report, images)
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(output).write_text(html)
     n_evals = len(eval_results)
