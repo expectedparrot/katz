@@ -361,7 +361,7 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
     if eval_cards:
         eval_html = f"""
 <h2 id="evaluations">Evaluations</h2>
-<p class="section-desc">Evaluations are advisory assessments of the paper against quality criteria — questions like "Does the abstract convey the findings?" or "Is the research design appropriate?" Each criterion receives a narrative response, not a score. {len(eval_results)} criteria evaluated.</p>
+<p class="section-desc">{len(eval_results)} criteria evaluated.</p>
 {"".join(eval_cards)}
 """
 
@@ -395,6 +395,18 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Review Report — {escape(status.get('source_root', 'paper'))}</title>
+<script>
+MathJax = {{
+  tex: {{
+    inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+    displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+  }},
+  options: {{
+    skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'code'],
+  }},
+}};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
 <style>
   :root {{
     --bg: #ffffff;
@@ -418,23 +430,82 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
   }}
 
   /* Split pane layout */
-  #manuscript-pane {{
-    width: 50%;
-    height: 100vh;
-    overflow-y: auto;
-    border-right: 2px solid var(--border);
-    padding: 1rem;
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 0.78rem;
-    line-height: 1.5;
-    background: #fafafa;
-  }}
   #review-pane {{
     width: 50%;
     height: 100vh;
     overflow-y: auto;
     padding: 1.5rem;
+    order: 1;
   }}
+  #manuscript-pane {{
+    width: 50%;
+    height: 100vh;
+    overflow-y: auto;
+    border-left: 2px solid var(--border);
+    padding: 1rem;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    background: #fafafa;
+    order: 2;
+  }}
+  .ms-toolbar {{
+    position: sticky;
+    top: 0;
+    background: #f0f0f0;
+    border-bottom: 1px solid var(--border);
+    padding: 0.3rem 0.75rem;
+    z-index: 10;
+    font-size: 0.8rem;
+  }}
+  .ms-toggle {{
+    cursor: pointer;
+    user-select: none;
+    color: var(--muted);
+  }}
+  .ms-toggle input {{ margin-right: 0.3rem; }}
+  /* Rendered view */
+  #ms-rendered {{
+    padding: 1rem 1.5rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 0.85rem;
+    line-height: 1.7;
+  }}
+  .ms-h1 {{ font-size: 1.3rem; font-weight: 700; margin: 1.5rem 0 0.5rem; }}
+  .ms-h2 {{ font-size: 1.1rem; font-weight: 600; margin: 1.25rem 0 0.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; }}
+  .ms-h3 {{ font-size: 0.95rem; font-weight: 600; margin: 1rem 0 0.3rem; }}
+  .ms-h4 {{ font-size: 0.9rem; font-weight: 600; margin: 0.75rem 0 0.25rem; }}
+  .ms-p {{ margin-bottom: 0.6rem; }}
+  .ms-p.highlighted {{ background: var(--hl); }}
+  .ms-blank {{ height: 0.5rem; }}
+  .ms-img {{ color: var(--muted); font-style: italic; margin: 0.5rem 0; padding: 0.5rem; background: var(--card-bg); border-radius: 4px; text-align: center; }}
+  .ms-math {{ font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.8rem; margin: 0.3rem 0; color: #6b21a8; }}
+  .ms-li {{ margin-left: 1.5rem; margin-bottom: 0.3rem; }}
+  .ms-li::before {{ content: "•"; margin-left: -1rem; margin-right: 0.5rem; color: var(--muted); }}
+  .ms-code {{ font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.78rem; margin: 0; padding: 0 1rem; background: var(--card-bg); }}
+  .ms-note {{ font-size: 0.75rem; color: var(--muted); margin: 0.2rem 0; }}
+  .ms-table {{
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    margin: 0.5rem 0;
+    width: 100%;
+  }}
+  .ms-table th, .ms-table td {{
+    border: 1px solid var(--border);
+    padding: 0.25rem 0.5rem;
+    text-align: left;
+    vertical-align: top;
+  }}
+  .ms-table th {{
+    background: #f0f0f0;
+    font-weight: 600;
+    font-size: 0.75rem;
+  }}
+  .ms-table td {{
+    font-size: 0.75rem;
+  }}
+  .ms-anchor {{ display: block; height: 0; overflow: hidden; }}
+  /* Source view */
   .ms-line {{
     display: flex;
     padding: 0 0.5rem;
@@ -482,6 +553,18 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
   .nav-bar a:hover {{
     text-decoration: underline;
   }}
+  .about-review {{
+    background: #f0f4ff;
+    border: 1px solid #c7d2fe;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.5rem;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: #374151;
+  }}
+  .about-review p {{ margin-bottom: 0.4rem; }}
+  .about-review p:last-child {{ margin-bottom: 0; }}
   .section-desc {{
     color: var(--muted);
     font-size: 0.85rem;
@@ -618,8 +701,6 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
 </head>
 <body>
 
-<div id="manuscript-pane"></div>
-
 <div id="review-pane">
 
 <h1>Review Report</h1>
@@ -631,6 +712,18 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
 </div>
 
 {nav_html}
+
+<div class="about-review">
+  <p>This report contains two types of review artifacts:</p>
+  <p><strong>Evaluations</strong> are advisory assessments against quality criteria — questions like
+  "Does the abstract convey the findings?" or "Is the empirical strategy credible?"
+  Each criterion gets a narrative response and a letter grade. These are for the author
+  to consider, not problems to fix.</p>
+  <p><strong>Issues</strong> are specific problems found by automated spotters scanning for
+  overclaiming, logical gaps, internal contradictions, unclear writing, and similar concerns.
+  Each issue is investigated and classified as confirmed, rejected, or uncertain.
+  Click any issue to highlight its location in the manuscript.</p>
+</div>
 
 <h2 id="summary">Summary</h2>
 <div class="stats">
@@ -651,7 +744,7 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
 </table>
 
 <h2 id="issues">Issues</h2>
-<p class="section-desc">Issues are specific problems found by automated spotters — things like overclaiming, logical gaps, unclear writing, or internal contradictions. Each issue is investigated and classified as confirmed, rejected, or uncertain. Click an issue to highlight its location in the manuscript.</p>
+<p class="section-desc">Click any issue to highlight its location in the manuscript.</p>
 <div style="margin-bottom:0.75rem">
   <label style="font-size:0.85rem;color:var(--muted);cursor:pointer;user-select:none">
     <input type="checkbox" id="show-rejected" onchange="toggleRejected(this.checked)" style="margin-right:0.3rem">
@@ -662,11 +755,25 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
 
 </div>
 
+<div id="manuscript-pane">
+  <div class="ms-toolbar">
+    <label class="ms-toggle">
+      <input type="checkbox" id="ms-mode-toggle" onchange="toggleMsMode(this.checked)">
+      <span>Source view</span>
+    </label>
+  </div>
+  <div id="ms-rendered"></div>
+  <div id="ms-source" style="display:none"></div>
+</div>
+
 <script>
 const manuscript = {manuscript_json};
-const msPane = document.getElementById('manuscript-pane');
+const msSource = document.getElementById('ms-source');
+const msRendered = document.getElementById('ms-rendered');
+const msModeToggle = document.getElementById('ms-mode-toggle');
+let currentMode = 'rendered'; // 'rendered' or 'source'
 
-// Render manuscript with line numbers
+// Build source view with line numbers
 const lines = manuscript.split('\\n');
 lines.forEach((text, i) => {{
   const div = document.createElement('div');
@@ -675,8 +782,109 @@ lines.forEach((text, i) => {{
   div.innerHTML =
     '<span class="ms-linenum">' + (i + 1) + '</span>' +
     '<span class="ms-text">' + escapeHtml(text) + '</span>';
-  msPane.appendChild(div);
+  msSource.appendChild(div);
 }});
+
+// Build rendered view: simple markdown to HTML with line anchors
+(function buildRendered() {{
+  let html = '';
+  let inCode = false;
+  let inTable = false;
+  let tableRowIdx = 0;
+  lines.forEach((line, i) => {{
+    const ln = i + 1;
+    const anchor = '<a class="ms-anchor" id="ms-r-' + ln + '"></a>';
+
+    if (line.startsWith('```')) {{
+      inCode = !inCode;
+      return;
+    }}
+    if (inCode) {{
+      html += anchor + '<pre class="ms-code">' + escapeHtml(line) + '</pre>';
+      return;
+    }}
+    if (line.startsWith('|')) {{
+      if (!inTable) {{ html += '<table class="ms-table">'; inTable = true; tableRowIdx = 0; }}
+      // Skip separator rows (|---|---|)
+      if (/^\|[\s\-:|]+\|$/.test(line.trim())) {{
+        tableRowIdx++;
+        return;
+      }}
+      // Parse cells
+      const cells = line.split('|').slice(1, -1);
+      const tag = (tableRowIdx === 0) ? 'th' : 'td';
+      html += anchor + '<tr>' + cells.map(c => {{
+        let cell = renderInline(c.trim());
+        // Convert <br> tags that were escaped back to real line breaks
+        cell = cell.replace(/&lt;br&gt;/gi, '<br>').replace(/&lt;br\/&gt;/gi, '<br>').replace(/&lt;br\s*\/&gt;/gi, '<br>');
+        return '<' + tag + '>' + cell + '</' + tag + '>';
+      }}).join('') + '</tr>';
+      tableRowIdx++;
+      return;
+    }} else if (inTable) {{
+      html += '</table>';
+      inTable = false;
+    }}
+
+    const trimmed = line.trim();
+    if (!trimmed) {{
+      html += anchor + '<div class="ms-blank"></div>';
+    }} else if (trimmed.startsWith('# ')) {{
+      html += anchor + '<h1 class="ms-h1">' + escapeHtml(trimmed.slice(2).replace(/\*\*/g,'')) + '</h1>';
+    }} else if (trimmed.startsWith('## ')) {{
+      html += anchor + '<h2 class="ms-h2">' + escapeHtml(trimmed.slice(3).replace(/\*\*/g,'')) + '</h2>';
+    }} else if (trimmed.startsWith('### ')) {{
+      html += anchor + '<h3 class="ms-h3">' + escapeHtml(trimmed.slice(4).replace(/\*\*/g,'')) + '</h3>';
+    }} else if (trimmed.startsWith('#### ')) {{
+      html += anchor + '<h4 class="ms-h4">' + escapeHtml(trimmed.slice(5).replace(/\*\*/g,'')) + '</h4>';
+    }} else if (trimmed.startsWith('![')) {{
+      const alt = (trimmed.match(/!\[([^\]]*)\]/) || ['','image'])[1];
+      html += anchor + '<div class="ms-img">[Figure: ' + escapeHtml(alt || 'image') + ']</div>';
+    }} else if (trimmed.startsWith('$$')) {{
+      html += anchor + '<div class="ms-math">' + trimmed + '</div>';
+    }} else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {{
+      html += anchor + '<div class="ms-li">' + renderInline(trimmed.slice(2)) + '</div>';
+    }} else if (trimmed.startsWith('<sup>') || trimmed.startsWith('<span')) {{
+      html += anchor + '<div class="ms-note">' + escapeHtml(trimmed) + '</div>';
+    }} else {{
+      html += anchor + '<p class="ms-p" data-line="' + ln + '">' + renderInline(trimmed) + '</p>';
+    }}
+  }});
+  if (inTable) html += '</table>';
+  msRendered.innerHTML = html;
+  // Tell MathJax to typeset the rendered view once loaded
+  if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {{
+    MathJax.typesetPromise([msRendered]);
+  }} else {{
+    document.addEventListener('DOMContentLoaded', function() {{
+      if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {{
+        MathJax.typesetPromise([msRendered]);
+      }}
+    }});
+  }}
+}})();
+
+function renderInline(text) {{
+  // Split on $...$ math to preserve it for MathJax
+  // We protect math spans from HTML escaping
+  const parts = text.split(/(\$\$[^$]+\$\$|\$[^$]+\$)/g);
+  let result = '';
+  for (const part of parts) {{
+    if (part.startsWith('$')) {{
+      // Math — pass through raw for MathJax
+      result += part;
+    }} else {{
+      // Non-math — escape and apply markdown formatting
+      let s = escapeHtml(part);
+      s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+      // Strip span tags that leaked through from PDF conversion
+      s = s.replace(/&lt;span[^&]*&gt;/g, '').replace(/&lt;\/span&gt;/g, '');
+      result += s;
+    }}
+  }}
+  return result;
+}}
 
 function escapeHtml(s) {{
   const d = document.createElement('div');
@@ -684,24 +892,56 @@ function escapeHtml(s) {{
   return d.innerHTML;
 }}
 
+function toggleMsMode(showSource) {{
+  if (showSource) {{
+    msSource.style.display = '';
+    msRendered.style.display = 'none';
+    currentMode = 'source';
+    // Re-apply highlight in source view
+    if (lastHighlight) {{
+      for (let i = lastHighlight[0]; i <= lastHighlight[1]; i++) {{
+        const el = document.getElementById('ms-line-' + i);
+        if (el) el.classList.add('highlighted');
+      }}
+    }}
+  }} else {{
+    msSource.style.display = 'none';
+    msRendered.style.display = '';
+    currentMode = 'rendered';
+  }}
+}}
+
 let activeCard = null;
+let lastHighlight = null;
+
 function highlightLines(start, end, srcEl) {{
   // Clear previous highlights
   document.querySelectorAll('.ms-line.highlighted').forEach(el => el.classList.remove('highlighted'));
+  document.querySelectorAll('.ms-p.highlighted').forEach(el => el.classList.remove('highlighted'));
   if (activeCard) activeCard.classList.remove('active');
 
   if (!start || !end) return;
+  lastHighlight = [start, end];
 
-  // Highlight new range
+  // Auto-switch to source view when clicking an issue (srcEl present)
+  if (srcEl && currentMode === 'rendered') {{
+    msModeToggle.checked = true;
+    toggleMsMode(true);
+  }}
+
+  // Highlight lines in source view
   for (let i = start; i <= end; i++) {{
     const el = document.getElementById('ms-line-' + i);
     if (el) el.classList.add('highlighted');
   }}
 
-  // Scroll manuscript to the highlighted range (center it)
-  const target = document.getElementById('ms-line-' + start);
-  if (target) {{
-    target.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+  // Scroll to highlighted range in whichever view is active
+  if (currentMode === 'source') {{
+    const target = document.getElementById('ms-line-' + start);
+    if (target) target.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+  }} else {{
+    const target = document.getElementById('ms-r-' + start);
+    if (target) target.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
   }}
 
   // Mark the clicked card as active
@@ -715,9 +955,8 @@ function toggleRejected(show) {{
   document.getElementById('review-pane').classList.toggle('show-rejected', show);
 }}
 
-// Event delegation: handle clicks on issue cards, section headings, section links
+// Event delegation: handle clicks on issue cards
 document.getElementById('review-pane').addEventListener('click', function(e) {{
-  // Click anywhere on an issue card
   const card = e.target.closest('.issue-card');
   if (card) {{
     const ls = parseInt(card.dataset.lineStart);
