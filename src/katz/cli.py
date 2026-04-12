@@ -17,13 +17,16 @@ app = typer.Typer(help="Version-aware ledger for paper review artifacts.")
 paper_app = typer.Typer(help="Register and query canonical manuscripts.")
 issue_app = typer.Typer(help="Write and query issue records.")
 spotter_app = typer.Typer(help="Manage issue spotters.")
+eval_app = typer.Typer(help="Manage evaluation criteria and responses.")
 guide_app = typer.Typer(help="Self-documenting guide for agents.")
 app.add_typer(paper_app, name="paper")
 app.add_typer(issue_app, name="issue")
 app.add_typer(spotter_app, name="spotter")
+app.add_typer(eval_app, name="eval")
 app.add_typer(guide_app, name="guide")
 
 SKILLS_DIR = Path(__file__).parent / "skills"
+CATALOG_DIR = Path(__file__).parent / "catalog"
 
 KATZ_DIR = ".katz"
 ACTIVE_VERSION = "ACTIVE_VERSION"
@@ -582,6 +585,84 @@ def paper_register(
         fail(exc.message, exc.code, exc.details)
 
 
+@paper_app.command("auto-chunk")
+def paper_auto_chunk(
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Detect markdown headings and generate sections automatically."""
+    try:
+        resolved, dest, _, pmap, canonical = load_version(commit)
+        if pmap.sections:
+            raise KatzError(
+                f"Paper already has {len(pmap.sections)} sections. "
+                "Remove them first or use add-sections to append.",
+                "validation_error",
+            )
+        raw = canonical.read_bytes()
+        text = raw.decode("utf-8")
+        lines = text.split("\n")
+
+        # Compute byte offset of each line
+        line_offsets: list[int] = []
+        offset = 0
+        for line in lines:
+            line_offsets.append(offset)
+            offset += len(line.encode("utf-8")) + 1  # +1 for newline
+
+        # Detect headings
+        heading_re = re.compile(r"^(#{1,4})\s+(.+)")
+        headings: list[tuple[int, str, str]] = []  # (line_idx, raw_title, level)
+        for i, line in enumerate(lines):
+            m = heading_re.match(line)
+            if m:
+                headings.append((i, m.group(2).strip(), m.group(1)))
+
+        if not headings:
+            raise KatzError("No markdown headings found in manuscript", "validation_error")
+
+        # Build section records
+        sections: list[dict[str, Any]] = []
+        for idx, (line_idx, raw_title, level) in enumerate(headings):
+            # Clean the title: strip span tags, bold markers, numbering
+            clean = re.sub(r"<[^>]+>", "", raw_title)
+            clean = re.sub(r"\*\*", "", clean)
+            clean = clean.strip()
+            # Build slug from cleaned title
+            slug = re.sub(r"[^a-z0-9]+", "-", clean.lower()).strip("-")
+            # Drop leading section numbers like "1-", "a-1-"
+            slug = re.sub(r"^[0-9]+-", "", slug)
+            slug = re.sub(r"^[a-z]-[0-9]+-", "", slug)
+            if not slug:
+                slug = f"section-{idx}"
+
+            byte_start = line_offsets[line_idx]
+            if idx + 1 < len(headings):
+                byte_end = line_offsets[headings[idx + 1][0]]
+            else:
+                byte_end = len(raw)
+
+            ls, le = line_bounds(text, byte_start, byte_end)
+            sections.append({
+                "type": "section",
+                "id": slug,
+                "title": clean,
+                "byte_start": byte_start,
+                "byte_end": byte_end,
+                "line_start": ls,
+                "line_end": le,
+            })
+
+        # Append to paper_map.jsonl
+        jsonl_path = dest / "paper_map.jsonl"
+        if not jsonl_path.exists():
+            raise KatzError("paper_map.jsonl not found; register the paper first", "not_found")
+        append_jsonl(jsonl_path, sections)
+
+        emit_json({"added": len(sections), "total_sections": len(sections)})
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
 @paper_app.command("add-sections")
 def paper_add_sections(
     sections_json: str = typer.Option(..., "--sections"),
@@ -1004,11 +1085,15 @@ def issue_investigate(
 def issue_show(issue_id: str, commit: Optional[str] = typer.Option(None, "--commit")) -> None:
     """Return a full issue record with current state and history."""
     try:
-        _, dest, _, _, _ = load_version(commit)
+        _, dest, _, pmap, _ = load_version(commit)
         issue_dir = _issue_dir(dest, issue_id)
         if not (issue_dir / "issue.json").exists():
             raise KatzError("Issue does not exist", "not_found", {"id": issue_id})
         record = _load_issue(issue_dir)
+        # Enrich location with section ID
+        location = record.get("location") if isinstance(record.get("location"), dict) else {}
+        if isinstance(location.get("byte_start"), int) and isinstance(location.get("byte_end"), int):
+            location["section"] = section_for_range(pmap.sections, location["byte_start"], location["byte_end"])
         status_dir = issue_dir / "status"
         record["status_history"] = [read_json(f) for f in sorted(status_dir.glob("*.json"))] if status_dir.is_dir() else []
         record["investigations"] = _list_investigations(issue_dir)
@@ -1131,339 +1216,18 @@ def _parse_spotter(content: str) -> dict[str, Any]:
     }
 
 
-DEFAULT_SPOTTERS: dict[str, dict[str, str]] = {
-    "social-science": {
-        "overclaiming": """\
----
-scope: section
----
-# Overclaiming
-
-Look for conclusions or claims that are stronger than the evidence supports.
-
-Pay special attention to:
-- Causal language ("causes", "leads to", "increases") when only correlational or observational evidence is presented
-- Generalizations beyond the study's population, setting, or time period
-- Results described as "significant" or "large" without adequate statistical justification
-- Abstract or conclusion claims not backed by the results section
-- Cherry-picking favorable results while downplaying null or unfavorable ones
-- Extrapolating from a specific mechanism to broad policy implications
-
-## Investigation
-
-- Read the full results and methods sections, not just the flagged passage
-- Check whether the claim is hedged elsewhere ("suggests" vs "proves", "consistent with" vs "demonstrates")
-- Check footnotes and appendices — qualifications are often buried there
-- If the claim says "significant", verify a statistical test is reported with the right interpretation
-- Check if the identification strategy supports the causal language used
-- **Confirm** if the claim is unhedged and the evidence does not support the strength of the language
-- **Reject** if surrounding context sufficiently qualifies the claim
-""",
-        "logical_gaps": """\
----
-scope: section
----
-# Logical Gaps
-
-Look for places where the argument skips a step or a claim does not follow from the premises.
-
-Pay special attention to:
-- Claims presented as following from evidence that doesn't actually support them
-- Missing intermediate steps in an argument chain
-- Unstated assumptions required for a conclusion to hold
-- Non-sequiturs where the topic shifts without logical connection
-- "Therefore" or "thus" statements where the conclusion doesn't follow from what precedes it
-
-## Investigation
-
-- Read the full paragraph and surrounding context — the missing step may be nearby
-- Check if the gap is filled in a different section (e.g., the model section justifies a claim in the results)
-- Identify what assumption would be needed to bridge the gap and check if it's stated elsewhere
-- **Confirm** if the logical step is genuinely missing and not addressed elsewhere in the paper
-- **Reject** if context or a reasonable reading fills the gap
-""",
-        "statistical_errors": """\
----
-scope: section
----
-# Statistical Errors
-
-Look for misuse or misinterpretation of statistical methods.
-
-Pay special attention to:
-- Confidence intervals interpreted as probability statements about parameters
-- P-values interpreted as effect sizes or as the probability the null is true
-- Multiple comparisons without correction or acknowledgment
-- Inappropriate statistical tests for the data type (e.g., t-test on non-normal data without justification)
-- Confusion between statistical and economic/practical significance
-- Standard errors reported where standard deviations are appropriate, or vice versa
-- Degrees of freedom or sample sizes that don't match the described design
-
-## Investigation
-
-- Check the methods section for the full statistical specification
-- Verify sample sizes match across text, tables, and figures
-- Check if multiple comparisons are acknowledged even if not formally corrected
-- Look for robustness checks that might address the concern
-- **Confirm** if the statistical error is unambiguous
-- **Reject** if the usage is defensible or standard in the field
-""",
-        "methodology_concerns": """\
----
-scope: section
----
-# Methodology Concerns
-
-Look for problems with the research design that could threaten the validity of the findings.
-
-Pay special attention to:
-- Selection bias in how participants or observations enter the sample
-- Missing controls or unaddressed confounders
-- Demand effects or experimenter demand characteristics
-- Attrition that could be differential across treatment conditions
-- Measurement issues: are the proxies measuring what they claim to?
-- External validity limitations not acknowledged
-- Insufficient power for the claimed effects
-
-## Investigation
-
-- Read the full experimental design section for context on controls and randomization
-- Check appendices for balance tables, attrition analysis, or robustness checks
-- Determine if the concern is inherent to the design or addressable with the available data
-- Check if the authors acknowledge the limitation
-- **Confirm** if the design flaw is real and unacknowledged
-- **Reject** if the concern is addressed elsewhere or is not material to the conclusions
-""",
-        "unclear_writing": """\
----
-scope: section
----
-# Unclear Writing
-
-Look for sentences or passages that are difficult to understand on a careful first reading.
-
-Pay special attention to:
-- Ambiguous pronoun references where "it", "this", or "they" could refer to multiple antecedents
-- Sentences over 40 words that try to do too much at once
-- Technical terms or abbreviations used without definition
-- Jargon from one field used without translation for a broader audience
-- Vague quantifiers ("some", "many", "often") where the paper has specific numbers available
-- Passive voice that obscures who did what
-
-## Investigation
-
-- Re-read the passage with full context — initial confusion may resolve
-- Check if the term is defined earlier in the paper
-- Check if the ambiguity matters for the argument or is cosmetic
-- **Confirm** if a careful reader would genuinely struggle with the passage
-- **Reject** if context makes the meaning clear enough
-""",
-        "internal_contradictions": """\
----
-scope: holistic
----
-# Internal Contradictions
-
-Look for statements in different parts of the paper that contradict each other.
-
-Pay special attention to:
-- Numbers or statistics that differ between the abstract, text, tables, and figures
-- Claims in the introduction or conclusion that conflict with what the results actually show
-- Notation used inconsistently — the same symbol for different things, or different symbols for the same thing
-- Assumptions stated in the model section that are violated in the empirical implementation
-- Sample sizes or subgroup definitions that change across sections without explanation
-
-## Investigation
-
-- Locate both contradicting passages and read each in full context
-- Check if the apparent contradiction is explained by a qualifier, footnote, or different subsample
-- For numerical discrepancies, check whether rounding or different denominators explain the difference
-- **Confirm** if the contradiction is real and unexplained
-- **Reject** if context resolves the apparent conflict
-""",
-        "identification_threats": """\
----
-scope: holistic
----
-# Identification Threats
-
-Look for threats to the causal identification strategy that the paper does not adequately address.
-
-Pay special attention to:
-- Omitted variable bias: are there plausible confounders not controlled for?
-- Reverse causality: could the outcome cause the treatment rather than vice versa?
-- Selection on unobservables: could unobserved factors drive both treatment and outcome?
-- Violation of exclusion restrictions in IV designs
-- Parallel trends assumption violations in difference-in-differences
-- Manipulation or sorting around cutoffs in regression discontinuity
-- SUTVA violations: could treatment of one unit affect outcomes of another?
-- Generalizability: does the local average treatment effect (LATE) speak to the policy-relevant parameter?
-
-## Investigation
-
-- Read the identification strategy section and any formal assumptions stated
-- Check robustness sections and appendices for sensitivity analyses
-- Determine if the threat is acknowledged and tested, acknowledged but untested, or unacknowledged
-- Assess materiality: would the threat plausibly change the sign or magnitude of the main results?
-- **Confirm** if the threat is material and unaddressed
-- **Reject** if the paper adequately addresses it or the threat is implausible in context
-""",
-        "narrative_consistency": """\
----
-scope: holistic
----
-# Narrative Consistency
-
-Check whether the paper tells a coherent story from introduction through conclusion.
-
-Pay special attention to:
-- Research questions posed in the introduction that are never answered in the results
-- Results that appear in the analysis but were never motivated in the introduction
-- The conclusion claiming contributions not supported by the paper's actual findings
-- Framing shifts: the introduction frames the paper as about X, but the results are really about Y
-- Literature review that sets up expectations the paper doesn't address
-
-## Investigation
-
-- Read the introduction's stated contributions and research questions
-- Read the conclusion's claimed contributions
-- Check each claim against what the results section actually delivers
-- **Confirm** if there is a material disconnect between what is promised and what is delivered
-- **Reject** if the narrative is coherent, even if imperfect
-""",
-        "introduction_flow": """\
----
-scope: holistic
----
-# Introduction Flow
-
-Check whether the introduction follows the standard structure for an empirical economics paper.
-
-The expected flow is:
-1. What is the topic and why is there a controversy or open question? (No throat-clearing like "Economists have long wondered...")
-2. Why the topic matters — who is affected, what decisions depend on the answer?
-3. What this paper does and how it works — the identification strategy in broad strokes
-4. Main findings stated concretely with magnitudes, not just "we reject the null"
-5. The economic "so what" — what does the finding imply?
-6. Caveats and limitations
-7. Contribution relative to the literature — what is novel (data, method, variation)?
-8. Roadmap paragraph
-
-Flag if:
-- The research question is not stated clearly by the end of the first paragraph
-- Main findings are vague ("we find significant effects") rather than concrete ("a 10% increase in X reduces Y by 3 percentage points")
-- The "so what" is missing — why should a reader care about the magnitude?
-- Contribution is not differentiated from the most closely related paper
-- Introduction exceeds roughly 5 double-spaced pages without justification
-
-## Investigation
-
-- Read the full introduction and map each paragraph to the expected flow elements
-- Check if missing elements appear elsewhere (e.g., caveats in a footnote)
-- The order can vary — the key question is whether all elements are present, not rigid sequencing
-- **Confirm** if a key element (research question, concrete findings, contribution) is genuinely missing
-- **Reject** if all elements are present, even if the order is non-standard
-""",
-        "causal_language": """\
----
-scope: section
----
-# Causal Language
-
-Check whether causal language is appropriate for the research design.
-
-Pay special attention to:
-- Words like "causes", "leads to", "increases", "reduces", "impact of" used to describe correlational or observational findings
-- Whether the identifying assumptions are explicitly stated (e.g., conditional independence, exclusion restriction, parallel trends)
-- Whether the author specifies what would need to be true for the estimates to have a causal interpretation
-- Interaction terms interpreted as causal differences across subgroups without justification
-- Null findings interpreted as "no effect" rather than "we cannot reject zero" — conflating absence of evidence with evidence of absence
-- Conditioning on post-treatment variables (bad controls)
-
-## Investigation
-
-- Check the research design section for the stated identification strategy
-- Determine whether the causal language matches the design (experiment, IV, RD, diff-in-diff, or observational)
-- If observational, check whether the author uses hedged language ("is associated with") or causal language ("causes")
-- **Confirm** if causal language is used without a credible identification strategy
-- **Reject** if the design supports the causal claim or the language is appropriately hedged
-""",
-        "table_figure_quality": """\
----
-scope: section
----
-# Table and Figure Quality
-
-Check whether tables and figures are self-contained and follow best practices.
-
-Pay special attention to:
-- Can the table or figure be understood without reading the main text?
-- Does the title describe what is being shown (the 5 Ws: who, what, when, where, why)?
-- Are column headers clear, including units and reference categories for dummy variables?
-- Do footnotes identify the data source, sample, abbreviations, and symbols?
-- For regression tables: are sample size and R-squared reported? Are standard errors identified (robust, clustered, bootstrapped)?
-- Are magnitudes discussed, not just significance stars?
-- For figures: are axis labels large enough? Do they work in black and white? If axes don't include zero, are expected ranges explained?
-- For coefficient plots: does the note explain what else is controlled for?
-
-## Investigation
-
-- Read the table or figure and its notes in isolation, without the surrounding text
-- Check if a reader encountering only this exhibit would understand what is being shown
-- **Confirm** if the exhibit is genuinely not self-contained or is missing critical information
-- **Reject** if the exhibit is clear enough, even if styling could be improved
-""",
-        "results_interpretation": """\
----
-scope: section
----
-# Results Interpretation
-
-Check whether empirical results are presented clearly and linked to the paper's questions.
-
-Pay special attention to:
-- Are economic magnitudes reported, not just statistical significance? ("a one standard deviation increase in X raises Y by $500" vs "X is significant at 5%")
-- Are results linked back to the theoretical predictions or research questions?
-- Are standard errors appropriate for the data structure (clustered if panel, robust if heteroskedastic)?
-- Are subgroup analyses motivated by theory rather than appearing to be data mining?
-- Is each table/figure introduced by naming it and stating what question it addresses?
-- For each specification, is the result interpreted in economic terms?
-- Are null results discussed honestly rather than buried?
-
-## Investigation
-
-- Check the theory/model section for predictions that should be tested
-- Verify that each prediction has a corresponding empirical test in the results
-- Check whether magnitudes are discussed or only stars
-- **Confirm** if results are presented without magnitudes or without linking to the stated questions
-- **Reject** if the presentation is clear and connected to the paper's framework
-""",
-        "literature_positioning": """\
----
-scope: holistic
----
-# Literature Positioning
-
-Check whether the paper clearly positions itself relative to the existing literature.
-
-Pay special attention to:
-- Is the single most closely related paper explicitly named and differentiated?
-- Is it clear what is novel about this paper — new data, new identification, new question, or new setting?
-- Are there obvious related papers that should be cited but aren't? (Check the topic against major field journals)
-- Does the literature review set up the paper's contribution, or is it a disconnected survey?
-- Is the lit review proportional — not too long for a minor point, not too short for a major debate?
-- Does the paper claim novelty that isn't justified (e.g., "we are the first to..." when prior work exists)?
-
-## Investigation
-
-- Read the introduction's contribution paragraph and the related literature section
-- Identify the claimed differentiators
-- Check whether the claims of novelty are reasonable given what you know about the field
-- **Confirm** if the positioning is genuinely unclear or a major related paper appears to be missing
-- **Reject** if the contribution is clearly stated, even if the lit review could be more comprehensive
-""",
-    },
-}
+def _load_collection(catalog_type: str, preset: str) -> list[str]:
+    """Load a named collection from catalog/{type}/collections/{preset}.json."""
+    collections_dir = CATALOG_DIR / catalog_type / "collections"
+    preset_file = collections_dir / f"{preset}.json"
+    if not preset_file.exists():
+        available = [f.stem for f in collections_dir.glob("*.json")] if collections_dir.is_dir() else []
+        raise KatzError(
+            f"Unknown preset: '{preset}'",
+            "validation_error",
+            {"preset": preset, "available": sorted(available)},
+        )
+    return json.loads(preset_file.read_text(encoding="utf-8"))
 
 
 def _slugify(name: str) -> str:
@@ -1474,89 +1238,28 @@ def _slugify(name: str) -> str:
     return slug
 
 
-@spotter_app.command("add")
-def spotter_add(
-    name: Optional[str] = typer.Option(None, "--name"),
-    description: Optional[str] = typer.Option(None, "--description"),
-    investigation: Optional[str] = typer.Option(None, "--investigation"),
-    scope: str = typer.Option("section", "--scope"),
-    file: Optional[Path] = typer.Option(None, "--file", exists=True, file_okay=True, dir_okay=False, readable=True),
-    commit: Optional[str] = typer.Option(None, "--commit"),
-) -> None:
-    """Register an issue spotter from a file or a description string."""
-    try:
-        if file is None and description is None:
-            raise KatzError("Provide --file or --description", "validation_error")
-        if file is not None and description is not None:
-            raise KatzError("Provide --file or --description, not both", "validation_error")
-        if scope not in VALID_SCOPES:
-            raise KatzError("Invalid scope", "validation_error", {"scope": scope, "valid": sorted(VALID_SCOPES)})
-
-        resolved, dest, _, _, _ = load_version(commit)
-        spotters_dir = dest / "spotters"
-        spotters_dir.mkdir(parents=True, exist_ok=True)
-
-        if file is not None:
-            slug = name if name else file.stem
-            slug = _slugify(slug)
-            content = file.read_text(encoding="utf-8")
-            parsed = _parse_spotter(content)
-            # Validate the file's frontmatter
-            if parsed["scope"] not in VALID_SCOPES:
-                raise KatzError(
-                    f"File has invalid scope: '{parsed['scope']}'",
-                    "validation_error",
-                    {"scope": parsed["scope"], "valid": sorted(VALID_SCOPES)},
-                )
-            if parsed["title"] is None:
-                raise KatzError(
-                    "Spotter file must have a markdown heading (# Title)",
-                    "validation_error",
-                    {"file": str(file)},
-                )
-        else:
-            if name is None:
-                raise KatzError("--name is required when using --description", "validation_error")
-            slug = _slugify(name)
-            title = name.replace("_", " ").title()
-            lines = [f"---\nscope: {scope}\n---\n", f"# {title}\n", f"\n{description}\n"]
-            if investigation:
-                lines.append(f"\n## Investigation\n\n{investigation}\n")
-            content = "\n".join(lines)
-
-        out_path = spotters_dir / f"{slug}.md"
-        if out_path.exists():
-            raise KatzError(f"Spotter '{slug}' already exists", "validation_error", {"name": slug})
-        out_path.write_text(content, encoding="utf-8")
-        parsed = _parse_spotter(content)
-        emit_json({"name": slug, "scope": parsed["scope"], "path": str(out_path), "chars": len(content)})
-    except KatzError as exc:
-        fail(exc.message, exc.code, exc.details)
-
-
 @spotter_app.command("init-catalog")
 def spotter_init_catalog(
-    preset: str = typer.Option("social-science", "--preset"),
+    preset: str = typer.Option("default", "--preset"),
 ) -> None:
     """Populate the spotter catalog (.katz/spotters/) from a preset. Skips existing."""
     try:
-        if preset not in DEFAULT_SPOTTERS:
-            raise KatzError(
-                f"Unknown preset: '{preset}'",
-                "validation_error",
-                {"preset": preset, "available": sorted(DEFAULT_SPOTTERS.keys())},
-            )
+        names = _load_collection("spotters", preset)
         ensure_initialized()
         catalog_dir = katz_root() / "spotters"
         catalog_dir.mkdir(parents=True, exist_ok=True)
 
         added = []
         skipped = []
-        for slug, content in DEFAULT_SPOTTERS[preset].items():
+        for slug in names:
+            src_path = CATALOG_DIR / "spotters" / f"{slug}.md"
+            if not src_path.exists():
+                raise KatzError(f"Spotter '{slug}' listed in collection but file not found", "not_found", {"name": slug})
             out_path = catalog_dir / f"{slug}.md"
             if out_path.exists():
                 skipped.append(slug)
                 continue
+            content = src_path.read_text(encoding="utf-8")
             out_path.write_text(content, encoding="utf-8")
             parsed = _parse_spotter(content)
             added.append({"name": slug, "scope": parsed["scope"]})
@@ -1704,6 +1407,324 @@ def spotter_remove(
         emit_json({"removed": name})
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
+
+
+# ---------------------------------------------------------------------------
+# Eval commands
+# ---------------------------------------------------------------------------
+
+
+def _parse_eval(content: str) -> dict[str, Any]:
+    """Parse an eval criterion markdown file into frontmatter and body parts.
+
+    Returns {"scope": str|None, "category": str|None, "title": str|None, "body": str, "raw": str}
+    """
+    raw = content
+    frontmatter: dict[str, Any] = {}
+    body = content
+
+    if content.startswith("---\n"):
+        end = content.find("\n---\n", 4)
+        if end != -1:
+            import yaml
+            try:
+                frontmatter = yaml.safe_load(content[4:end]) or {}
+            except Exception:
+                frontmatter = {}
+            body = content[end + 5:]
+
+    scope = frontmatter.get("scope")  # None if not set (paper-level)
+    category = frontmatter.get("category")
+
+    title = None
+    for line in body.splitlines():
+        if line.startswith("# "):
+            title = line[2:].strip()
+            break
+
+    return {
+        "scope": scope,
+        "category": category,
+        "title": title,
+        "body": body,
+        "raw": raw,
+        "frontmatter": frontmatter,
+    }
+
+
+@eval_app.command("init-catalog")
+def eval_init_catalog(
+    preset: str = typer.Option("default", "--preset"),
+) -> None:
+    """Populate the eval catalog (.katz/evals/) from a preset. Skips existing."""
+    try:
+        names = _load_collection("evals", preset)
+        ensure_initialized()
+        catalog_dir = katz_root() / "evals"
+        catalog_dir.mkdir(parents=True, exist_ok=True)
+
+        added = []
+        skipped = []
+        for slug in names:
+            src_path = CATALOG_DIR / "evals" / f"{slug}.md"
+            if not src_path.exists():
+                raise KatzError(f"Eval '{slug}' listed in collection but file not found", "not_found", {"name": slug})
+            out_path = catalog_dir / f"{slug}.md"
+            if out_path.exists():
+                skipped.append(slug)
+                continue
+            content = src_path.read_text(encoding="utf-8")
+            out_path.write_text(content, encoding="utf-8")
+            parsed = _parse_eval(content)
+            added.append({"name": slug, "category": parsed["category"]})
+
+        emit_json({"preset": preset, "added": added, "skipped": skipped})
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@eval_app.command("catalog")
+def eval_catalog(
+    category: Optional[str] = typer.Option(None, "--category"),
+) -> None:
+    """List available eval criteria in the catalog (.katz/evals/)."""
+    try:
+        ensure_initialized()
+        catalog_dir = katz_root() / "evals"
+        results = []
+        if catalog_dir.is_dir():
+            for f in sorted(catalog_dir.glob("*.md")):
+                content = f.read_text(encoding="utf-8")
+                parsed = _parse_eval(content)
+                if category is not None and parsed["category"] != category:
+                    continue
+                results.append({
+                    "name": f.stem,
+                    "title": parsed["title"],
+                    "category": parsed["category"],
+                    "scope": parsed["scope"],
+                })
+        emit_json(results)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@eval_app.command("catalog-show")
+def eval_catalog_show(name: str) -> None:
+    """Show an eval criterion from the catalog."""
+    try:
+        ensure_initialized()
+        path = katz_root() / "evals" / f"{name}.md"
+        if not path.exists():
+            raise KatzError(f"Eval '{name}' not in catalog", "not_found", {"name": name})
+        content = path.read_text(encoding="utf-8")
+        parsed = _parse_eval(content)
+        emit_json({
+            "name": name,
+            "category": parsed["category"],
+            "scope": parsed["scope"],
+            "title": parsed["title"],
+            "body": parsed["body"],
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@eval_app.command("add")
+def eval_add(
+    name: str = typer.Option(..., "--name"),
+    question: Optional[str] = typer.Option(None, "--question"),
+    scope: Optional[str] = typer.Option(None, "--scope"),
+    category: Optional[str] = typer.Option(None, "--category"),
+    file: Optional[Path] = typer.Option(None, "--file", exists=True, file_okay=True, dir_okay=False, readable=True),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Add an eval criterion to the current version from a question string or file."""
+    try:
+        if file is None and question is None:
+            raise KatzError("Provide --question or --file", "validation_error")
+        if file is not None and question is not None:
+            raise KatzError("Provide --question or --file, not both", "validation_error")
+
+        resolved, dest, _, _, _ = load_version(commit)
+        evals_dir = dest / "evals"
+        evals_dir.mkdir(parents=True, exist_ok=True)
+
+        slug = _slugify(name)
+
+        if file is not None:
+            content = file.read_text(encoding="utf-8")
+            parsed = _parse_eval(content)
+            if parsed["title"] is None:
+                raise KatzError("Eval file must have a markdown heading (# Title)", "validation_error")
+        else:
+            title = name.replace("_", " ").replace("-", " ").title()
+            fm_lines = []
+            if scope:
+                fm_lines.append(f"scope: {scope}")
+            if category:
+                fm_lines.append(f"category: {category}")
+            fm = f"---\n{chr(10).join(fm_lines)}\n---\n" if fm_lines else ""
+            content = f"{fm}# {title}\n\n{question}\n"
+
+        out_path = evals_dir / f"{slug}.md"
+        if out_path.exists():
+            raise KatzError(f"Eval '{slug}' already exists", "validation_error", {"name": slug})
+        out_path.write_text(content, encoding="utf-8")
+        parsed = _parse_eval(content)
+        emit_json({"name": slug, "category": parsed["category"], "scope": parsed["scope"], "path": str(out_path)})
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@eval_app.command("enable")
+def eval_enable(
+    name: str,
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Enable a catalog eval criterion for the active version."""
+    try:
+        ensure_initialized()
+        catalog_path = katz_root() / "evals" / f"{name}.md"
+        if not catalog_path.exists():
+            raise KatzError(f"Eval '{name}' not in catalog", "not_found", {"name": name})
+        _, dest, _, _, _ = load_version(commit)
+        evals_dir = dest / "evals"
+        evals_dir.mkdir(parents=True, exist_ok=True)
+        out_path = evals_dir / f"{name}.md"
+        if out_path.exists():
+            raise KatzError(f"Eval '{name}' is already enabled", "validation_error", {"name": name})
+        shutil.copyfile(catalog_path, out_path)
+        emit_json({"enabled": name})
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@eval_app.command("list")
+def eval_list(
+    category: Optional[str] = typer.Option(None, "--category"),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """List enabled eval criteria for the active version."""
+    try:
+        _, dest, _, _, _ = load_version(commit)
+        evals_dir = dest / "evals"
+        results = []
+        if evals_dir.is_dir():
+            for f in sorted(evals_dir.glob("*.md")):
+                content = f.read_text(encoding="utf-8")
+                parsed = _parse_eval(content)
+                if category is not None and parsed["category"] != category:
+                    continue
+                results.append({
+                    "name": f.stem,
+                    "title": parsed["title"],
+                    "category": parsed["category"],
+                    "scope": parsed["scope"],
+                })
+        emit_json(results)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@eval_app.command("show")
+def eval_show(
+    name: str,
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Show an enabled eval criterion's content."""
+    try:
+        _, dest, _, _, _ = load_version(commit)
+        path = dest / "evals" / f"{name}.md"
+        if not path.exists():
+            raise KatzError(f"Eval '{name}' is not enabled", "not_found", {"name": name})
+        content = path.read_text(encoding="utf-8")
+        parsed = _parse_eval(content)
+        emit_json({
+            "name": name,
+            "category": parsed["category"],
+            "scope": parsed["scope"],
+            "title": parsed["title"],
+            "body": parsed["body"],
+            "content": content,
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@eval_app.command("remove")
+def eval_remove(
+    name: str,
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Remove an enabled eval criterion."""
+    try:
+        _, dest, _, _, _ = load_version(commit)
+        path = dest / "evals" / f"{name}.md"
+        if not path.exists():
+            raise KatzError(f"Eval '{name}' is not enabled", "not_found", {"name": name})
+        path.unlink()
+        emit_json({"removed": name})
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@eval_app.command("respond")
+def eval_respond(
+    name: str = typer.Option(..., "--name"),
+    text: str = typer.Option(..., "--text"),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Record a narrative response for an eval criterion."""
+    try:
+        _, dest, _, _, _ = load_version(commit)
+        # Verify the criterion is enabled
+        eval_path = dest / "evals" / f"{name}.md"
+        if not eval_path.exists():
+            raise KatzError(f"Eval '{name}' is not enabled", "not_found", {"name": name})
+        parsed = _parse_eval(eval_path.read_text(encoding="utf-8"))
+
+        results_dir = dest / "eval_results"
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        record = {
+            "criterion": name,
+            "category": parsed["category"],
+            "scope": parsed["scope"],
+            "response": text,
+            "timestamp": now_utc(),
+        }
+        out_path = results_dir / f"{name}.json"
+        write_json(out_path, record)
+        emit_json(record)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@eval_app.command("results")
+def eval_results(
+    category: Optional[str] = typer.Option(None, "--category"),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """List all eval responses for the active version."""
+    try:
+        _, dest, _, _, _ = load_version(commit)
+        results_dir = dest / "eval_results"
+        results = []
+        if results_dir.is_dir():
+            for f in sorted(results_dir.glob("*.json")):
+                record = read_json(f)
+                if category is not None and record.get("category") != category:
+                    continue
+                results.append(record)
+        emit_json(results)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+# ---------------------------------------------------------------------------
+# Guide commands
+# ---------------------------------------------------------------------------
 
 
 @guide_app.command("overview")

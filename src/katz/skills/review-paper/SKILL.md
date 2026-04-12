@@ -19,14 +19,77 @@ Orchestrates a full paper review using katz. Start here.
 
 Run `katz guide overview` to understand what katz can do and how to use it.
 
-Then follow the typical workflow:
+Then follow the typical workflow. At each step, **check prerequisites before proceeding** — if a step is already done, skip it.
 
-1. `katz guide skill register-paper` — convert PDF and register the manuscript
-2. `katz guide skill chunk-paper` — add section boundaries
-3. `katz guide skill configure-spotters` — choose what to look for
-4. `katz guide skill edsl-find-issues` — find issues in parallel (3 models × N spotters × M sections)
-5. `katz guide skill investigate-issues` — verify flagged issues (expect ~5–10% confirmation rate)
-6. (Optional) Generate HTML report and/or file a GitHub issue
+### 1. Register the paper
+
+Check: `katz paper status` — if `"valid": true`, skip to step 2.
+
+Otherwise: `katz guide skill register-paper` — convert the PDF to markdown and register it.
+
+### 2. Chunk into sections
+
+Check: `katz paper status` — if `"sections"` > 0, skip to step 3.
+
+Quick path: `katz paper auto-chunk` — automatically detects markdown headings and creates sections. Verify with `katz paper status` and spot-check a few sections with `katz paper section <id>`.
+
+Manual path: `katz guide skill chunk-paper` — for more control over section boundaries.
+
+### 3. Configure spotters
+
+Check: `katz spotter list` — if spotters are already enabled, skip to step 4.
+
+Follow: `katz guide skill configure-spotters` — read the paper, enable relevant spotters from the catalog, and add custom ones for paper-specific concerns.
+
+### 4. Evaluate the paper
+
+Check: `katz eval list` — if criteria are already enabled, proceed. Otherwise:
+
+```bash
+katz eval init-catalog
+```
+
+Then enable the criteria you want (or enable all):
+
+```bash
+# Enable specific ones
+katz eval enable abstract_conveys_findings
+katz eval enable design_matches_claims
+# ... etc
+```
+
+Follow: `katz guide skill eval-paper` — read the paper and write narrative responses for each criterion.
+
+### 5. Find issues
+
+Run: `katz guide skill edsl-find-issues` — runs the EDSL-parallelized issue finder.
+
+By default, uses 2 models (Claude Opus + GPT-5.4) and katz-enabled spotters.
+- Pass `--models 3` to add Gemini.
+- Pass `--builtin-spotters` to use the 5 built-in spotters instead of katz-enabled ones.
+- The script automatically deduplicates near-identical issues after filing.
+
+### 6. Investigate issues
+
+Follow: `katz guide skill investigate-issues` — review each draft issue against the manuscript. Expect ~5–10% confirmation rate.
+
+For each issue, read the manuscript context, determine a verdict (confirmed/rejected/uncertain), and record it with `katz issue investigate` and `katz issue update`.
+
+### 7. Generate issue report
+
+Run the report generator for the detailed issue-level HTML report:
+
+```bash
+python <katz-skills-path>/find-issues/scripts/generate_review_report.py
+```
+
+Then open `.katz/review.html` to see the full report with issue cards, investigation verdicts, and manuscript quotes.
+
+### 8. Write referee report
+
+Follow: `katz guide skill referee-report` — synthesize the investigated issues into a narrative referee report.
+
+This produces `.katz/referee_report.md` — a structured, professional review suitable for sharing with authors or an editor.
 
 At each step, read the skill instructions and follow them. Use `katz guide script <path>` to inspect any scripts before running them.
 
@@ -38,24 +101,11 @@ A typical review of a 30-page paper with 14 spotters takes:
 |------|------|
 | Register + chunk | 2–5 min (PDF conversion is the bottleneck) |
 | Configure spotters | 2–3 min |
+| Evaluate (eval-paper) | 3–5 min |
 | EDSL sweep | 5–10 min (parallelized across EDSL remote runner) |
 | Investigation | 5–10 min (batch script approach) |
-| Report + GitHub issue | 1–2 min |
-| **Total** | **~15–30 min** |
-
-## (Optional) Generating the HTML report
-
-After investigation, you can generate an HTML report:
-
-```bash
-python <katz-skills-path>/find-issues/scripts/generate_review_report.py
-```
-
-This writes `.katz/review.html`. Copy it to the repo root if desired:
-
-```bash
-cp .katz/review.html REVIEW.html
-```
+| Report + referee report | 2–3 min |
+| **Total** | **~20–35 min** |
 
 ## (Optional) Creating a GitHub issue
 

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Find issues in a katz-registered manuscript using EDSL parallel review.
 
-Runs the cross-product of (section × spotter × model) via EDSL with three
-frontier models (Claude, GPT, Gemini), all with thinking/reasoning maxed out.
-Files each discovered issue with `katz issue write`.
+Runs the cross-product of (section × spotter × model) via EDSL with two
+frontier models (Claude Opus, GPT-5.4) by default, all with thinking/reasoning
+maxed out. Files each discovered issue with `katz issue write`.
 
 Usage:
     python edsl_find_issues.py                        # all sections
     python edsl_find_issues.py --section introduction  # one section
     python edsl_find_issues.py --spotters-dir ./spotters  # custom spotters
+    python edsl_find_issues.py --models 3             # use 3 models (adds Gemini)
 """
 
 import argparse
@@ -115,25 +116,31 @@ BUILTIN_SPOTTERS = [
 ]
 
 
-def build_models():
-    """Build ModelList with 3 frontier models, thinking/reasoning maxed out."""
-    return ModelList([
-        Model(
-            "claude-opus-4-20250514",
-            service_name="anthropic",
-            # thinking param breaks EDSL remote runner; Opus reasons well without it
-        ),
-        Model(
-            "gpt-5.4",
-            service_name="openai",
-            reasoning_effort="high",
-        ),
-        Model(
-            "gemini-3.1-pro-preview",
-            service_name="google",
-            thinking_budget=10000,
-        ),
-    ])
+ALL_MODELS = [
+    lambda: Model(
+        "claude-opus-4-20250514",
+        service_name="anthropic",
+        # thinking param breaks EDSL remote runner; Opus reasons well without it
+    ),
+    lambda: Model(
+        "gpt-5.4",
+        service_name="openai",
+        reasoning_effort="high",
+    ),
+    lambda: Model(
+        "gemini-3.1-pro-preview",
+        service_name="google",
+        thinking_budget=10000,
+    ),
+]
+
+
+def build_models(n_models=2):
+    """Build ModelList with n frontier models, thinking/reasoning maxed out.
+
+    Default is 2 (Claude Opus + GPT-5.4). Pass 3 to add Gemini.
+    """
+    return ModelList([factory() for factory in ALL_MODELS[:n_models]])
 
 
 def run_katz(*args):
@@ -205,24 +212,32 @@ def parse_issue_json(text):
     return None
 
 
-def file_issue(title, body, quoted_text, section_id):
+def file_issue(title, body, quoted_text, section_id, spotter_name=None):
     """Use katz paper find + katz issue write to file an issue."""
     byte_start, byte_end = None, None
-    if quoted_text:
-        snippet = quoted_text[:100].strip()
-        try:
-            results = run_katz("paper", "find", snippet)
-            if results:
-                byte_start = results[0]["byte_start"]
-                byte_end = results[0]["byte_end"]
-        except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError):
-            pass
 
+    # Try to locate the quoted text in the manuscript
+    if quoted_text:
+        snippet = quoted_text.strip()
+        # Try progressively shorter prefixes for fuzzy matching
+        for length in (len(snippet), 200, 100, 60):
+            if length > len(snippet):
+                continue
+            try:
+                results = run_katz("paper", "find", snippet[:length])
+                if results:
+                    byte_start = results[0]["byte_start"]
+                    byte_end = results[0]["byte_end"]
+                    break
+            except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError):
+                continue
+
+    # Fallback: use the full section range (not just first 100 bytes)
     if byte_start is None:
         try:
             sec_info = run_katz("paper", "section", section_id)
             byte_start = sec_info["byte_start"]
-            byte_end = min(sec_info["byte_start"] + 100, sec_info["byte_end"])
+            byte_end = sec_info["byte_end"]
         except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError):
             print(f"  WARNING: Could not locate text for issue '{title}' — skipping")
             return None
@@ -234,10 +249,17 @@ def file_issue(title, body, quoted_text, section_id):
         "--byte-end", str(byte_end),
         "--body", body[:2000],
     ]
+    if spotter_name:
+        cmd.extend(["--spotter", spotter_name])
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"  WARNING: katz issue write failed for '{title}': {result.stderr.strip()}")
-        return None
+        # If spotter not registered in katz, retry without --spotter
+        if spotter_name and "not registered" in result.stderr:
+            cmd = [c for c in cmd if c != "--spotter" and c != spotter_name]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"  WARNING: katz issue write failed for '{title}': {result.stderr.strip()}")
+            return None
     return json.loads(result.stdout)
 
 
@@ -269,7 +291,7 @@ def results_to_issues(results):
         desc = issue_data.get("description", "")
         body = f"[{spotter_name}] [{model_name}] {desc}"
 
-        filed = file_issue(title, body, quoted, section_id)
+        filed = file_issue(title, body, quoted, section_id, spotter_name=spotter_name)
         if filed:
             issues_filed += 1
             print(f"  [{section_id}] [{model_name}] {title}")
@@ -277,10 +299,79 @@ def results_to_issues(results):
     return issues_found, issues_filed
 
 
+def _title_words(title):
+    """Normalize a title to a set of lowercase content words."""
+    stop = {"a", "an", "the", "is", "are", "in", "of", "for", "and", "or", "to", "with", "from", "on", "by", "not", "no"}
+    return {w for w in re.sub(r"[^a-z0-9 ]", " ", title.lower()).split() if w not in stop and len(w) > 2}
+
+
+def dedup_issues():
+    """Mark near-duplicate draft issues as wontfix.
+
+    Two issues are duplicates if they share overlapping byte ranges and
+    have >50% word overlap in their titles. Keeps the first-filed issue.
+    """
+    try:
+        issues = run_katz("issue", "list", "--state", "draft")
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return 0
+
+    # Get full records to access byte ranges
+    full_issues = []
+    for iss in issues:
+        try:
+            full = run_katz("issue", "show", iss["id"])
+            full_issues.append(full)
+        except (subprocess.CalledProcessError, json.JSONDecodeError):
+            continue
+
+    seen = []  # (byte_start, byte_end, title_words, id)
+    deduped = 0
+    for iss in sorted(full_issues, key=lambda i: i.get("created_at", "")):
+        loc = iss.get("location", {})
+        bs = loc.get("byte_start", -1)
+        be = loc.get("byte_end", -1)
+        tw = _title_words(iss.get("title", ""))
+
+        is_dup = False
+        for s_bs, s_be, s_tw, _ in seen:
+            # Check byte range overlap
+            overlap = max(0, min(be, s_be) - max(bs, s_bs))
+            span = max(1, min(be - bs, s_be - s_bs))
+            if overlap / span < 0.5:
+                continue
+            # Check title similarity
+            if not tw or not s_tw:
+                continue
+            jaccard = len(tw & s_tw) / len(tw | s_tw)
+            if jaccard > 0.5:
+                is_dup = True
+                break
+
+        if is_dup:
+            try:
+                subprocess.run(
+                    ["katz", "issue", "update", "--id", iss["id"],
+                     "--state", "wontfix", "--reason", "Duplicate of earlier issue"],
+                    capture_output=True, text=True, check=True,
+                )
+                deduped += 1
+            except subprocess.CalledProcessError:
+                pass
+        else:
+            seen.append((bs, be, tw, iss["id"]))
+
+    return deduped
+
+
 def main():
     parser = argparse.ArgumentParser(description="EDSL-parallel issue finder for katz")
     parser.add_argument("--section", help="Scan only this section ID")
-    parser.add_argument("--spotters-dir", help="Directory of .md spotter files (uses built-ins if omitted)")
+    parser.add_argument("--spotters-dir", help="Directory of .md spotter files")
+    parser.add_argument("--builtin-spotters", action="store_true",
+                        help="Use built-in spotters instead of katz-enabled ones")
+    parser.add_argument("--models", type=int, default=2,
+                        help="Number of models to use (default: 2; max: 3)")
     parser.add_argument("--dry-run", action="store_true", help="Print scenarios without running")
     args = parser.parse_args()
 
@@ -297,18 +388,27 @@ def main():
     else:
         sections = [s for s in all_sections if s["id"] not in skip_sections]
 
-    # Load spotters
+    # Load spotters: explicit dir > katz-enabled > built-in
     if args.spotters_dir:
         spotters = load_spotters(args.spotters_dir)
-    else:
+    elif args.builtin_spotters:
         spotters = BUILTIN_SPOTTERS
+    else:
+        # Default: use katz-enabled spotters for the current version
+        version_spotters_dir = Path(f".katz/versions/{commit}/spotters")
+        if version_spotters_dir.is_dir() and any(version_spotters_dir.glob("*.md")):
+            spotters = load_spotters(version_spotters_dir)
+            print(f"Using {len(spotters)} katz-enabled spotters from {version_spotters_dir}")
+        else:
+            spotters = BUILTIN_SPOTTERS
+            print("No katz-enabled spotters found; using 5 built-in spotters")
 
     # Read section text
     section_texts = {}
     for sec in sections:
         section_texts[sec["id"]] = read_section_text(commit, sec)
 
-    models = build_models()
+    models = build_models(n_models=min(args.models, len(ALL_MODELS)))
     n_models = len(models)
     n_pairs = len(sections) * len(spotters)
 
@@ -374,6 +474,12 @@ def main():
         found, filed = results_to_issues(results)
         total_found += found
         total_filed += filed
+
+    # Deduplicate issues that overlap in byte range and have similar titles
+    if total_filed > 0:
+        deduped = dedup_issues()
+        if deduped:
+            print(f"Deduplicated: merged {deduped} near-duplicate issues")
 
     print(f"\nDone: {total_found} issues found, {total_filed} filed to katz")
 

@@ -26,7 +26,7 @@ Reads the manuscript, determines what kind of paper it is, loads default spotter
 Run `katz spotter catalog`. If empty, initialize it:
 
 ```bash
-katz spotter init-catalog --preset social-science
+katz spotter init-catalog 
 ```
 
 This populates `.katz/spotters/` (the repo-level catalog) with 13 default spotters. This does NOT enable any of them for the current paper.

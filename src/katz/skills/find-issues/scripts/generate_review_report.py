@@ -86,7 +86,22 @@ def escape(text):
     )
 
 
-def build_html(status, sections, issues):
+def resolve_text(manuscript, loc):
+    """Resolve full text from line range in the manuscript."""
+    line_start = loc.get("line_start")
+    line_end = loc.get("line_end")
+    if line_start is not None and line_end is not None and manuscript:
+        lines = manuscript.split("\n")
+        # line numbers are 1-based
+        selected = lines[line_start - 1 : line_end]
+        text = "\n".join(selected).strip()
+        if len(text) > 600:
+            text = text[:600].rsplit(" ", 1)[0] + "..."
+        return text
+    return loc.get("resolved_text", "")
+
+
+def build_html(status, sections, issues, manuscript=None):
     commit = status["commit"]
     short_commit = commit[:8]
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -125,9 +140,26 @@ def build_html(status, sections, issues):
         issue_cards.append(f'<h3 id="{sid}">{escape(sec["title"])}</h3>')
         for iss in sorted(sec_issues, key=lambda i: i["location"].get("line_start", 0)):
             loc = iss["location"]
-            resolved = escape(loc.get("resolved_text", ""))
+            resolved = escape(resolve_text(manuscript, loc))
             body = escape(iss.get("body", ""))
             lines = f'L{loc["line_start"]}–L{loc["line_end"]}' if loc.get("line_start") else ""
+            # Build investigation notes HTML
+            inv_html = ""
+            investigations = iss.get("investigations", [])
+            if investigations:
+                inv_items = []
+                for inv in investigations:
+                    verdict = inv.get("verdict", "")
+                    notes = escape(inv.get("notes", ""))
+                    verdict_color = {"confirmed": "#ef4444", "rejected": "#10b981", "uncertain": "#f59e0b"}.get(verdict, "#6b7280")
+                    inv_items.append(
+                        f'<div class="investigation">'
+                        f'<span class="inv-verdict" style="color:{verdict_color};font-weight:600">{verdict}</span> '
+                        f'<span class="inv-notes">{notes}</span>'
+                        f'</div>'
+                    )
+                inv_html = '<div class="investigations">' + "".join(inv_items) + '</div>'
+
             issue_cards.append(f"""<div class="issue-card">
   <div class="issue-header">
     {state_badge(iss['state'])}
@@ -136,6 +168,7 @@ def build_html(status, sections, issues):
   </div>
   {f'<div class="resolved-text">{resolved}</div>' if resolved else ''}
   <div class="issue-body">{body}</div>
+  {inv_html}
 </div>""")
 
     # Summary stats
@@ -214,6 +247,10 @@ def build_html(status, sections, issues):
     border-radius: 0 4px 4px 0;
   }}
   .issue-body {{ font-size: 0.85rem; margin-top: 0.4rem; color: #374151; white-space: pre-wrap; }}
+  .investigations {{ margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }}
+  .investigation {{ font-size: 0.85rem; margin-bottom: 0.25rem; }}
+  .inv-verdict {{ text-transform: uppercase; font-size: 0.75rem; }}
+  .inv-notes {{ color: #4b5563; }}
 </style>
 </head>
 <body>
@@ -257,7 +294,8 @@ def main():
     issue_summaries = run_katz("issue", "list")
     issues = get_full_issues(issue_summaries)
 
-    html = build_html(status, sections, issues)
+    manuscript = load_manuscript(commit)
+    html = build_html(status, sections, issues, manuscript)
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(output).write_text(html)
     print(f"Wrote {output} ({len(issues)} issues, {len(sections)} sections)")
