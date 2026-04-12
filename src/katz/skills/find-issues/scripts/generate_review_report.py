@@ -33,6 +33,50 @@ def load_manuscript(commit):
     return path.read_text()
 
 
+def load_eval_criteria(commit):
+    """Load enabled eval criteria from the version's evals/ directory."""
+    evals_dir = Path(f".katz/versions/{commit}/evals")
+    criteria = {}
+    if evals_dir.is_dir():
+        for f in sorted(evals_dir.glob("*.md")):
+            content = f.read_text(encoding="utf-8")
+            # Parse frontmatter
+            frontmatter = {}
+            body = content
+            if content.startswith("---\n"):
+                end = content.find("\n---\n", 4)
+                if end != -1:
+                    import yaml
+                    try:
+                        frontmatter = yaml.safe_load(content[4:end]) or {}
+                    except Exception:
+                        pass
+                    body = content[end + 5:]
+            # Extract title
+            title = f.stem.replace("_", " ").title()
+            for line in body.splitlines():
+                if line.startswith("# "):
+                    title = line[2:].strip()
+                    break
+            criteria[f.stem] = {
+                "title": title,
+                "category": frontmatter.get("category"),
+                "scope": frontmatter.get("scope"),
+                "body": body,
+            }
+    return criteria
+
+
+def load_eval_results(commit):
+    """Load eval responses from the version's eval_results/ directory."""
+    results_dir = Path(f".katz/versions/{commit}/eval_results")
+    results = []
+    if results_dir.is_dir():
+        for f in sorted(results_dir.glob("*.json")):
+            results.append(json.loads(f.read_text(encoding="utf-8")))
+    return results
+
+
 def get_full_issues(issue_summaries):
     """Fetch full records for each issue, merging in section from the summary."""
     issues = []
@@ -101,7 +145,7 @@ def resolve_text(manuscript, loc):
     return loc.get("resolved_text", "")
 
 
-def build_html(status, sections, issues, manuscript=None):
+def build_html(status, sections, issues, manuscript=None, eval_criteria=None, eval_results=None):
     commit = status["commit"]
     short_commit = commit[:8]
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -178,6 +222,52 @@ def build_html(status, sections, issues, manuscript=None):
         if state_counts[state]:
             stats_items.append(f"{state_badge(state)} {state_counts[state]}")
 
+    # Build eval section
+    eval_html = ""
+    if eval_results:
+        eval_criteria = eval_criteria or {}
+        # Group results by category
+        by_category = defaultdict(list)
+        for result in eval_results:
+            cat = result.get("category") or "uncategorized"
+            by_category[cat].append(result)
+
+        eval_cards = []
+        for cat in sorted(by_category.keys()):
+            cat_title = cat.replace("-", " ").replace("_", " ").title()
+            eval_cards.append(f'<h3>{escape(cat_title)}</h3>')
+            for result in by_category[cat]:
+                crit_name = result.get("criterion", "")
+                crit_info = eval_criteria.get(crit_name, {})
+                crit_title = crit_info.get("title", crit_name.replace("_", " ").title())
+                # Get the criterion question text (strip the # Title line)
+                crit_body = crit_info.get("body", "")
+                crit_lines = crit_body.strip().splitlines()
+                # Skip the title line if present
+                question_lines = [l for l in crit_lines if not l.startswith("# ")]
+                question_text = "\n".join(question_lines).strip()
+                # Truncate long criterion text
+                if len(question_text) > 400:
+                    question_text = question_text[:400].rsplit(" ", 1)[0] + "..."
+
+                response = result.get("response", "")
+                scope = result.get("scope")
+                scope_html = f' <span class="eval-scope">{escape(scope)}</span>' if scope else ""
+
+                eval_cards.append(f"""<div class="eval-card">
+  <div class="eval-header">
+    <span class="eval-title">{escape(crit_title)}</span>{scope_html}
+  </div>
+  <div class="eval-question">{escape(question_text)}</div>
+  <div class="eval-response">{escape(response)}</div>
+</div>""")
+
+        eval_html = f"""
+<h2>Evaluations</h2>
+<p style="color:var(--muted);font-size:0.85rem;margin-bottom:1rem">{len(eval_results)} criteria evaluated</p>
+{"".join(eval_cards)}
+"""
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -251,6 +341,36 @@ def build_html(status, sections, issues, manuscript=None):
   .investigation {{ font-size: 0.85rem; margin-bottom: 0.25rem; }}
   .inv-verdict {{ text-transform: uppercase; font-size: 0.75rem; }}
   .inv-notes {{ color: #4b5563; }}
+  .eval-card {{
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.6rem;
+  }}
+  .eval-header {{ display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }}
+  .eval-title {{ font-weight: 600; font-size: 0.9rem; }}
+  .eval-scope {{
+    color: var(--muted);
+    font-size: 0.75rem;
+    background: var(--border);
+    padding: 0.1em 0.4em;
+    border-radius: 3px;
+  }}
+  .eval-question {{
+    font-size: 0.8rem;
+    color: var(--muted);
+    font-style: italic;
+    margin-bottom: 0.5rem;
+    white-space: pre-wrap;
+  }}
+  .eval-response {{
+    font-size: 0.85rem;
+    color: #374151;
+    white-space: pre-wrap;
+    border-left: 3px solid var(--accent);
+    padding-left: 0.7rem;
+  }}
 </style>
 </head>
 <body>
@@ -268,6 +388,8 @@ def build_html(status, sections, issues, manuscript=None):
   <span class="total">{total} issue{"s" if total != 1 else ""}</span>
   {"".join(stats_items)}
 </div>
+
+{eval_html}
 
 <h2>Sections</h2>
 <table>
@@ -295,10 +417,13 @@ def main():
     issues = get_full_issues(issue_summaries)
 
     manuscript = load_manuscript(commit)
-    html = build_html(status, sections, issues, manuscript)
+    eval_criteria = load_eval_criteria(commit)
+    eval_results = load_eval_results(commit)
+    html = build_html(status, sections, issues, manuscript, eval_criteria, eval_results)
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(output).write_text(html)
-    print(f"Wrote {output} ({len(issues)} issues, {len(sections)} sections)")
+    n_evals = len(eval_results)
+    print(f"Wrote {output} ({len(issues)} issues, {len(sections)} sections, {n_evals} evaluations)")
 
 
 if __name__ == "__main__":
