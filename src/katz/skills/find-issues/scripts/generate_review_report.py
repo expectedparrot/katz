@@ -334,12 +334,24 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
                     question_text = question_text[:400].rsplit(" ", 1)[0] + "..."
 
                 response = result.get("response", "")
+                grade = result.get("grade")
                 scope = result.get("scope")
                 scope_html = f' <span class="eval-scope">{escape(scope)}</span>' if scope else ""
+                grade_html = ""
+                if grade:
+                    grade_colors = {
+                        "A+": "#16a34a", "A": "#16a34a", "A-": "#22c55e",
+                        "B+": "#2563eb", "B": "#2563eb", "B-": "#60a5fa",
+                        "C+": "#f59e0b", "C": "#f59e0b", "C-": "#fbbf24",
+                        "D+": "#f97316", "D": "#f97316", "D-": "#fb923c",
+                        "F": "#ef4444",
+                    }
+                    gc = grade_colors.get(grade, "#6b7280")
+                    grade_html = f' <span class="grade-pill" style="background:{gc}">{escape(grade)}</span>'
 
                 eval_cards.append(f"""<div class="eval-card">
   <div class="eval-header">
-    <span class="eval-title">{escape(crit_title)}</span>{scope_html}
+    <span class="eval-title">{escape(crit_title)}</span>{grade_html}{scope_html}
   </div>
   <div class="eval-question">{escape(question_text)}</div>
   <div class="eval-response">{escape(response)}</div>
@@ -571,6 +583,16 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
   }}
   .eval-header {{ display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }}
   .eval-title {{ font-weight: 600; font-size: 0.9rem; }}
+  .grade-pill {{
+    display: inline-block;
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 0.1em 0.5em;
+    border-radius: 9999px;
+    vertical-align: middle;
+    margin-left: 0.3rem;
+  }}
   .eval-scope {{
     color: var(--muted);
     font-size: 0.75rem;

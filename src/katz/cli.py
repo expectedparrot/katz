@@ -1669,14 +1669,24 @@ def eval_remove(
         fail(exc.message, exc.code, exc.details)
 
 
+VALID_GRADES = {"A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"}
+
+
 @eval_app.command("respond")
 def eval_respond(
     name: str = typer.Option(..., "--name"),
     text: str = typer.Option(..., "--text"),
+    grade: Optional[str] = typer.Option(None, "--grade"),
     commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
-    """Record a narrative response for an eval criterion."""
+    """Record a narrative response and optional letter grade for an eval criterion."""
     try:
+        if grade is not None and grade not in VALID_GRADES:
+            raise KatzError(
+                f"Invalid grade: '{grade}'",
+                "validation_error",
+                {"grade": grade, "valid": sorted(VALID_GRADES)},
+            )
         _, dest, _, _, _ = load_version(commit)
         # Verify the criterion is enabled
         eval_path = dest / "evals" / f"{name}.md"
@@ -1692,6 +1702,7 @@ def eval_respond(
             "category": parsed["category"],
             "scope": parsed["scope"],
             "response": text,
+            "grade": grade,
             "timestamp": now_utc(),
         }
         out_path = results_dir / f"{name}.json"

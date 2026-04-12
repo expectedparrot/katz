@@ -55,21 +55,39 @@ Then read the corresponding lines from `.katz/versions/<commit>/paper/manuscript
 
 If the criterion has no scope, read whatever parts of the manuscript are relevant to the question. For paper-level questions (contribution, positioning in literature), you may need to read the introduction, discussion, and conclusion.
 
-#### c. Write a narrative response
+#### c. Write a narrative response and assign a grade
 
-Write a substantive response that addresses the criterion's question. Guidelines:
+Write a substantive response that addresses the criterion's question, then assign a letter grade. Guidelines for the narrative:
 
 - **Be honest.** If something is weak, say so clearly. If something is strong, say that too. The value of this evaluation is candor, not diplomacy.
 - **Be specific.** Reference specific passages, sections, or line numbers. "The abstract is clear" is not useful. "The abstract states the three main findings in lines 8-9 but omits the decomposition model" is useful.
 - **Be constructive.** When identifying a weakness, suggest what would improve it.
-- **Don't grade.** No scores, no "7/10", no "good/fair/poor." Just describe what you see and what it means.
 - **Keep it concise.** 2-5 sentences per criterion is usually right. Don't pad.
+
+Guidelines for the grade:
+
+| Grade | Meaning |
+|---|---|
+| **A+** | Exemplary — could be used as a teaching example of how to do this well |
+| **A** | Strong — meets the criterion clearly and completely |
+| **A-** | Good — meets the criterion with minor room for improvement |
+| **B+** | Adequate — meets the criterion but with notable gaps |
+| **B** | Acceptable — partially meets the criterion; meaningful improvements possible |
+| **B-** | Marginal — barely meets the criterion; significant improvements needed |
+| **C+** | Weak — important deficiencies that should be addressed |
+| **C** | Poor — the criterion is largely unmet |
+| **C-** | Very poor — serious problems |
+| **D/F** | Failing — the criterion is not met at all |
+
+The grade should be calibrated against published papers in good field journals, not against perfection. Most criteria in a solid working paper should land in the A-to-B range. Grades below B- should be reserved for genuine problems. Do not grade inflate — a B+ is a real grade, not a consolation prize.
 
 #### d. Record the response
 
 ```bash
-katz eval respond --name <name> --text "Your narrative response here"
+katz eval respond --name <name> --grade "B+" --text "Your narrative response here"
 ```
+
+The `--grade` flag accepts: A+, A, A-, B+, B, B-, C+, C, C-, D+, D, D-, F.
 
 ### 3. Report
 
