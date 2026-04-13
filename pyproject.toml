@@ -11,6 +11,7 @@ dependencies = [
 
 [project.scripts]
 katz = "katz.cli:app"
+autokatz = "katz.autokatz:main"
 
 [build-system]
 requires = ["hatchling"]
