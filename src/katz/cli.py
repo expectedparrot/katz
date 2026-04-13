@@ -1060,6 +1060,78 @@ def issue_update(
         fail(exc.message, exc.code, exc.details)
 
 
+@issue_app.command("merge")
+def issue_merge(
+    ids: str = typer.Option(..., "--ids", help="Comma-separated issue IDs to merge"),
+    title: Optional[str] = typer.Option(None, "--title"),
+    body: Optional[str] = typer.Option(None, "--body"),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Merge multiple issues into a single parent. Children become wontfix."""
+    try:
+        child_ids = [i.strip() for i in ids.split(",") if i.strip()]
+        if len(child_ids) < 2:
+            raise KatzError("Merge requires at least 2 issue IDs", "validation_error")
+
+        resolved, dest, _, _, canonical = load_version(commit)
+
+        # Load and validate all children
+        children = []
+        for cid in child_ids:
+            child_dir = _issue_dir(dest, cid)
+            if not (child_dir / "issue.json").exists():
+                raise KatzError(f"Issue does not exist: {cid}", "not_found", {"id": cid})
+            children.append(read_json(child_dir / "issue.json"))
+
+        # Build parent issue
+        if title is None:
+            title = children[0].get("title", "Merged issue")
+        if body is None:
+            parts = []
+            for child in children:
+                child_title = child.get("title", "")
+                child_body = child.get("body", "")
+                parts.append(f"[{child['id'][:12]}] {child_title}: {child_body}")
+            body = "\n\n".join(parts)
+
+        # Union byte range across all children
+        byte_starts = [c["location"]["byte_start"] for c in children if isinstance(c.get("location"), dict) and "byte_start" in c["location"]]
+        byte_ends = [c["location"]["byte_end"] for c in children if isinstance(c.get("location"), dict) and "byte_end" in c["location"]]
+        byte_start = min(byte_starts) if byte_starts else 0
+        byte_end = max(byte_ends) if byte_ends else 1
+
+        parent_id = uuid.uuid4().hex
+        timestamp = now_utc()
+        record = {
+            "schema_version": 2,
+            "id": parent_id,
+            "commit": resolved,
+            "title": title,
+            "body": body[:2000],
+            "spotter": None,
+            "location": resolve_location(canonical, byte_start, byte_end),
+            "created_at": timestamp,
+            "meta": {"merged_from": child_ids},
+        }
+        parent_dir = _issue_dir(dest, parent_id)
+        (parent_dir / "status").mkdir(parents=True, exist_ok=True)
+        (parent_dir / "investigations").mkdir(parents=True, exist_ok=True)
+        write_json(parent_dir / "issue.json", record)
+        status_record = {"state": "draft", "reason": "created via merge", "timestamp": timestamp}
+        write_json(parent_dir / "status" / event_filename(), status_record)
+
+        # Mark children as wontfix
+        for cid in child_ids:
+            child_dir = _issue_dir(dest, cid)
+            wontfix = {"state": "wontfix", "reason": f"Merged into {parent_id}", "timestamp": timestamp}
+            write_json(child_dir / "status" / event_filename(), wontfix)
+
+        record["state"] = "draft"
+        emit_json(record)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
 @issue_app.command("investigate")
 def issue_investigate(
     issue_id: str = typer.Option(..., "--id"),

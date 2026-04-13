@@ -432,6 +432,76 @@ def test_issue_investigate_and_update(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue merge
+# ---------------------------------------------------------------------------
+
+
+def test_issue_merge_basic(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+
+    i1 = katz(repo, "issue", "write", "--title", "Bias claim v1",
+              "--byte-start", "0", "--byte-end", "10", "--body", "From model A")
+    i2 = katz(repo, "issue", "write", "--title", "Bias claim v2",
+              "--byte-start", "0", "--byte-end", "10", "--body", "From model B")
+    i3 = katz(repo, "issue", "write", "--title", "Bias claim v3",
+              "--byte-start", "0", "--byte-end", "10", "--body", "From model C")
+
+    parent = katz(repo, "issue", "merge",
+                  "--ids", f"{i1['id']},{i2['id']},{i3['id']}",
+                  "--title", "Bias claim (merged)")
+
+    assert parent["title"] == "Bias claim (merged)"
+    assert parent["state"] == "draft"
+    assert parent["meta"]["merged_from"] == [i1["id"], i2["id"], i3["id"]]
+
+    # Children should be wontfix
+    for child_id in [i1["id"], i2["id"], i3["id"]]:
+        shown = katz(repo, "issue", "show", child_id)
+        assert shown["state"] == "wontfix"
+
+    # Parent should show up in draft list, children should not
+    drafts = katz(repo, "issue", "list", "--state", "draft")
+    draft_ids = {d["id"] for d in drafts}
+    assert parent["id"] in draft_ids
+    assert i1["id"] not in draft_ids
+
+
+def test_issue_merge_union_byte_range(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+
+    i1 = katz(repo, "issue", "write", "--title", "Issue A",
+              "--byte-start", "10", "--byte-end", "20", "--body", "A")
+    i2 = katz(repo, "issue", "write", "--title", "Issue B",
+              "--byte-start", "50", "--byte-end", "80", "--body", "B")
+
+    parent = katz(repo, "issue", "merge", "--ids", f"{i1['id']},{i2['id']}")
+
+    # Parent byte range should be the union: 10-80
+    assert parent["location"]["byte_start"] == 10
+    assert parent["location"]["byte_end"] == 80
+
+
+def test_issue_merge_default_title_from_first(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+
+    i1 = katz(repo, "issue", "write", "--title", "First issue title",
+              "--byte-start", "0", "--byte-end", "10", "--body", "A")
+    i2 = katz(repo, "issue", "write", "--title", "Second",
+              "--byte-start", "0", "--byte-end", "10", "--body", "B")
+
+    parent = katz(repo, "issue", "merge", "--ids", f"{i1['id']},{i2['id']}")
+    assert parent["title"] == "First issue title"
+
+
+def test_issue_merge_rejects_single_id(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    i1 = katz(repo, "issue", "write", "--title", "Solo",
+              "--byte-start", "0", "--byte-end", "10", "--body", "A")
+    err = katz_fail(repo, "issue", "merge", "--ids", i1["id"])
+    assert err["code"] == "validation_error"
+
+
+# ---------------------------------------------------------------------------
 # Issue suggestions
 # ---------------------------------------------------------------------------
 

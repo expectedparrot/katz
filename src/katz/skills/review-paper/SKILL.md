@@ -69,13 +69,23 @@ By default, uses 2 models (Claude Opus + GPT-5.4) and katz-enabled spotters.
 - Pass `--builtin-spotters` to use the 5 built-in spotters instead of katz-enabled ones.
 - The script automatically deduplicates near-identical issues after filing.
 
-### 6. Investigate issues
+### 6. Merge duplicate issues
+
+The EDSL sweep often produces many near-duplicates (e.g., 5 issues about the same claim from different models). Before investigating, merge them:
+
+```bash
+katz issue merge --ids <id1>,<id2>,<id3> --title "Concise merged title"
+```
+
+This creates a single parent issue and marks the children as wontfix. Read through `katz issue list --state draft` and merge issues that point to the same underlying concern.
+
+### 7. Investigate issues
 
 Follow: `katz guide skill investigate-issues` — review each draft issue against the manuscript. Expect ~5–10% confirmation rate.
 
 For each issue, read the manuscript context, determine a verdict (confirmed/rejected/uncertain), and record it with `katz issue investigate` and `katz issue update`.
 
-### 7. Generate issue report
+### 8. Generate issue report
 
 Run the report generator for the detailed issue-level HTML report:
 
@@ -85,7 +95,7 @@ python <katz-skills-path>/find-issues/scripts/generate_review_report.py
 
 Then open `.katz/review.html` to see the full report with issue cards, investigation verdicts, and manuscript quotes.
 
-### 8. Write referee report
+### 9. Write referee report
 
 Follow: `katz guide skill referee-report` — synthesize the investigated issues into a narrative referee report.
 
