@@ -267,20 +267,22 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
             loc = iss["location"]
             raw_body = iss.get("body", "")
             # Extract [tag] pills from the start of body
-            pills_html = ""
             import re as _re
+            all_pills = []
             tag_match = _re.match(r"^(\[[^\]]+\]\s*)+", raw_body)
             if tag_match:
                 tags_str = tag_match.group()
                 remaining_body = raw_body[len(tags_str):].strip()
                 tags = _re.findall(r"\[([^\]]+)\]", tags_str)
-                pills = []
                 for tag in tags:
-                    pills.append(f'<span class="pill">{escape(tag)}</span>')
-                pills_html = '<div class="pills">' + " ".join(pills) + "</div>"
+                    all_pills.append(f'<span class="pill">{escape(tag)}</span>')
             else:
                 remaining_body = raw_body
             body = escape(remaining_body)
+            # Add artifact pills if present
+            for artifact in iss.get("artifacts", []):
+                all_pills.append(f'<span class="pill artifact-pill">{escape(artifact)}</span>')
+            pills_html = '<div class="pills">' + " ".join(all_pills) + "</div>" if all_pills else ""
             ls = loc.get("line_start", 0)
             le = loc.get("line_end", 0)
             lines_label = f'L{ls}–L{le}' if ls else ""
@@ -721,6 +723,10 @@ MathJax = {{
     background: var(--border);
     padding: 0.1em 0.5em;
     border-radius: 9999px;
+  }}
+  .artifact-pill {{
+    color: #7c3aed;
+    background: #ede9fe;
   }}
   .issue-header {{ display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }}
   .issue-title {{ font-weight: 600; font-size: 0.9rem; }}

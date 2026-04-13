@@ -432,6 +432,55 @@ def test_issue_investigate_and_update(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue artifacts
+# ---------------------------------------------------------------------------
+
+
+def test_issue_write_with_artifacts(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+
+    issue = katz(repo, "issue", "write",
+                 "--title", "SE mismatch",
+                 "--byte-start", "0",
+                 "--byte-end", "10",
+                 "--body", "Code uses HC1 but paper says clustered",
+                 "--artifacts", "analysis/table2.R,data/survey.csv")
+
+    assert issue["artifacts"] == ["analysis/table2.R", "data/survey.csv"]
+
+    shown = katz(repo, "issue", "show", issue["id"])
+    assert shown["artifacts"] == ["analysis/table2.R", "data/survey.csv"]
+
+
+def test_issue_write_without_artifacts(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+
+    issue = katz(repo, "issue", "write",
+                 "--title", "No artifacts",
+                 "--byte-start", "0",
+                 "--byte-end", "10",
+                 "--body", "Plain issue")
+
+    assert issue["artifacts"] == []
+
+
+def test_issue_merge_unions_artifacts(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+
+    i1 = katz(repo, "issue", "write", "--title", "A",
+              "--byte-start", "0", "--byte-end", "10", "--body", "A",
+              "--artifacts", "script.R,data.csv")
+    i2 = katz(repo, "issue", "write", "--title", "B",
+              "--byte-start", "0", "--byte-end", "10", "--body", "B",
+              "--artifacts", "data.csv,notebook.ipynb")
+
+    parent = katz(repo, "issue", "merge", "--ids", f"{i1['id']},{i2['id']}")
+
+    # Union with dedup, preserving order
+    assert parent["artifacts"] == ["script.R", "data.csv", "notebook.ipynb"]
+
+
+# ---------------------------------------------------------------------------
 # Issue merge
 # ---------------------------------------------------------------------------
 

@@ -1002,6 +1002,7 @@ def issue_write(
     body: str = typer.Option(..., "--body"),
     state: str = typer.Option("draft", "--state"),
     spotter: Optional[str] = typer.Option(None, "--spotter"),
+    artifacts: Optional[str] = typer.Option(None, "--artifacts", help="Comma-separated list of related repo files (scripts, data, notebooks)"),
     meta: Optional[str] = typer.Option(None, "--meta"),
     commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
@@ -1012,6 +1013,7 @@ def issue_write(
         resolved, dest, _, _, canonical = load_version(commit)
         if spotter is not None and not (dest / "spotters" / f"{spotter}.md").exists():
             raise KatzError(f"Spotter '{spotter}' is not registered", "not_found", {"spotter": spotter})
+        artifact_list = [a.strip() for a in artifacts.split(",") if a.strip()] if artifacts else []
         issue_id = uuid.uuid4().hex
         timestamp = now_utc()
         record = {
@@ -1021,6 +1023,7 @@ def issue_write(
             "title": title,
             "body": body,
             "spotter": spotter,
+            "artifacts": artifact_list,
             "location": resolve_location(canonical, byte_start, byte_end),
             "created_at": timestamp,
             "meta": parse_meta(meta),
@@ -1100,6 +1103,15 @@ def issue_merge(
         byte_start = min(byte_starts) if byte_starts else 0
         byte_end = max(byte_ends) if byte_ends else 1
 
+        # Union artifacts across all children
+        all_artifacts: list[str] = []
+        seen_artifacts: set[str] = set()
+        for child in children:
+            for a in child.get("artifacts", []):
+                if a not in seen_artifacts:
+                    all_artifacts.append(a)
+                    seen_artifacts.add(a)
+
         parent_id = uuid.uuid4().hex
         timestamp = now_utc()
         record = {
@@ -1109,6 +1121,7 @@ def issue_merge(
             "title": title,
             "body": body[:2000],
             "spotter": None,
+            "artifacts": all_artifacts,
             "location": resolve_location(canonical, byte_start, byte_end),
             "created_at": timestamp,
             "meta": {"merged_from": child_ids},
