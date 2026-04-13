@@ -55,11 +55,11 @@ When there are many issues (50+), the one-at-a-time approach is too slow. Instea
            print(f'  {i[\"id\"][:8]} | L{i[\"location\"].get(\"line_start\",\"?\"):>3} | {i[\"title\"]}')
    "
    ```
-3. Write a Python script that maps issue IDs to verdicts and runs `katz issue investigate` + `katz issue update` for each. The script should:
-   - Match specific issue IDs for confirmed/uncertain issues
-   - Use title/pattern matching for bulk rejections of common false-positive categories
-   - Call `katz issue investigate --id <id> --verdict <v> --notes "..."` for each
-   - Call `katz issue update --id <id> --state <s> --reason "..."` for each
+3. Write a Python script that maps issue IDs to verdicts and calls `katz issue investigate` with `--state` for each:
+   ```bash
+   katz issue investigate --id <id> --verdict <v> --notes "..." --state <s>
+   ```
+   The `--state` flag records the investigation AND updates the issue state in one call, avoiding the need to run `katz issue update` separately.
 
 #### Common false-positive categories to reject in bulk
 

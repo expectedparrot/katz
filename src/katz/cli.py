@@ -764,6 +764,29 @@ def paper_status() -> None:
         fail(exc.message, exc.code, exc.details)
 
 
+@paper_app.command("sections")
+def paper_sections(
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """List all sections from paper_map."""
+    try:
+        _, _, _, pmap, _ = load_version(commit)
+        emit_json([
+            {
+                "id": s["id"],
+                "title": s.get("title", ""),
+                "byte_start": s.get("byte_start"),
+                "byte_end": s.get("byte_end"),
+                "line_start": s.get("line_start"),
+                "line_end": s.get("line_end"),
+            }
+            for s in pmap.sections
+            if isinstance(s, dict)
+        ])
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
 @paper_app.command("section")
 def paper_section(
     section_id: str,
@@ -1151,12 +1174,15 @@ def issue_investigate(
     verdict: str = typer.Option(..., "--verdict"),
     evidence: Optional[str] = typer.Option(None, "--evidence"),
     notes: Optional[str] = typer.Option(None, "--notes"),
+    state: Optional[str] = typer.Option(None, "--state", help="Also update issue state (e.g. confirmed, rejected, open)"),
     commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
     """Append an investigation record to an issue."""
     try:
         if verdict not in {"confirmed", "rejected", "uncertain"}:
             raise KatzError("Invalid verdict", "validation_error", {"verdict": verdict})
+        if state is not None and state not in VALID_STATES:
+            raise KatzError("Invalid state", "validation_error", {"state": state, "valid": sorted(VALID_STATES)})
         _, dest, _, _, _ = load_version(commit)
         issue_dir = _issue_dir(dest, issue_id)
         if not (issue_dir / "issue.json").exists():
@@ -1168,6 +1194,14 @@ def issue_investigate(
         if notes is not None:
             inv_record["notes"] = notes
         write_json(issue_dir / "investigations" / event_filename(), inv_record)
+
+        # Optionally update state in the same call
+        if state is not None:
+            reason = notes[:200] if notes else verdict
+            status_record = {"state": state, "reason": reason, "timestamp": timestamp}
+            write_json(issue_dir / "status" / event_filename(), status_record)
+            inv_record["state_updated"] = state
+
         emit_json(inv_record)
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
@@ -1428,6 +1462,58 @@ def spotter_catalog_show(name: str) -> None:
             "description": parsed["description"],
             "investigation": parsed["investigation"],
         })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@spotter_app.command("add")
+def spotter_add(
+    name: str = typer.Option(..., "--name"),
+    scope: str = typer.Option("section", "--scope"),
+    description: str = typer.Option(..., "--description"),
+    investigation: Optional[str] = typer.Option(None, "--investigation"),
+) -> None:
+    """Create a new spotter in the catalog and enable it for the active version."""
+    try:
+        if scope not in VALID_SCOPES:
+            raise KatzError(f"Invalid scope: '{scope}'", "validation_error", {"scope": scope, "valid": sorted(VALID_SCOPES)})
+        slug = _slugify(name)
+        ensure_initialized()
+
+        # Build the spotter markdown content
+        title = name.replace("_", " ").replace("-", " ").title()
+        lines = [
+            f"---",
+            f"scope: {scope}",
+            f"---",
+            f"# {title}",
+            f"",
+            description,
+        ]
+        if investigation:
+            lines.extend(["", "## Investigation", "", investigation])
+        content = "\n".join(lines) + "\n"
+
+        # Write to catalog
+        catalog_dir = katz_root() / "spotters"
+        catalog_dir.mkdir(parents=True, exist_ok=True)
+        catalog_path = catalog_dir / f"{slug}.md"
+        if catalog_path.exists():
+            raise KatzError(f"Spotter '{slug}' already exists in catalog", "validation_error", {"name": slug})
+        catalog_path.write_text(content, encoding="utf-8")
+
+        # Also enable for the active version
+        try:
+            _, dest, _, _, _ = load_version(None)
+            spotters_dir = dest / "spotters"
+            spotters_dir.mkdir(parents=True, exist_ok=True)
+            version_path = spotters_dir / f"{slug}.md"
+            if not version_path.exists():
+                shutil.copyfile(catalog_path, version_path)
+        except KatzError:
+            pass  # No active version — catalog-only is fine
+
+        emit_json({"added": slug, "scope": scope, "catalog": str(catalog_path)})
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 

@@ -7,7 +7,7 @@ user-invocable: true
 
 # EDSL Find Issues
 
-Runs `edsl_find_issues.py` to scan the katz-registered manuscript for issues in parallel using EDSL. Each (section × issue-spotter × model) combination runs as a separate EDSL scenario, enabling full parallelism across the matrix.
+Runs `edsl_find_issues.py` to scan the katz-registered manuscript for issues in parallel using EDSL. The script is scope-aware: `scope: section` spotters run per-section, while `scope: holistic` spotters run once on the full manuscript. This avoids false positives from holistic spotters (e.g., `introduction_flow`) being applied to individual non-introduction sections.
 
 Uses two frontier models by default (pass `--models 3` for three):
 - Claude Opus (default)
@@ -64,8 +64,9 @@ python <katz-skills-path>/edsl-find-issues/scripts/edsl_find_issues.py --dry-run
 The script will:
 - Read sections directly from katz (no further chunking — sections are the unit)
 - Load spotters from katz-enabled spotters, falling back to built-ins
-- Build EDSL scenarios for the (section × spotter × model) cross-product
-- Run the survey in parallel via EDSL remote runner (batched by 3 sections)
+- Parse each spotter's YAML frontmatter to determine its `scope` (section or holistic)
+- Build EDSL scenarios: `(sections × section_spotters × models)` + `(1 × holistic_spotters × models)`
+- Run the survey in parallel via EDSL remote runner (section spotters batched by 3 sections; holistic spotters in one batch)
 - Parse results (handles both JSON and Python-repr single-quoted dicts)
 - File issues via `katz issue write` with the `--spotter` field set
 - Deduplicate near-identical issues (overlapping byte ranges + similar titles)

@@ -171,11 +171,36 @@ def read_section_text(commit, section):
     return "\n".join(lines[start:end])
 
 
+def _parse_spotter_scope(content):
+    """Extract the scope field from a spotter's YAML frontmatter.
+
+    Returns 'section' or 'holistic'.  Defaults to 'section'.
+    """
+    if content.startswith("---\n"):
+        end = content.find("\n---\n", 4)
+        if end != -1:
+            import yaml
+            try:
+                fm = yaml.safe_load(content[4:end]) or {}
+                return fm.get("scope", "section")
+            except Exception:
+                pass
+    return "section"
+
+
 def load_spotters(spotters_dir):
-    """Load issue spotter definitions from markdown files."""
+    """Load issue spotter definitions from markdown files.
+
+    Each spotter dict has 'name', 'content', and 'scope' keys.
+    """
     spotters = []
     for f in sorted(Path(spotters_dir).glob("*.md")):
-        spotters.append({"name": f.stem, "content": f.read_text(encoding="utf-8")})
+        content = f.read_text(encoding="utf-8")
+        spotters.append({
+            "name": f.stem,
+            "content": content,
+            "scope": _parse_spotter_scope(content),
+        })
     return spotters
 
 
@@ -403,28 +428,43 @@ def main():
             spotters = BUILTIN_SPOTTERS
             print("No katz-enabled spotters found; using 5 built-in spotters")
 
+    # Separate section-scope and holistic-scope spotters.
+    # Section spotters run per-section; holistic spotters run once on the full manuscript.
+    section_spotters = [s for s in spotters if s.get("scope", "section") == "section"]
+    holistic_spotters = [s for s in spotters if s.get("scope", "section") == "holistic"]
+
     # Read section text
     section_texts = {}
     for sec in sections:
         section_texts[sec["id"]] = read_section_text(commit, sec)
 
+    # Build full manuscript text for holistic spotters
+    full_manuscript = None
+    if holistic_spotters:
+        manuscript_path = Path(f".katz/versions/{commit}/paper/manuscript.md")
+        full_manuscript = manuscript_path.read_text(encoding="utf-8")
+
     models = build_models(n_models=min(args.models, len(ALL_MODELS)))
     n_models = len(models)
-    n_pairs = len(sections) * len(spotters)
+    n_section_calls = len(sections) * len(section_spotters) * n_models
+    n_holistic_calls = len(holistic_spotters) * n_models
+    n_total_calls = n_section_calls + n_holistic_calls
 
     print(f"Paper: {status['source_root']} @ {commit[:8]}")
-    print(f"Sections: {len(sections)}, Spotters: {len(spotters)}, Models: {n_models}")
-    print(f"Matrix: {len(sections)} × {len(spotters)} × {n_models} = {n_pairs * n_models} total calls")
+    print(f"Sections: {len(sections)}, Section spotters: {len(section_spotters)}, Holistic spotters: {len(holistic_spotters)}, Models: {n_models}")
+    print(f"Section calls: {len(sections)} × {len(section_spotters)} × {n_models} = {n_section_calls}")
+    if holistic_spotters:
+        print(f"Holistic calls: {len(holistic_spotters)} × {n_models} = {n_holistic_calls}")
+    print(f"Total calls: {n_total_calls}")
     for m in models:
         print(f"  - {m._model_}")
     print()
 
     if args.dry_run:
-        n_calls = len(sections) * len(spotters) * n_models
-        print(f"Would run {n_calls} total calls ({len(sections)} sections × {len(spotters)} spotters × {n_models} models).")
+        print(f"Would run {n_total_calls} total calls.")
         return
 
-    q = QuestionFreeText(
+    q_section = QuestionFreeText(
         question_name="spotter_result",
         question_text=PREAMBLE + dedent("""\
             You are reviewing a section of an academic paper. Your task is to look
@@ -445,32 +485,77 @@ def main():
         """),
     )
 
-    # Batch sections to keep each EDSL job's payload under the remote runner limit.
-    # ~3 sections × 5 spotters × 3 models = ~45 calls per batch, well within limits.
+    q_holistic = QuestionFreeText(
+        question_name="spotter_result",
+        question_text=PREAMBLE + dedent("""\
+            You are reviewing an academic paper as a whole. Your task is to look
+            for ONE specific type of issue, described below. This requires reading
+            across multiple sections.
+
+            **Issue spotter instructions**:
+            {{ spotter_instructions }}
+
+            **Full manuscript**:
+            {{ section_content }}
+
+            Apply the issue spotter instructions to the manuscript as a whole.
+            If you find a genuine, substantive issue, return a JSON object:
+              {"title": "short title", "quoted_text": "exact text from paper", "description": "explanation"}
+            If you find NO issue of this type, return exactly: null
+
+            Return ONLY the JSON object or null. No other text.
+        """),
+    )
+
+    # --- Run section-scope spotters in batches ---
     BATCH_SIZE = 3
     total_found = 0
     total_filed = 0
-    for batch_start in range(0, len(sections), BATCH_SIZE):
-        batch = sections[batch_start : batch_start + BATCH_SIZE]
-        batch_num = batch_start // BATCH_SIZE + 1
-        n_batches = (len(sections) + BATCH_SIZE - 1) // BATCH_SIZE
-        batch_names = ", ".join(s["id"] for s in batch)
 
-        scenarios = ScenarioList([
+    if section_spotters:
+        n_batches = (len(sections) + BATCH_SIZE - 1) // BATCH_SIZE
+        for batch_start in range(0, len(sections), BATCH_SIZE):
+            batch = sections[batch_start : batch_start + BATCH_SIZE]
+            batch_num = batch_start // BATCH_SIZE + 1
+            batch_names = ", ".join(s["id"] for s in batch)
+
+            scenarios = ScenarioList([
+                Scenario({
+                    "section_content": section_texts[sec["id"]],
+                    "section_id": sec["id"],
+                    "section_title": sec["title"],
+                    "spotter_name": spotter["name"],
+                    "spotter_instructions": spotter["content"],
+                })
+                for sec in batch
+                for spotter in section_spotters
+            ])
+
+            n_calls = len(scenarios) * n_models
+            print(f"[Batch {batch_num}/{n_batches}] {batch_names} ({n_calls} calls)...")
+            results = q_section.by(scenarios).by(models).run()
+            found, filed = results_to_issues(results)
+            total_found += found
+            total_filed += filed
+
+    # --- Run holistic spotters once on the full manuscript ---
+    if holistic_spotters and full_manuscript:
+        # Use "full-manuscript" as a virtual section ID for holistic spotters.
+        # file_issue will fall back to the full paper range if text lookup fails.
+        holistic_scenarios = ScenarioList([
             Scenario({
-                "section_content": section_texts[sec["id"]],
-                "section_id": sec["id"],
-                "section_title": sec["title"],
+                "section_content": full_manuscript,
+                "section_id": "full-manuscript",
+                "section_title": "Full Manuscript",
                 "spotter_name": spotter["name"],
                 "spotter_instructions": spotter["content"],
             })
-            for sec in batch
-            for spotter in spotters
+            for spotter in holistic_spotters
         ])
 
-        n_calls = len(scenarios) * n_models
-        print(f"[Batch {batch_num}/{n_batches}] {batch_names} ({n_calls} calls)...")
-        results = q.by(scenarios).by(models).run()
+        n_calls = len(holistic_scenarios) * n_models
+        print(f"[Holistic] full manuscript ({n_calls} calls)...")
+        results = q_holistic.by(holistic_scenarios).by(models).run()
         found, filed = results_to_issues(results)
         total_found += found
         total_filed += filed
