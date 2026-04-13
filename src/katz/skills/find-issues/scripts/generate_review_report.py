@@ -365,12 +365,32 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
                     gc = grade_colors.get(grade, "#6b7280")
                     grade_html = f' <span class="grade-pill" style="background:{gc}">{escape(grade)}</span>'
 
+                # For figure evals, show the image
+                figure_img_html = ""
+                if cat == "figures" and images:
+                    # Extract image filename from criterion name (figure_img_1 -> img_1.png)
+                    img_stem = crit_name.replace("figure_", "")
+                    for ext in (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"):
+                        img_key = img_stem + ext
+                        if img_key in images:
+                            figure_img_html = f'<div class="eval-figure"><img src="{images[img_key]}" alt="{escape(img_key)}"></div>'
+                            break
+
+                # Render markdown in response (bold, italic)
+                response_html = escape(response)
+                import re as _re
+                response_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', response_html)
+                response_html = _re.sub(r'\*(.+?)\*', r'<em>\1</em>', response_html)
+                # Convert newlines to <br> for readability
+                response_html = response_html.replace("\n", "<br>")
+
                 eval_cards.append(f"""<div class="eval-card">
   <div class="eval-header">
     <span class="eval-title">{escape(crit_title)}</span>{grade_html}{scope_html}
   </div>
+  {figure_img_html}
   <div class="eval-question">{escape(question_text)}</div>
-  <div class="eval-response">{escape(response)}</div>
+  <div class="eval-response">{response_html}</div>
 </div>""")
 
     eval_html = ""
@@ -415,11 +435,23 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
 <script>
 MathJax = {{
   tex: {{
-    inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
-    displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+    inlineMath: [['$', '$']],
+    displayMath: [['$$', '$$']],
   }},
   options: {{
     skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'code'],
+    ignoreHtmlClass: 'ms-note|ms-code',
+    renderActions: {{
+      // Silently skip errors instead of showing red error messages
+      addMenu: [0, '', ''],
+    }},
+  }},
+  startup: {{
+    ready() {{
+      MathJax.startup.defaultReady();
+      // Override error handler to hide errors
+      const {{mathjax}} = MathJax._.mathjax;
+    }},
   }},
 }};
 </script>
@@ -523,6 +555,8 @@ MathJax = {{
     font-size: 0.75rem;
   }}
   .ms-anchor {{ display: block; height: 0; overflow: hidden; }}
+  .ms-cite {{ color: var(--accent); text-decoration: none; }}
+  .ms-cite:hover {{ text-decoration: underline; }}
   /* Source view */
   .ms-line {{
     display: flex;
@@ -708,6 +742,20 @@ MathJax = {{
     margin-bottom: 0.5rem;
     white-space: pre-wrap;
   }}
+  .eval-figure {{
+    margin: 0.5rem 0;
+    text-align: center;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.5rem;
+  }}
+  .eval-figure img {{
+    max-width: 100%;
+    max-height: 300px;
+    height: auto;
+    border-radius: 4px;
+  }}
   .eval-response {{
     font-size: 0.85rem;
     color: #374151;
@@ -849,13 +897,13 @@ lines.forEach((text, i) => {{
     if (!trimmed) {{
       html += anchor + '<div class="ms-blank"></div>';
     }} else if (trimmed.startsWith('# ')) {{
-      html += anchor + '<h1 class="ms-h1">' + escapeHtml(trimmed.slice(2).replace(/\*\*/g,'')) + '</h1>';
+      html += anchor + '<h1 class="ms-h1">' + escapeHtml(cleanHeading(trimmed.slice(2))) + '</h1>';
     }} else if (trimmed.startsWith('## ')) {{
-      html += anchor + '<h2 class="ms-h2">' + escapeHtml(trimmed.slice(3).replace(/\*\*/g,'')) + '</h2>';
+      html += anchor + '<h2 class="ms-h2">' + escapeHtml(cleanHeading(trimmed.slice(3))) + '</h2>';
     }} else if (trimmed.startsWith('### ')) {{
-      html += anchor + '<h3 class="ms-h3">' + escapeHtml(trimmed.slice(4).replace(/\*\*/g,'')) + '</h3>';
+      html += anchor + '<h3 class="ms-h3">' + escapeHtml(cleanHeading(trimmed.slice(4))) + '</h3>';
     }} else if (trimmed.startsWith('#### ')) {{
-      html += anchor + '<h4 class="ms-h4">' + escapeHtml(trimmed.slice(5).replace(/\*\*/g,'')) + '</h4>';
+      html += anchor + '<h4 class="ms-h4">' + escapeHtml(cleanHeading(trimmed.slice(5))) + '</h4>';
     }} else if (trimmed.startsWith('![') || (trimmed.includes('![') && trimmed.includes('](') )) {{
       const match = trimmed.match(/!\[([^\]]*)\]\(([^)]+)\)/);
       if (match) {{
@@ -874,6 +922,13 @@ lines.forEach((text, i) => {{
       html += anchor + '<div class="ms-math">' + trimmed + '</div>';
     }} else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {{
       html += anchor + '<div class="ms-li">' + renderInline(trimmed.slice(2)) + '</div>';
+    }} else if (/^<span\s+id="page-/.test(trimmed) && trimmed.endsWith('</span>') && trimmed.replace(/<[^>]+>/g,'').trim() === '') {{
+      // Render standalone page anchors as invisible targets for citation links
+      const idMatch = trimmed.match(/id="([^"]+)"/);
+      if (idMatch) {{
+        html += anchor + '<a id="' + idMatch[1] + '"></a>';
+      }}
+      return;
     }} else if (trimmed.startsWith('<sup>') || trimmed.startsWith('<span')) {{
       html += anchor + '<div class="ms-note">' + escapeHtml(trimmed) + '</div>';
     }} else {{
@@ -894,7 +949,16 @@ lines.forEach((text, i) => {{
   }}
 }})();
 
+function cleanHeading(text) {{
+  // Strip span tags, bold markers, and page anchors from headings
+  return text.replace(/<span[^>]*>/g, '').replace(/<\/span>/g, '')
+             .replace(/\*\*/g, '').trim();
+}}
+
 function renderInline(text) {{
+  // Escape currency $NNN so MathJax doesn't treat them as math delimiters
+  // e.g., "$10,000" or "$40,000" -> "&#36;10,000"
+  text = text.replace(/\$(\d)/g, '&#36;$1');
   // Split on $...$ math to preserve it for MathJax
   // We protect math spans from HTML escaping
   const parts = text.split(/(\$\$[^$]+\$\$|\$[^$]+\$)/g);
@@ -908,8 +972,19 @@ function renderInline(text) {{
       let s = escapeHtml(part);
       s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
       s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
-      // Strip span tags that leaked through from PDF conversion
+      // Convert span id tags to invisible anchors for citation links, strip the rest
+      s = s.replace(/&lt;span id="([^"]+)"&gt;/g, '<a id="$1"></a>');
       s = s.replace(/&lt;span[^&]*&gt;/g, '').replace(/&lt;\/span&gt;/g, '');
+      s = s.replace(/&lt;a[^&]*&gt;/g, '').replace(/&lt;\/a&gt;/g, '');
+      // Convert markdown links [text](#anchor) to clickable links for internal refs,
+      // plain text for external refs
+      s = s.replace(/\[([^\]]+)\]\((#[^)]+)\)/g, '<a href="$2" class="ms-cite">$1</a>');
+      s = s.replace(/\[([^\]]+)\]\(([^#][^)]*)\)/g, '$1');
+      // Restore <sup> and <sub> tags (legitimate HTML from PDF conversion)
+      s = s.replace(/&lt;sup&gt;/g, '<sup>').replace(/&lt;\/sup&gt;/g, '</sup>');
+      s = s.replace(/&lt;sub&gt;/g, '<sub>').replace(/&lt;\/sub&gt;/g, '</sub>');
+      // Strip escaped parens from PDF conversion (e.g., \(2021\) in citations)
+      s = s.replace(/\\\\\\(/g, '(').replace(/\\\\\\)/g, ')');
       result += s;
     }}
   }}
@@ -993,6 +1068,21 @@ document.getElementById('review-pane').addEventListener('click', function(e) {{
     const le = parseInt(card.dataset.lineEnd);
     if (ls && le) highlightLines(ls, le, card);
     return;
+  }}
+}});
+
+// Handle citation clicks within the manuscript pane — scroll within the pane
+document.getElementById('manuscript-pane').addEventListener('click', function(e) {{
+  const link = e.target.closest('a.ms-cite');
+  if (link) {{
+    e.preventDefault();
+    const hash = link.getAttribute('href');
+    if (hash && hash.startsWith('#')) {{
+      const target = msRendered.querySelector('a[id="' + hash.slice(1) + '"]');
+      if (target) {{
+        target.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      }}
+    }}
   }}
 }});
 </script>
