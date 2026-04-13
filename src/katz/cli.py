@@ -1088,6 +1088,28 @@ def issue_investigate(
         fail(exc.message, exc.code, exc.details)
 
 
+@issue_app.command("suggest")
+def issue_suggest(
+    issue_id: str = typer.Option(..., "--id"),
+    text: str = typer.Option(..., "--text"),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Append a suggested fix to an issue."""
+    try:
+        _, dest, _, _, _ = load_version(commit)
+        issue_dir = _issue_dir(dest, issue_id)
+        if not (issue_dir / "issue.json").exists():
+            raise KatzError("Issue does not exist", "not_found", {"id": issue_id})
+        suggestions_dir = issue_dir / "suggestions"
+        suggestions_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = now_utc()
+        record = {"text": text, "timestamp": timestamp}
+        write_json(suggestions_dir / event_filename(), record)
+        emit_json(record)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
 @issue_app.command("show")
 def issue_show(issue_id: str, commit: Optional[str] = typer.Option(None, "--commit")) -> None:
     """Return a full issue record with current state and history."""
@@ -1104,6 +1126,8 @@ def issue_show(issue_id: str, commit: Optional[str] = typer.Option(None, "--comm
         status_dir = issue_dir / "status"
         record["status_history"] = [read_json(f) for f in sorted(status_dir.glob("*.json"))] if status_dir.is_dir() else []
         record["investigations"] = _list_investigations(issue_dir)
+        suggestions_dir = issue_dir / "suggestions"
+        record["suggestions"] = [read_json(f) for f in sorted(suggestions_dir.glob("*.json"))] if suggestions_dir.is_dir() else []
         emit_json(record)
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
@@ -1684,9 +1708,10 @@ def eval_respond(
     name: str = typer.Option(..., "--name"),
     text: str = typer.Option(..., "--text"),
     grade: Optional[str] = typer.Option(None, "--grade"),
+    suggestion: Optional[str] = typer.Option(None, "--suggestion"),
     commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
-    """Record a narrative response and optional letter grade for an eval criterion."""
+    """Record a narrative response, optional grade, and optional suggestion for an eval criterion."""
     try:
         if grade is not None and grade not in VALID_GRADES:
             raise KatzError(
@@ -1710,6 +1735,7 @@ def eval_respond(
             "scope": parsed["scope"],
             "response": text,
             "grade": grade,
+            "suggestion": suggestion,
             "timestamp": now_utc(),
         }
         out_path = results_dir / f"{name}.json"

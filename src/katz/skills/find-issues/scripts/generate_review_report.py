@@ -306,6 +306,16 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
             details_attr = '' if not is_rejected else ''
             card_class = 'issue-card rejected' if is_rejected else 'issue-card'
 
+            # Build suggestions HTML
+            sug_html = ""
+            suggestions = iss.get("suggestions", [])
+            if suggestions:
+                sug_items = []
+                for sug in suggestions:
+                    sug_text = escape(sug.get("text", ""))
+                    sug_items.append(f'<div class="suggestion-text">{sug_text}</div>')
+                sug_html = '<div class="suggestion">' + "".join(sug_items) + '</div>'
+
             issue_cards.append(f"""<details class="{card_class}" data-line-start="{ls}" data-line-end="{le}" {"" if is_rejected else "open"}>
   <summary>
     <div class="issue-header">
@@ -317,6 +327,7 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
   {pills_html}
   <div class="issue-body">{body}</div>
   {inv_html}
+  {sug_html}
 </details>""")
 
     # Summary stats
@@ -384,6 +395,15 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
                 # Convert newlines to <br> for readability
                 response_html = response_html.replace("\n", "<br>")
 
+                eval_sug = result.get("suggestion", "")
+                eval_sug_html = ""
+                if eval_sug:
+                    sug_rendered = escape(eval_sug)
+                    import re as _re2
+                    sug_rendered = _re2.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', sug_rendered)
+                    sug_rendered = sug_rendered.replace("\n", "<br>")
+                    eval_sug_html = f'<div class="suggestion"><div class="suggestion-text">{sug_rendered}</div></div>'
+
                 eval_cards.append(f"""<div class="eval-card">
   <div class="eval-header">
     <span class="eval-title">{escape(crit_title)}</span>{grade_html}{scope_html}
@@ -391,6 +411,7 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
   {figure_img_html}
   <div class="eval-question">{escape(question_text)}</div>
   <div class="eval-response">{response_html}</div>
+  {eval_sug_html}
 </div>""")
 
     eval_html = ""
@@ -709,6 +730,26 @@ MathJax = {{
   .investigation {{ font-size: 0.85rem; margin-bottom: 0.25rem; }}
   .inv-verdict {{ text-transform: uppercase; font-size: 0.75rem; }}
   .inv-notes {{ color: #4b5563; }}
+  .suggestion {{
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px dashed var(--border);
+  }}
+  .suggestion::before {{
+    content: "\1f4a1  Suggestion";
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #16a34a;
+    margin-bottom: 0.25rem;
+  }}
+  .suggestion-text {{
+    font-size: 0.85rem;
+    color: #374151;
+    border-left: 3px solid #22c55e;
+    padding-left: 0.7rem;
+    white-space: pre-wrap;
+  }}
   .eval-card {{
     background: var(--card-bg);
     border: 1px solid var(--border);

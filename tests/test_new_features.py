@@ -432,6 +432,90 @@ def test_issue_investigate_and_update(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue suggestions
+# ---------------------------------------------------------------------------
+
+
+def test_issue_suggest(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+
+    issue = katz(repo, "issue", "write",
+                 "--title", "Bias claim",
+                 "--byte-start", "0",
+                 "--byte-end", "10",
+                 "--body", "Unsupported bias claim")
+
+    sug = katz(repo, "issue", "suggest",
+               "--id", issue["id"],
+               "--text", "Replace 'less prone to biases' with 'less noisy'.")
+    assert sug["text"] == "Replace 'less prone to biases' with 'less noisy'."
+    assert "timestamp" in sug
+
+    shown = katz(repo, "issue", "show", issue["id"])
+    assert len(shown["suggestions"]) == 1
+    assert shown["suggestions"][0]["text"] == sug["text"]
+
+
+def test_issue_suggest_append_only(tmp_path: Path) -> None:
+    """Multiple suggestions append, not overwrite."""
+    repo, _ = setup_rich_repo(tmp_path)
+
+    issue = katz(repo, "issue", "write",
+                 "--title", "Test",
+                 "--byte-start", "0",
+                 "--byte-end", "10",
+                 "--body", "Test")
+
+    katz(repo, "issue", "suggest", "--id", issue["id"], "--text", "First suggestion")
+    katz(repo, "issue", "suggest", "--id", issue["id"], "--text", "Second suggestion")
+
+    shown = katz(repo, "issue", "show", issue["id"])
+    assert len(shown["suggestions"]) == 2
+
+
+def test_issue_suggest_requires_existing_issue(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    err = katz_fail(repo, "issue", "suggest", "--id", "nonexistent", "--text", "test")
+    assert err["code"] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# Eval suggestions
+# ---------------------------------------------------------------------------
+
+
+def test_eval_respond_with_suggestion(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "eval", "init-catalog")
+    katz(repo, "eval", "enable", "abstract_conveys_findings")
+
+    katz(repo, "eval", "respond",
+         "--name", "abstract_conveys_findings",
+         "--text", "Good abstract.",
+         "--grade", "B+",
+         "--suggestion", "Add a sentence about the decomposition model.")
+
+    results = katz(repo, "eval", "results")
+    assert len(results) == 1
+    assert results[0]["suggestion"] == "Add a sentence about the decomposition model."
+    assert results[0]["grade"] == "B+"
+
+
+def test_eval_respond_suggestion_optional(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "eval", "init-catalog")
+    katz(repo, "eval", "enable", "abstract_conveys_findings")
+
+    katz(repo, "eval", "respond",
+         "--name", "abstract_conveys_findings",
+         "--text", "Good abstract.",
+         "--grade", "A")
+
+    results = katz(repo, "eval", "results")
+    assert results[0]["suggestion"] is None
+
+
+# ---------------------------------------------------------------------------
 # Collection file structure
 # ---------------------------------------------------------------------------
 
