@@ -171,6 +171,68 @@ def test_add_sections_rejects_duplicates(tmp_path: Path) -> None:
     assert "Duplicate" in err["error"]
 
 
+def test_add_sections_rejects_non_integer_byte_ranges(tmp_path: Path) -> None:
+    repo, canonical, commit = setup_repo(tmp_path)
+    katz(repo, "init")
+    katz(repo, "paper", "register", "--canonical", str(canonical))
+
+    sections = json.dumps([{"id": "s1", "title": "S1", "byte_start": "8", "byte_end": 21}])
+    err = katz_fail(repo, "paper", "add-sections", "--sections", sections)
+    assert err["code"] == "validation_error"
+    assert "must be integers" in err["error"]
+
+
+def test_auto_chunk_uniquifies_duplicate_headings(tmp_path: Path) -> None:
+    repo, canonical, commit = setup_repo(tmp_path)
+    canonical.write_text("# Title\nFirst sentence.\n## Results\nSecond sentence.\n## Results\nThird sentence.\n", encoding="utf-8")
+
+    katz(repo, "init")
+    katz(repo, "paper", "register", "--canonical", str(canonical))
+    katz(repo, "paper", "auto-chunk")
+
+    sections = katz(repo, "paper", "sections")
+    ids = [s["id"] for s in sections]
+    assert len(ids) == len(set(ids))
+    assert "results" in ids
+    assert "results-2" in ids
+
+
+def test_guide_script_rejects_paths_outside_skill_scripts(tmp_path: Path) -> None:
+    repo, canonical, commit = setup_repo(tmp_path)
+    err = katz_fail(repo, "guide", "script", str(repo / "README.md"))
+    assert err["code"] == "not_found"
+
+    err = katz_fail(repo, "guide", "script", "find-issues/scripts/../SKILL.md")
+    assert err["code"] == "not_found"
+
+
+def test_guide_skill_rejects_path_traversal(tmp_path: Path) -> None:
+    repo, canonical, commit = setup_repo(tmp_path)
+    err = katz_fail(repo, "guide", "skill", "../README.md")
+    assert err["code"] == "not_found"
+
+
+def test_unicode_byte_offsets_round_trip(tmp_path: Path) -> None:
+    repo, canonical, commit = setup_repo(tmp_path)
+    text = "# Café\nRésumé sentence with naïve wording.\n## Methods\nEmoji 😀 sentence.\n"
+    canonical.write_text(text, encoding="utf-8")
+
+    katz(repo, "init")
+    result = katz(repo, "paper", "register", "--canonical", str(canonical))
+    assert result["sentences"] == 2
+    katz(repo, "paper", "auto-chunk")
+
+    target = "Emoji 😀 sentence."
+    byte_start = text.encode("utf-8").index(target.encode("utf-8"))
+    byte_end = byte_start + len(target.encode("utf-8"))
+    resolved = katz(repo, "paper", "resolve", str(byte_start), str(byte_end))
+    assert resolved["resolved_text"] == target
+    assert resolved["section"] == "methods"
+
+    found = katz(repo, "paper", "find", "😀")
+    assert found[0]["resolved_text"] == "😀"
+
+
 def test_sentence_segmentation_skips_non_prose(tmp_path: Path) -> None:
     """Verify that headings, code blocks, math, images, and rules are skipped."""
     repo = tmp_path / "repo"

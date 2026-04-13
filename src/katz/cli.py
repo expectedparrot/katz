@@ -469,6 +469,21 @@ def event_filename() -> str:
     return f"{ts}.json"
 
 
+def write_event_json(directory: Path, data: dict[str, Any]) -> Path:
+    """Write an event record without overwriting an existing timestamp file."""
+    directory.mkdir(parents=True, exist_ok=True)
+    filename = event_filename()
+    candidate = directory / filename
+    stem = candidate.stem
+    suffix = candidate.suffix
+    counter = 1
+    while candidate.exists():
+        candidate = directory / f"{stem}_{counter}{suffix}"
+        counter += 1
+    write_json(candidate, data)
+    return candidate
+
+
 def parse_meta(meta: Optional[str]) -> dict[str, Any]:
     if meta is None:
         return {}
@@ -629,6 +644,7 @@ def paper_auto_chunk(
 
         # Build section records
         sections: list[dict[str, Any]] = []
+        slug_counts: dict[str, int] = {}
         for idx, (line_idx, raw_title, level) in enumerate(headings):
             # Clean the title: strip span tags, bold markers, numbering
             clean = re.sub(r"<[^>]+>", "", raw_title)
@@ -641,6 +657,10 @@ def paper_auto_chunk(
             slug = re.sub(r"^[a-z]-[0-9]+-", "", slug)
             if not slug:
                 slug = f"section-{idx}"
+            slug_count = slug_counts.get(slug, 0) + 1
+            slug_counts[slug] = slug_count
+            if slug_count > 1:
+                slug = f"{slug}-{slug_count}"
 
             byte_start = line_offsets[line_idx]
             if idx + 1 < len(headings):
@@ -699,6 +719,21 @@ def paper_add_sections(
             for req in ("id", "title", "byte_start", "byte_end"):
                 if req not in sec:
                     raise KatzError(f"Section missing required field: {req}", "validation_error", {"section": sec})
+            if not isinstance(sec["id"], str) or not sec["id"]:
+                raise KatzError("Section id must be a non-empty string", "validation_error", {"section": sec})
+            if not isinstance(sec["title"], str):
+                raise KatzError("Section title must be a string", "validation_error", {"section": sec})
+            if (
+                not isinstance(sec["byte_start"], int)
+                or isinstance(sec["byte_start"], bool)
+                or not isinstance(sec["byte_end"], int)
+                or isinstance(sec["byte_end"], bool)
+            ):
+                raise KatzError(
+                    "Section byte_start and byte_end must be integers",
+                    "validation_error",
+                    {"section": sec},
+                )
             if sec["id"] in existing_ids:
                 raise KatzError(
                     f"Duplicate section id: {sec['id']}",
@@ -1056,7 +1091,7 @@ def issue_write(
         (issue_dir / "investigations").mkdir(parents=True, exist_ok=True)
         write_json(issue_dir / "issue.json", record)
         status_record = {"state": state, "reason": "created", "timestamp": timestamp}
-        write_json(issue_dir / "status" / event_filename(), status_record)
+        write_event_json(issue_dir / "status", status_record)
         record["state"] = state
         emit_json(record)
     except KatzError as exc:
@@ -1080,7 +1115,7 @@ def issue_update(
             raise KatzError("Issue does not exist", "not_found", {"id": issue_id})
         timestamp = now_utc()
         status_record = {"state": state, "reason": reason, "timestamp": timestamp}
-        write_json(issue_dir / "status" / event_filename(), status_record)
+        write_event_json(issue_dir / "status", status_record)
         emit_json(status_record)
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
@@ -1154,13 +1189,13 @@ def issue_merge(
         (parent_dir / "investigations").mkdir(parents=True, exist_ok=True)
         write_json(parent_dir / "issue.json", record)
         status_record = {"state": "draft", "reason": "created via merge", "timestamp": timestamp}
-        write_json(parent_dir / "status" / event_filename(), status_record)
+        write_event_json(parent_dir / "status", status_record)
 
         # Mark children as wontfix
         for cid in child_ids:
             child_dir = _issue_dir(dest, cid)
             wontfix = {"state": "wontfix", "reason": f"Merged into {parent_id}", "timestamp": timestamp}
-            write_json(child_dir / "status" / event_filename(), wontfix)
+            write_event_json(child_dir / "status", wontfix)
 
         record["state"] = "draft"
         emit_json(record)
@@ -1193,13 +1228,13 @@ def issue_investigate(
             inv_record["evidence"] = parse_meta(evidence) if evidence.startswith("[") or evidence.startswith("{") else evidence
         if notes is not None:
             inv_record["notes"] = notes
-        write_json(issue_dir / "investigations" / event_filename(), inv_record)
+        write_event_json(issue_dir / "investigations", inv_record)
 
         # Optionally update state in the same call
         if state is not None:
             reason = notes[:200] if notes else verdict
             status_record = {"state": state, "reason": reason, "timestamp": timestamp}
-            write_json(issue_dir / "status" / event_filename(), status_record)
+            write_event_json(issue_dir / "status", status_record)
             inv_record["state_updated"] = state
 
         emit_json(inv_record)
@@ -1223,7 +1258,7 @@ def issue_suggest(
         suggestions_dir.mkdir(parents=True, exist_ok=True)
         timestamp = now_utc()
         record = {"text": text, "timestamp": timestamp}
-        write_json(suggestions_dir / event_filename(), record)
+        write_event_json(suggestions_dir, record)
         emit_json(record)
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
@@ -1377,7 +1412,21 @@ def _load_collection(catalog_type: str, preset: str) -> list[str]:
             "validation_error",
             {"preset": preset, "available": sorted(available)},
         )
-    return json.loads(preset_file.read_text(encoding="utf-8"))
+    try:
+        names = json.loads(preset_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise KatzError(
+            f"Collection '{preset}' is not valid JSON",
+            "validation_error",
+            {"path": str(preset_file), "line": exc.lineno, "column": exc.colno},
+        ) from exc
+    if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+        raise KatzError(
+            f"Collection '{preset}' must be a JSON array of strings",
+            "validation_error",
+            {"path": str(preset_file)},
+        )
+    return names
 
 
 def _slugify(name: str) -> str:
@@ -1942,6 +1991,12 @@ def eval_results(
 # ---------------------------------------------------------------------------
 
 
+def available_skills() -> list[str]:
+    if not SKILLS_DIR.is_dir():
+        return []
+    return [d.name for d in SKILLS_DIR.iterdir() if (d / "SKILL.md").exists()]
+
+
 @guide_app.command("overview")
 def guide_overview() -> None:
     """Show how katz works and what it can do."""
@@ -1984,9 +2039,12 @@ def guide_skills() -> None:
 @guide_app.command("skill")
 def guide_skill(name: str) -> None:
     """Show a skill's full SKILL.md instructions."""
+    parts = Path(name).parts
+    if len(parts) != 1 or parts[0] in {"", ".", ".."}:
+        fail(f"Skill '{name}' not found", "not_found", {"name": name, "available": available_skills()})
     skill_file = SKILLS_DIR / name / "SKILL.md"
     if not skill_file.exists():
-        fail(f"Skill '{name}' not found", "not_found", {"name": name, "available": [d.name for d in SKILLS_DIR.iterdir() if (d / "SKILL.md").exists()] if SKILLS_DIR.is_dir() else []})
+        fail(f"Skill '{name}' not found", "not_found", {"name": name, "available": available_skills()})
     typer.echo(skill_file.read_text(encoding="utf-8"))
 
 
@@ -1997,13 +2055,27 @@ def guide_script(path: str) -> None:
     Path format: <skill-name>/scripts/<filename> or just <skill-name>/<filename>
     """
     # Normalize: allow "edsl-find-issues/scripts/edsl_find_issues.py" or "edsl-find-issues/edsl_find_issues.py"
-    full_path = SKILLS_DIR / path
-    if not full_path.exists():
+    skills_root = SKILLS_DIR.resolve()
+
+    def safe_skill_file(candidate: Path) -> Path | None:
+        try:
+            resolved = candidate.resolve()
+            relative = resolved.relative_to(skills_root)
+        except (OSError, ValueError):
+            return None
+        if len(relative.parts) < 3 or relative.parts[1] != "scripts":
+            return None
+        return resolved
+
+    parts = Path(path).parts
+    full_path = None
+    if len(parts) >= 3 and parts[1] == "scripts":
+        full_path = safe_skill_file(SKILLS_DIR / path)
+    if full_path is None or not full_path.exists():
         # Try inserting scripts/
-        parts = Path(path).parts
         if len(parts) >= 2 and parts[1] != "scripts":
-            full_path = SKILLS_DIR / parts[0] / "scripts" / Path(*parts[1:])
-    if not full_path.exists() or not full_path.is_file():
+            full_path = safe_skill_file(SKILLS_DIR / parts[0] / "scripts" / Path(*parts[1:]))
+    if full_path is None or not full_path.exists() or not full_path.is_file():
         fail(f"Script not found: {path}", "not_found", {"path": path})
     typer.echo(full_path.read_text(encoding="utf-8"))
 

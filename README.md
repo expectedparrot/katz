@@ -24,7 +24,7 @@ katz paper register \
 katz paper add-sections --sections '[{"id":"intro","title":"Introduction","byte_start":0,"byte_end":5000}]'
 
 # Populate the spotter catalog with defaults
-katz spotter init-catalog --preset social-science
+katz spotter init-catalog --preset default
 
 # Browse and enable spotters for this review
 katz spotter catalog

@@ -134,6 +134,14 @@ def parse_review(text):
     return None
 
 
+def slugify(name):
+    """Match the katz CLI's eval name slug convention."""
+    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+    if not slug:
+        raise ValueError(f"Could not build eval name from {name!r}")
+    return slug
+
+
 def main():
     parser = argparse.ArgumentParser(description="EDSL figure review for katz")
     parser.add_argument("--models", type=int, default=2, help="Number of models (default: 2)")
@@ -199,7 +207,7 @@ def main():
         narrative = f"[{model_name}] " + " ".join(parts)
 
         # Record as an eval response — create the eval criterion if needed
-        eval_name = f"figure_{figure_name.rsplit('.', 1)[0]}"
+        eval_name = slugify(f"figure_{figure_name.rsplit('.', 1)[0]}")
         # Ensure the eval criterion exists
         try:
             run_katz("eval", "show", eval_name)
@@ -216,7 +224,7 @@ def main():
         grade_args = ["--grade", grade] if grade and grade in {"A+","A","A-","B+","B","B-","C+","C","C-","D+","D","D-","F"} else []
         subprocess.run(
             ["katz", "eval", "respond", "--name", eval_name, "--text", narrative] + grade_args,
-            capture_output=True, text=True,
+            capture_output=True, text=True, check=True,
         )
         reviews_recorded += 1
         print(f"  [{figure_name}] [{model_name}] grade={grade}")
