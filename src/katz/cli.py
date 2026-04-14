@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
 import subprocess
 import uuid
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,14 +21,17 @@ issue_app = typer.Typer(help="Write and query issue records.")
 spotter_app = typer.Typer(help="Manage issue spotters.")
 eval_app = typer.Typer(help="Manage evaluation criteria and responses.")
 guide_app = typer.Typer(help="Self-documenting guide for agents.")
+report_app = typer.Typer(help="Generate review reports.")
 app.add_typer(paper_app, name="paper")
 app.add_typer(issue_app, name="issue")
 app.add_typer(spotter_app, name="spotter")
 app.add_typer(eval_app, name="eval")
 app.add_typer(guide_app, name="guide")
+app.add_typer(report_app, name="report")
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 CATALOG_DIR = Path(__file__).parent / "catalog"
+REPORT_SCRIPT = SKILLS_DIR / "find-issues" / "scripts" / "generate_review_report.py"
 
 KATZ_DIR = ".katz"
 ACTIVE_VERSION = "ACTIVE_VERSION"
@@ -1025,6 +1030,38 @@ def _issue_dir(dest: Path, issue_id: str) -> Path:
     return dest / "issues" / issue_id
 
 
+def _resolve_issue_id(dest: Path, issue_id: str) -> str:
+    """Resolve a full issue id or unambiguous prefix to the canonical id."""
+    issues_dir = dest / "issues"
+    if not issues_dir.is_dir():
+        raise KatzError("Issue does not exist", "not_found", {"id": issue_id})
+    if len(issue_id) == 32 and _issue_dir(dest, issue_id).is_dir():
+        return issue_id
+    matches = sorted(
+        path.name
+        for path in issues_dir.iterdir()
+        if path.is_dir() and (path / "issue.json").exists() and path.name.startswith(issue_id)
+    )
+    if not matches:
+        raise KatzError(
+            "Issue does not exist; pass a full issue id or an unambiguous prefix",
+            "not_found",
+            {"id": issue_id},
+        )
+    if len(matches) > 1:
+        raise KatzError(
+            "Issue id prefix is ambiguous",
+            "ambiguous_issue",
+            {"id": issue_id, "matches": matches},
+        )
+    return matches[0]
+
+
+def _issue_dir_for_id(dest: Path, issue_id: str) -> tuple[str, Path]:
+    resolved = _resolve_issue_id(dest, issue_id)
+    return resolved, _issue_dir(dest, resolved)
+
+
 def _latest_status(issue_dir: Path) -> dict[str, Any] | None:
     """Read the most recent status file from an issue's status/ directory."""
     status_dir = issue_dir / "status"
@@ -1050,6 +1087,20 @@ def _list_investigations(issue_dir: Path) -> list[dict[str, Any]]:
     if not inv_dir.is_dir():
         return []
     return [read_json(f) for f in sorted(inv_dir.glob("*.json"))]
+
+
+def _full_issue_record(issue_dir: Path, pmap: PaperMap) -> dict[str, Any]:
+    """Return a full issue record with current state, history, suggestions, and section."""
+    record = _load_issue(issue_dir)
+    location = record.get("location") if isinstance(record.get("location"), dict) else {}
+    if isinstance(location.get("byte_start"), int) and isinstance(location.get("byte_end"), int):
+        location["section"] = section_for_range(pmap.sections, location["byte_start"], location["byte_end"])
+    status_dir = issue_dir / "status"
+    record["status_history"] = [read_json(f) for f in sorted(status_dir.glob("*.json"))] if status_dir.is_dir() else []
+    record["investigations"] = _list_investigations(issue_dir)
+    suggestions_dir = issue_dir / "suggestions"
+    record["suggestions"] = [read_json(f) for f in sorted(suggestions_dir.glob("*.json"))] if suggestions_dir.is_dir() else []
+    return record
 
 
 @issue_app.command("write")
@@ -1110,9 +1161,7 @@ def issue_update(
         if state not in VALID_STATES:
             raise KatzError("Invalid issue state", "validation_error", {"state": state, "valid": sorted(VALID_STATES)})
         _, dest, _, _, _ = load_version(commit)
-        issue_dir = _issue_dir(dest, issue_id)
-        if not (issue_dir / "issue.json").exists():
-            raise KatzError("Issue does not exist", "not_found", {"id": issue_id})
+        _, issue_dir = _issue_dir_for_id(dest, issue_id)
         timestamp = now_utc()
         status_record = {"state": state, "reason": reason, "timestamp": timestamp}
         write_event_json(issue_dir / "status", status_record)
@@ -1138,10 +1187,10 @@ def issue_merge(
 
         # Load and validate all children
         children = []
+        resolved_child_ids = []
         for cid in child_ids:
-            child_dir = _issue_dir(dest, cid)
-            if not (child_dir / "issue.json").exists():
-                raise KatzError(f"Issue does not exist: {cid}", "not_found", {"id": cid})
+            resolved_child_id, child_dir = _issue_dir_for_id(dest, cid)
+            resolved_child_ids.append(resolved_child_id)
             children.append(read_json(child_dir / "issue.json"))
 
         # Build parent issue
@@ -1182,7 +1231,7 @@ def issue_merge(
             "artifacts": all_artifacts,
             "location": resolve_location(canonical, byte_start, byte_end),
             "created_at": timestamp,
-            "meta": {"merged_from": child_ids},
+            "meta": {"merged_from": resolved_child_ids},
         }
         parent_dir = _issue_dir(dest, parent_id)
         (parent_dir / "status").mkdir(parents=True, exist_ok=True)
@@ -1192,7 +1241,7 @@ def issue_merge(
         write_event_json(parent_dir / "status", status_record)
 
         # Mark children as wontfix
-        for cid in child_ids:
+        for cid in resolved_child_ids:
             child_dir = _issue_dir(dest, cid)
             wontfix = {"state": "wontfix", "reason": f"Merged into {parent_id}", "timestamp": timestamp}
             write_event_json(child_dir / "status", wontfix)
@@ -1219,9 +1268,7 @@ def issue_investigate(
         if state is not None and state not in VALID_STATES:
             raise KatzError("Invalid state", "validation_error", {"state": state, "valid": sorted(VALID_STATES)})
         _, dest, _, _, _ = load_version(commit)
-        issue_dir = _issue_dir(dest, issue_id)
-        if not (issue_dir / "issue.json").exists():
-            raise KatzError("Issue does not exist", "not_found", {"id": issue_id})
+        _, issue_dir = _issue_dir_for_id(dest, issue_id)
         timestamp = now_utc()
         inv_record: dict[str, Any] = {"verdict": verdict, "timestamp": timestamp}
         if evidence is not None:
@@ -1251,9 +1298,7 @@ def issue_suggest(
     """Append a suggested fix to an issue."""
     try:
         _, dest, _, _, _ = load_version(commit)
-        issue_dir = _issue_dir(dest, issue_id)
-        if not (issue_dir / "issue.json").exists():
-            raise KatzError("Issue does not exist", "not_found", {"id": issue_id})
+        _, issue_dir = _issue_dir_for_id(dest, issue_id)
         suggestions_dir = issue_dir / "suggestions"
         suggestions_dir.mkdir(parents=True, exist_ok=True)
         timestamp = now_utc()
@@ -1265,24 +1310,26 @@ def issue_suggest(
 
 
 @issue_app.command("show")
-def issue_show(issue_id: str, commit: Optional[str] = typer.Option(None, "--commit")) -> None:
-    """Return a full issue record with current state and history."""
+def issue_show(
+    issue_id: Optional[str] = typer.Argument(None),
+    ids: Optional[str] = typer.Option(None, "--ids", help="Comma-separated issue IDs or unambiguous prefixes"),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Return one or more full issue records with current state and history."""
     try:
         _, dest, _, pmap, _ = load_version(commit)
-        issue_dir = _issue_dir(dest, issue_id)
-        if not (issue_dir / "issue.json").exists():
-            raise KatzError("Issue does not exist", "not_found", {"id": issue_id})
-        record = _load_issue(issue_dir)
-        # Enrich location with section ID
-        location = record.get("location") if isinstance(record.get("location"), dict) else {}
-        if isinstance(location.get("byte_start"), int) and isinstance(location.get("byte_end"), int):
-            location["section"] = section_for_range(pmap.sections, location["byte_start"], location["byte_end"])
-        status_dir = issue_dir / "status"
-        record["status_history"] = [read_json(f) for f in sorted(status_dir.glob("*.json"))] if status_dir.is_dir() else []
-        record["investigations"] = _list_investigations(issue_dir)
-        suggestions_dir = issue_dir / "suggestions"
-        record["suggestions"] = [read_json(f) for f in sorted(suggestions_dir.glob("*.json"))] if suggestions_dir.is_dir() else []
-        emit_json(record)
+        if issue_id is not None and ids is not None:
+            raise KatzError("Provide an issue id or --ids, not both", "validation_error")
+        if issue_id is None and ids is None:
+            raise KatzError("Provide an issue id or --ids", "validation_error")
+        if ids is not None:
+            requested_ids = [i.strip() for i in ids.split(",") if i.strip()]
+            if not requested_ids:
+                raise KatzError("--ids must include at least one issue id", "validation_error")
+            emit_json([_full_issue_record(_issue_dir_for_id(dest, requested_id)[1], pmap) for requested_id in requested_ids])
+            return
+        _, issue_dir = _issue_dir_for_id(dest, issue_id)
+        emit_json(_full_issue_record(issue_dir, pmap))
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 
@@ -1522,7 +1569,7 @@ def spotter_add(
     description: str = typer.Option(..., "--description"),
     investigation: Optional[str] = typer.Option(None, "--investigation"),
 ) -> None:
-    """Create a new spotter in the catalog and enable it for the active version."""
+    """Create a new spotter in the catalog and auto-enable it for the active version."""
     try:
         if scope not in VALID_SCOPES:
             raise KatzError(f"Invalid scope: '{scope}'", "validation_error", {"scope": scope, "valid": sorted(VALID_SCOPES)})
@@ -1583,9 +1630,10 @@ def spotter_enable(
         spotters_dir.mkdir(parents=True, exist_ok=True)
         out_path = spotters_dir / f"{name}.md"
         if out_path.exists():
-            raise KatzError(f"Spotter '{name}' is already enabled", "validation_error", {"name": name})
+            emit_json({"enabled": name, "already_enabled": True})
+            return
         shutil.copyfile(catalog_path, out_path)
-        emit_json({"enabled": name})
+        emit_json({"enabled": name, "already_enabled": False})
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 
@@ -1982,6 +2030,85 @@ def eval_results(
                     continue
                 results.append(record)
         emit_json(results)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+# ---------------------------------------------------------------------------
+# Report commands
+# ---------------------------------------------------------------------------
+
+
+def _load_report_module() -> Any:
+    if not REPORT_SCRIPT.exists():
+        raise KatzError("Report generator script not found", "not_found", {"path": str(REPORT_SCRIPT)})
+    spec = importlib.util.spec_from_file_location("katz_generate_review_report", REPORT_SCRIPT)
+    if spec is None or spec.loader is None:
+        raise KatzError("Report generator script could not be loaded", "validation_error", {"path": str(REPORT_SCRIPT)})
+    module = importlib.util.module_from_spec(spec)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        spec.loader.exec_module(module)
+    return module
+
+
+@report_app.command("generate")
+def report_generate(
+    output: Path = typer.Option(Path(".katz/review.html"), "--output", "-o"),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Generate the HTML review report."""
+    try:
+        resolved, dest, version, pmap, canonical = load_version(commit)
+        report_module = _load_report_module()
+
+        issues = []
+        issues_dir = dest / "issues"
+        if issues_dir.is_dir():
+            for issue_dir in sorted(issues_dir.iterdir()):
+                if issue_dir.is_dir() and (issue_dir / "issue.json").exists():
+                    issues.append(_full_issue_record(issue_dir, pmap))
+
+        eval_criteria = report_module.load_eval_criteria(resolved)
+        eval_results_records = report_module.load_eval_results(resolved)
+        referee_report = report_module.load_referee_report(resolved)
+        images = report_module.load_images_as_data_uris(resolved)
+        source = version.get("source", {})
+        if not isinstance(source, dict):
+            source = {}
+        status = {
+            "commit": resolved,
+            "source_format": source.get("format"),
+            "source_root": source.get("root") or "paper",
+            "source_uri": source.get("uri"),
+            "canonical": version.get("canonical"),
+            "sections": len(pmap.sections),
+            "sentences": len(pmap.sentences),
+            "figures": len(pmap.figures),
+            "valid": canonical.exists() and sha256_file(canonical) == version.get("checksum") == pmap.header.get("checksum"),
+        }
+        html = report_module.build_html(
+            status,
+            pmap.sections,
+            issues,
+            canonical.read_text(encoding="utf-8"),
+            eval_criteria,
+            eval_results_records,
+            referee_report,
+            images,
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(html, encoding="utf-8")
+        emit_json(
+            {
+                "generated": True,
+                "path": str(output),
+                "commit": resolved,
+                "issues": len(issues),
+                "sections": len(pmap.sections),
+                "evaluations": len(eval_results_records),
+            }
+        )
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 

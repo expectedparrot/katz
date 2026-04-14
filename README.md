@@ -147,10 +147,10 @@ Spotters define what to look for during review. There are two layers:
 #### Catalog management
 
 ```bash
-katz spotter init-catalog [--preset social-science]
+katz spotter init-catalog [--preset default]
 ```
 
-Populate the catalog with default spotters. The `social-science` preset includes 13 spotters covering overclaiming, logical gaps, statistical errors, methodology, writing clarity, identification threats, and more.
+Populate the catalog with default spotters. The `default` preset includes 13 spotters covering overclaiming, logical gaps, statistical errors, methodology, writing clarity, identification threats, and more.
 
 ```bash
 katz spotter catalog [--scope section|holistic]
@@ -170,7 +170,7 @@ Show a catalog spotter's full description and investigation instructions.
 katz spotter enable <name>
 ```
 
-Copy a spotter from the catalog into the active version. Only enabled spotters are used during review.
+Copy a spotter from the catalog into the active version. This command is idempotent; if the spotter is already enabled, it returns success with `"already_enabled": true`.
 
 ```bash
 katz spotter add --name "prompt_sensitivity" \
@@ -179,7 +179,7 @@ katz spotter add --name "prompt_sensitivity" \
   --investigation "Check if alternative prompts are tested."
 ```
 
-Add a custom paper-specific spotter directly to the active version (not the catalog).
+Add a custom paper-specific spotter to the catalog and auto-enable it for the active version.
 
 ```bash
 katz spotter add --file my_spotter.md [--name custom_slug]
@@ -233,7 +233,7 @@ Creates `issues/<id>/issue.json` (immutable) and an initial status record in `is
 katz issue update --id <id> --state confirmed [--reason "Investigation confirmed"]
 ```
 
-Appends a new file to `issues/<id>/status/`. Never overwrites prior state.
+Appends a new file to `issues/<id>/status/`. Never overwrites prior state. The `--id` value may be a full id or an unambiguous prefix.
 
 #### Investigate
 
@@ -251,9 +251,10 @@ Appends a new file to `issues/<id>/investigations/`. Verdicts: `confirmed`, `rej
 
 ```bash
 katz issue show <id>
+katz issue show --ids <id1,id2,...>
 ```
 
-Returns the full issue record with current state (derived from latest status file), `status_history` (all state changes), and `investigations` (all investigation records).
+Returns the full issue record with current state (derived from latest status file), `status_history` (all state changes), and `investigations` (all investigation records). IDs may be full ids or unambiguous prefixes. With `--ids`, returns a list of full issue records.
 
 ```json
 {
@@ -292,6 +293,14 @@ katz issue list [--state confirmed] [--section intro] [--spotter overclaiming] [
 ```
 
 Returns issue summaries with current state, spotter, section, and meta. All filters are optional and combinable.
+
+### katz report
+
+```bash
+katz report generate [--output .katz/review.html]
+```
+
+Generate the HTML review report from the active katz version. The command returns JSON with the output path and artifact counts.
 
 ### katz validate
 

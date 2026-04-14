@@ -54,6 +54,8 @@ katz spotter enable unclear_writing
 # ... etc
 ```
 
+`katz spotter enable <name>` is idempotent: if the spotter is already enabled, the command returns success with `"already_enabled": true`. This makes it safe to run from scripts that defensively enable a set of spotters.
+
 Use judgment. For example:
 - A straightforward experiment report doesn't need `literature_positioning` (but DOES benefit from `identification_threats` — SUTVA, spillovers, etc.)
 - A pure theory paper doesn't need `statistical_errors`, `methodology_concerns`, or `results_interpretation`
@@ -77,6 +79,8 @@ katz spotter add \
   --description "Check whether results could be driven by specific prompt wording. Look for: single untested prompt, no robustness to rephrasing, temperature/sampling not reported." \
   --investigation "Check if alternative prompts are tested. Check if generation parameters are reported. Confirm if a single untested prompt drives results. Reject if robustness is shown."
 ```
+
+`katz spotter add` writes the new spotter to the catalog and auto-enables it for the active version when a paper is registered. Do not run `katz spotter enable` again for the same custom spotter unless you are intentionally checking idempotence.
 
 ### 5. Report
 

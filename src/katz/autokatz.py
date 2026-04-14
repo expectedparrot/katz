@@ -17,6 +17,11 @@ from pathlib import Path
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 OVERVIEW_PATH = Path(__file__).parent / "OVERVIEW.md"
+INITIAL_USER_PROMPT = (
+    "Start this autokatz session now. Give me the concise welcome message and "
+    "overview described in your First Response instructions, including current "
+    "katz state and the next likely step. Do not start any long-running work."
+)
 
 
 def load_overview():
@@ -118,6 +123,22 @@ and all available skills.
 
 {state}
 
+## First Response
+
+When the session starts, briefly tell the user:
+
+- What katz is: a version-aware ledger for paper review artifacts, keyed to git commits.
+- What the current state is, based on the Current State section above.
+- The next likely step. If no paper is registered, suggest `katz init` and
+  `katz guide skill review-paper`. If a paper is registered, suggest the next
+  incomplete review step: chunking, spotter configuration, evals, issue finding,
+  duplicate merging, investigation, suggested fixes, or report generation.
+- That the user can ask for the full guided workflow with
+  `katz guide skill review-paper`.
+
+Keep this opening concise and actionable. Do not launch long-running work until
+the user confirms the step they want.
+
 ## How katz Works
 
 {overview}
@@ -126,21 +147,39 @@ and all available skills.
 
 The following skills are available. You can invoke them with `katz guide skill <name>`
 to read the full instructions, or follow them directly based on the documentation below.
+These are katz-bundled guide skills. Invoke them with `katz guide skill <name>`;
+do not use the Claude Code harness `Skill(...)` mechanism for these workflows.
+For the full review workflow, use `katz guide skill review-paper` or follow the
+embedded `review-paper` instructions below.
 
 {skills}
 
 ## Guidelines
 
 - Start by understanding where the user is in the review process. Check `katz paper status`.
-- If the paper isn't registered yet, guide them through `/review-paper`.
+- If the paper isn't registered yet, guide them through `katz guide skill review-paper`.
 - If they're mid-review, pick up where they left off.
 - Use katz commands for all structured data (issues, evals, spotters) — don't track
   review findings outside katz.
 - Be candid in evaluations and investigations. The value is in honesty, not diplomacy.
 - When filing issues, always include the manuscript byte range and relevant artifacts.
+- Before investigating issues, review draft issues for duplicates and merge issues that
+  point to the same underlying concern with `katz issue merge`.
 - When suggesting fixes, be specific and actionable — reference lines, sections, and files.
+- After investigations identify confirmed issues, ask the user whether they want you to
+  create suggested fixes for those issues before generating the final report.
 """
     return prompt
+
+
+def build_claude_command(prompt_path):
+    """Build the Claude Code command for an interactive autokatz session."""
+    return [
+        "claude",
+        "--append-system-prompt-file",
+        str(prompt_path),
+        INITIAL_USER_PROMPT,
+    ]
 
 
 def main():
@@ -172,7 +211,7 @@ def main():
 
     try:
         # Launch claude with the katz system prompt appended
-        cmd = ["claude", "--append-system-prompt-file", prompt_path]
+        cmd = build_claude_command(prompt_path)
         os.execvp("claude", cmd)
     except FileNotFoundError:
         print("Error: 'claude' command not found. Install Claude Code first:", file=sys.stderr)

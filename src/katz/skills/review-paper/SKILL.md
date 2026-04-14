@@ -90,7 +90,7 @@ For each issue, read the manuscript context, determine a verdict (confirmed/reje
 Run the report generator for the detailed issue-level HTML report:
 
 ```bash
-python <katz-skills-path>/find-issues/scripts/generate_review_report.py
+katz report generate
 ```
 
 Then open `.katz/review.html` to see the full report with issue cards, investigation verdicts, and manuscript quotes.

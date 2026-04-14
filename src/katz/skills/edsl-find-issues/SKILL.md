@@ -42,6 +42,8 @@ By default, the script uses **katz-enabled spotters** from `.katz/versions/<comm
 
 Run `katz paper status` and confirm `"valid": true` and that sections exist. If not, stop and tell the user to run `/register-paper` and `/chunk-paper` (or `katz paper auto-chunk`) first.
 
+Do this validation as a serial first step before launching any other long-running or parallel shell work. If `.katz` is not initialized, a failed status check can otherwise cancel unrelated parallel calls in some harnesses.
+
 ### 2. Build and run the command
 
 ```bash
@@ -60,6 +62,8 @@ python <katz-skills-path>/edsl-find-issues/scripts/edsl_find_issues.py --builtin
 # Dry run (shows scenario count without calling models)
 python <katz-skills-path>/edsl-find-issues/scripts/edsl_find_issues.py --dry-run
 ```
+
+For long full-paper sweeps, run the script as a background task using the harness's background-process support and poll that session's output. Do not use shell sleep chains such as `sleep 90 && tail ...`; those are often blocked or brittle in agent harnesses. Prefer starting the process in the background, then periodically reading recent output from the same session.
 
 The script will:
 - Read sections directly from katz (no further chunking — sections are the unit)

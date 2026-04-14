@@ -192,7 +192,10 @@ def test_spotter_enable_and_list(tmp_path: Path) -> None:
     repo, _ = setup_rich_repo(tmp_path)
     katz(repo, "spotter", "init-catalog")
 
-    katz(repo, "spotter", "enable", "overclaiming")
+    enabled = katz(repo, "spotter", "enable", "overclaiming")
+    assert enabled["already_enabled"] is False
+    enabled_again = katz(repo, "spotter", "enable", "overclaiming")
+    assert enabled_again["already_enabled"] is True
     katz(repo, "spotter", "enable", "logical_gaps")
 
     listed = katz(repo, "spotter", "list")
@@ -431,6 +434,57 @@ def test_issue_investigate_and_update(tmp_path: Path) -> None:
     assert shown["investigations"][0]["notes"] == "This is a real problem."
 
 
+def test_issue_commands_accept_unambiguous_id_prefixes(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+
+    issue = katz(repo, "issue", "write",
+                 "--title", "Prefix issue",
+                 "--byte-start", "0",
+                 "--byte-end", "10",
+                 "--body", "Test body")
+    prefix = issue["id"][:8]
+
+    shown = katz(repo, "issue", "show", prefix)
+    assert shown["id"] == issue["id"]
+
+    katz(repo, "issue", "update", "--id", prefix, "--state", "open")
+    katz(repo, "issue", "investigate", "--id", prefix, "--verdict", "uncertain", "--notes", "Needs more checking.")
+    katz(repo, "issue", "suggest", "--id", prefix, "--text", "Clarify this sentence.")
+
+    shown = katz(repo, "issue", "show", prefix)
+    assert shown["state"] == "open"
+    assert shown["investigations"][0]["verdict"] == "uncertain"
+    assert shown["suggestions"][0]["text"] == "Clarify this sentence."
+
+
+def test_issue_show_accepts_batch_ids(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+
+    i1 = katz(repo, "issue", "write", "--title", "A",
+              "--byte-start", "0", "--byte-end", "10", "--body", "A")
+    i2 = katz(repo, "issue", "write", "--title", "B",
+              "--byte-start", "10", "--byte-end", "20", "--body", "B")
+
+    shown = katz(repo, "issue", "show", "--ids", f"{i1['id'][:8]},{i2['id'][:8]}")
+    assert [issue["id"] for issue in shown] == [i1["id"], i2["id"]]
+
+
+def test_issue_list_stdout_is_clean_json_for_pipelines(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "issue", "write", "--title", "Pipeline",
+         "--byte-start", "0", "--byte-end", "10", "--body", "A")
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+    result = subprocess.run(
+        ["python", "-m", "katz.cli", "issue", "list", "--state", "draft"],
+        cwd=repo, env=env, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+    )
+    assert result.stderr == ""
+    assert json.loads(result.stdout)[0]["title"] == "Pipeline"
+
+
 # ---------------------------------------------------------------------------
 # Issue artifacts
 # ---------------------------------------------------------------------------
@@ -513,6 +567,18 @@ def test_issue_merge_basic(tmp_path: Path) -> None:
     draft_ids = {d["id"] for d in drafts}
     assert parent["id"] in draft_ids
     assert i1["id"] not in draft_ids
+
+
+def test_issue_merge_accepts_id_prefixes(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+
+    i1 = katz(repo, "issue", "write", "--title", "First",
+              "--byte-start", "0", "--byte-end", "10", "--body", "A")
+    i2 = katz(repo, "issue", "write", "--title", "Second",
+              "--byte-start", "10", "--byte-end", "20", "--body", "B")
+
+    parent = katz(repo, "issue", "merge", "--ids", f"{i1['id'][:8]},{i2['id'][:8]}")
+    assert parent["meta"]["merged_from"] == [i1["id"], i2["id"]]
 
 
 def test_issue_merge_union_byte_range(tmp_path: Path) -> None:
@@ -632,6 +698,31 @@ def test_eval_respond_suggestion_optional(tmp_path: Path) -> None:
 
     results = katz(repo, "eval", "results")
     assert results[0]["suggestion"] is None
+
+
+# ---------------------------------------------------------------------------
+# Report command
+# ---------------------------------------------------------------------------
+
+
+def test_report_generate_writes_html(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "issue", "write",
+         "--title", "Report issue",
+         "--byte-start", "0",
+         "--byte-end", "10",
+         "--body", "This should appear in the report.")
+
+    output = tmp_path / "review.html"
+    result = katz(repo, "report", "generate", "--output", str(output))
+
+    assert result["generated"] is True
+    assert result["issues"] == 1
+    assert output.exists()
+    html = output.read_text(encoding="utf-8")
+    assert "Review Report" in html
+    assert "Report issue" in html
 
 
 # ---------------------------------------------------------------------------
