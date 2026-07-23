@@ -2,6 +2,20 @@
 
 katz is a version-aware ledger for paper review artifacts. It stores manuscripts, issues, investigations, and spotters keyed to git commits.
 
+## Agent entry point
+
+```bash
+katz agent bootstrap   # read-only repository and prerequisite discovery
+katz agent next        # one highest-priority action
+katz capabilities      # contracts, schemas, integrations, and safety
+katz issue next        # one complete investigation packet
+katz ingest PATH       # read-only artifact detection and ingestion preview
+```
+
+Actions are command arrays annotated with mutation, network, and user-approval
+requirements. Codex and Claude Code instruction templates are available through
+`katz agent instructions`.
+
 ## Typical workflow
 
 1. **Register the paper**: Convert PDF to markdown, register with katz

@@ -176,6 +176,28 @@ katz review ingest journal-review-results.ep [--state draft]
 
 ---
 
+## `katz agent` — Machine-readable Workflow Discovery
+
+```bash
+katz agent bootstrap                 # read-only prerequisite and repository scan
+katz agent status                    # phase, blockers, review state, next actions
+katz agent next                      # highest-priority action and alternatives
+katz agent instructions codex        # return AGENTS.md template
+katz agent instructions claude       # return CLAUDE.md template
+katz capabilities                    # contracts, schemas, integrations, safety
+katz ingest <path>                   # detect and preview an artifact
+katz ingest <path> --apply           # apply supported Results ingestion
+katz issue next                      # complete packet for one draft issue
+```
+
+Agent actions contain a command array plus `mutates_state`, `requires_network`,
+and `requires_user_approval` booleans. `agent bootstrap` and bare `ingest` are
+read-only. Unified ingestion currently applies spotter Results and parsed
+journal-review Results; Jobs, whole-paper reports, and Humanize Results return
+the appropriate inspection or judgment step instead.
+
+---
+
 ## `katz report` — HTML Report
 
 ```bash

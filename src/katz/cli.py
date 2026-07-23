@@ -26,6 +26,7 @@ docs_app = typer.Typer(help="Read built-in documentation.")
 guide_app = typer.Typer(help="Self-documenting guide for agents.")
 report_app = typer.Typer(help="Generate review reports.")
 review_app = typer.Typer(help="Register and parse human-written peer reviews.")
+agent_app = typer.Typer(help="Discover state and next actions for coding agents.")
 app.add_typer(paper_app, name="paper")
 app.add_typer(issue_app, name="issue")
 app.add_typer(spotter_app, name="spotter")
@@ -34,10 +35,14 @@ app.add_typer(docs_app, name="docs")
 app.add_typer(guide_app, name="guide")
 app.add_typer(report_app, name="report")
 app.add_typer(review_app, name="review")
+app.add_typer(agent_app, name="agent")
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 CATALOG_DIR = Path(__file__).parent / "catalog"
 REPORT_SCRIPT = SKILLS_DIR / "find-issues" / "scripts" / "generate_review_report.py"
+SCHEMAS_DIR = Path(__file__).parent / "schemas"
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+AGENT_API_VERSION = "1.0"
 
 KATZ_DIR = ".katz"
 ACTIVE_VERSION = "ACTIVE_VERSION"
@@ -1166,6 +1171,401 @@ def paper_find(
         fail(exc.message, exc.code, exc.details)
 
 
+def _agent_action(
+    action_id: str,
+    purpose: str,
+    command: list[str],
+    *,
+    mutates_state: bool,
+    requires_network: bool = False,
+    requires_user_approval: bool = False,
+    reason: Optional[str] = None,
+) -> dict[str, Any]:
+    action = {
+        "id": action_id,
+        "purpose": purpose,
+        "command": command,
+        "mutates_state": mutates_state,
+        "requires_network": requires_network,
+        "requires_user_approval": requires_user_approval,
+    }
+    if reason:
+        action["reason"] = reason
+    return action
+
+
+def _command_available(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def _dotenv_has_key(path: Path, key: str) -> bool:
+    if not path.is_file():
+        return False
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("export "):
+            stripped = stripped[7:].lstrip()
+        if stripped.startswith(f"{key}=") and stripped.split("=", 1)[1].strip():
+            return True
+    return False
+
+
+def _manuscript_candidates(root: Path) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    ignored = {".git", ".katz", ".venv", "node_modules", "dist", "build"}
+    preferred_names = {"paper.md", "manuscript.md", "article.md", "paper.tex", "manuscript.tex"}
+    for path in root.rglob("*"):
+        if not path.is_file() or any(part in ignored for part in path.parts):
+            continue
+        if path.suffix.lower() not in {".md", ".tex", ".pdf"}:
+            continue
+        relative = path.relative_to(root)
+        score = 0
+        if path.name.lower() in preferred_names:
+            score += 100
+        lowered_name = path.name.lower()
+        if lowered_name.startswith(("paper.", "paper_", "manuscript.", "manuscript_", "article.", "article_")):
+            score += 30
+        if path.suffix.lower() in {".md", ".tex"}:
+            score += 10
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size > 2_000:
+            score += 5
+        if path.suffix.lower() in {".md", ".tex"}:
+            try:
+                sample = path.read_text(encoding="utf-8", errors="replace")[:40_000].lower()
+            except OSError:
+                sample = ""
+            academic_markers = sum(
+                marker in sample
+                for marker in ("abstract", "introduction", "methods", "results", "references")
+            )
+            score += academic_markers * 8
+        candidates.append({
+            "path": str(relative),
+            "format": path.suffix.lower().lstrip("."),
+            "bytes": size,
+            "confidence": score,
+        })
+    return sorted(candidates, key=lambda item: (-item["confidence"], item["path"]))[:20]
+
+
+def _agent_state() -> dict[str, Any]:
+    git_probe = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if git_probe.returncode != 0:
+        return {
+            "schema_version": AGENT_API_VERSION,
+            "phase": "repository_setup",
+            "ready": False,
+            "repository": {"is_git_repository": False},
+            "prerequisites": {},
+            "review": None,
+            "next_actions": [
+                _agent_action(
+                    "initialize_git",
+                    "Create a Git repository so manuscript versions can be anchored",
+                    ["git", "init"],
+                    mutates_state=True,
+                    requires_user_approval=True,
+                )
+            ],
+            "blockers": [{"code": "not_git_repo", "message": "Katz requires a Git repository."}],
+        }
+
+    root = Path(git_probe.stdout.strip())
+    status_probe = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    initialized = (root / KATZ_DIR).is_dir()
+    prerequisites = {
+        "katz": {"available": True},
+        "ep": {"available": _command_available("ep")},
+        "git": {"available": True},
+        "expected_parrot_key": {
+            "configured": bool(
+                __import__("os").environ.get("EXPECTED_PARROT_API_KEY")
+                or _dotenv_has_key(root / ".env", "EXPECTED_PARROT_API_KEY")
+            ),
+            "source": "environment_or_dotenv",
+        },
+    }
+    repository = {
+        "is_git_repository": True,
+        "root": str(root),
+        "head": None,
+        "dirty": bool(status_probe.stdout.strip()),
+    }
+    try:
+        repository["head"] = current_commit()
+    except KatzError:
+        pass
+
+    if not initialized:
+        return {
+            "schema_version": AGENT_API_VERSION,
+            "phase": "katz_setup",
+            "ready": False,
+            "repository": repository,
+            "prerequisites": prerequisites,
+            "review": {"initialized": False, "manuscript_candidates": _manuscript_candidates(root)},
+            "next_actions": [
+                _agent_action("katz_init", "Initialize the Katz ledger", ["katz", "init"], mutates_state=True)
+            ],
+            "blockers": [],
+        }
+
+    active_path = root / KATZ_DIR / ACTIVE_VERSION
+    if not active_path.is_file():
+        candidates = _manuscript_candidates(root)
+        actions = []
+        if candidates and candidates[0]["confidence"] >= 25:
+            candidate = candidates[0]
+            actions.append(_agent_action(
+                "register_manuscript",
+                "Register the most likely canonical manuscript after confirming it",
+                [
+                    "katz", "paper", "register", "--canonical", candidate["path"],
+                    "--source-format", candidate["format"],
+                    "--source-method", "agent-selected-repository-source",
+                ],
+                mutates_state=True,
+                requires_user_approval=len(candidates) > 1,
+                reason="Candidate ranking is heuristic; confirm the canonical source.",
+            ))
+        return {
+            "schema_version": AGENT_API_VERSION,
+            "phase": "manuscript_registration",
+            "ready": False,
+            "repository": repository,
+            "prerequisites": prerequisites,
+            "review": {"initialized": True, "active_version": None, "manuscript_candidates": candidates},
+            "next_actions": actions,
+            "blockers": [] if candidates else [{"code": "no_manuscript_candidate", "message": "No Markdown, TeX, or PDF candidate was found."}],
+        }
+
+    resolved, dest, version, pmap, canonical = load_version(None)
+    spotters = sorted(path.stem for path in (dest / "spotters").glob("*.md")) if (dest / "spotters").is_dir() else []
+    reviews = list((dest / "reviews").glob("*/review.json")) if (dest / "reviews").is_dir() else []
+    issue_records = [
+        _load_issue(path.parent)
+        for path in sorted((dest / "issues").glob("*/issue.json"))
+    ] if (dest / "issues").is_dir() else []
+    issue_counts = {state: sum(record.get("state") == state for record in issue_records) for state in sorted(VALID_STATES)}
+    review = {
+        "initialized": True,
+        "active_version": resolved,
+        "canonical": version.get("canonical"),
+        "canonical_exists": canonical.is_file(),
+        "sections": len(pmap.sections),
+        "sentences": len(pmap.sentences),
+        "figures": len(pmap.figures),
+        "enabled_spotters": spotters,
+        "human_reviews": len(reviews),
+        "issues": issue_counts,
+    }
+    actions: list[dict[str, Any]] = []
+    blockers: list[dict[str, str]] = []
+    if not canonical.is_file():
+        phase = "repair"
+        blockers.append({"code": "canonical_missing", "message": "The registered canonical manuscript is missing."})
+    elif not pmap.sections:
+        phase = "section_mapping"
+        actions.append(_agent_action(
+            "auto_chunk", "Map reviewable manuscript sections", ["katz", "paper", "auto-chunk"], mutates_state=True
+        ))
+    elif issue_counts.get("draft", 0):
+        phase = "investigation"
+        actions.append(_agent_action(
+            "next_issue", "Get the next complete investigation packet", ["katz", "issue", "next"], mutates_state=False
+        ))
+    elif not spotters:
+        phase = "review_configuration"
+        actions.extend([
+            _agent_action("init_spotter_catalog", "Install reusable review procedures", ["katz", "spotter", "init-catalog"], mutates_state=True),
+            _agent_action("list_spotter_catalog", "Inspect available review procedures", ["katz", "spotter", "catalog"], mutates_state=False),
+        ])
+    elif issue_counts.get("confirmed", 0) or issue_counts.get("open", 0):
+        phase = "reporting"
+        actions.extend([
+            _agent_action("validate", "Validate anchors and ledger consistency", ["katz", "validate"], mutates_state=False),
+            _agent_action("generate_report", "Generate a human-readable review report", ["katz", "report", "generate", "--output", "review.html"], mutates_state=True),
+        ])
+    else:
+        phase = "automated_review"
+        actions.append(_agent_action(
+            "build_review_jobs", "Package enabled spotters and manuscript sections",
+            ["katz", "spotter", "jobs", "--output", "jobs.ep"], mutates_state=True,
+        ))
+        if not prerequisites["ep"]["available"]:
+            blockers.append({"code": "edsl_cli_missing", "message": "Install EDSL so the `ep` command is available."})
+            actions.append(_agent_action(
+                "install_edsl", "Install the EDSL command-line interface",
+                ["python", "-m", "pip", "install", "edsl"],
+                mutates_state=True, requires_network=True, requires_user_approval=True,
+            ))
+        elif not prerequisites["expected_parrot_key"]["configured"]:
+            blockers.append({"code": "expected_parrot_key_missing", "message": "Configure EXPECTED_PARROT_API_KEY before remote execution."})
+        else:
+            actions.append(_agent_action(
+                    "run_review_jobs", "Run the portable EDSL review package",
+                    ["ep", "run", "jobs.ep", "--model", "<model-name>", "--output", "results.ep"],
+                    mutates_state=True, requires_network=True, requires_user_approval=True,
+                    reason="The model choice affects cost and review behavior.",
+                ))
+    return {
+        "schema_version": AGENT_API_VERSION,
+        "phase": phase,
+        "ready": not blockers,
+        "repository": repository,
+        "prerequisites": prerequisites,
+        "review": review,
+        "next_actions": actions,
+        "blockers": blockers,
+    }
+
+
+@agent_app.command("status")
+def agent_status() -> None:
+    """Return the current review phase, blockers, and valid next actions."""
+    try:
+        emit_json(_agent_state())
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@agent_app.command("bootstrap")
+def agent_bootstrap() -> None:
+    """Inspect prerequisites and propose setup actions without changing state."""
+    try:
+        state = _agent_state()
+        state["mode"] = "read_only_bootstrap"
+        state["applied"] = []
+        emit_json(state)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@agent_app.command("next")
+def agent_next() -> None:
+    """Return the single highest-priority safe next action."""
+    try:
+        state = _agent_state()
+        actions = state.get("next_actions", [])
+        emit_json({
+            "schema_version": AGENT_API_VERSION,
+            "phase": state.get("phase"),
+            "ready": state.get("ready"),
+            "action": actions[0] if actions else None,
+            "alternatives": actions[1:],
+            "blockers": state.get("blockers", []),
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@agent_app.command("instructions")
+def agent_instructions(
+    target: str = typer.Argument(..., help="codex or claude"),
+    output: Optional[Path] = typer.Option(None, "--output"),
+    content: bool = typer.Option(True, "--content/--no-content", help="Include template Markdown in the JSON response."),
+) -> None:
+    """Return or write native repository instructions for a coding agent."""
+    try:
+        normalized = target.lower()
+        filenames = {"codex": "AGENTS.md", "claude": "CLAUDE.md"}
+        if normalized not in filenames:
+            raise KatzError("Target must be codex or claude", "validation_error", {"target": target})
+        template_path = TEMPLATES_DIR / filenames[normalized]
+        if not template_path.is_file():
+            raise KatzError("Agent instruction template is missing", "not_found", {"target": target})
+        markdown = template_path.read_text(encoding="utf-8")
+        written = None
+        if output is not None:
+            if output.exists():
+                raise KatzError("Refusing to overwrite an existing instruction file", "validation_error", {"output": str(output)})
+            output.write_text(markdown, encoding="utf-8")
+            written = str(output)
+        response = {
+            "schema_version": AGENT_API_VERSION,
+            "target": normalized,
+            "suggested_filename": filenames[normalized],
+            "written": written,
+            "bytes": len(markdown.encode("utf-8")),
+        }
+        if content:
+            response["markdown"] = markdown
+        emit_json(response)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@agent_app.command("schema")
+def agent_schema(name: str) -> None:
+    """Return one bundled JSON Schema by filename or stem."""
+    normalized = name if name.endswith(".json") else f"{name}.schema.json"
+    path = SCHEMAS_DIR / normalized
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(SCHEMAS_DIR.resolve())
+    except (OSError, ValueError):
+        fail("Schema not found", "not_found", {"name": name})
+        return
+    if not resolved.is_file():
+        fail("Schema not found", "not_found", {
+            "name": name,
+            "available": sorted(item.name for item in SCHEMAS_DIR.glob("*.json")),
+        })
+        return
+    emit_json({"name": resolved.name, "schema": json.loads(resolved.read_text(encoding="utf-8"))})
+
+
+@app.command("capabilities")
+def capabilities() -> None:
+    """Describe Katz's agent API, schemas, integrations, and safety properties."""
+    schema_names = sorted(path.name for path in SCHEMAS_DIR.glob("*.json")) if SCHEMAS_DIR.is_dir() else []
+    emit_json({
+        "schema_version": AGENT_API_VERSION,
+        "agent_api": {
+            "commands": [
+                "katz agent bootstrap", "katz agent status", "katz agent next",
+                "katz agent instructions codex", "katz agent instructions claude",
+                "katz agent schema NAME", "katz capabilities", "katz ingest PATH", "katz issue next",
+            ],
+            "action_fields": [
+                "id", "purpose", "command", "mutates_state", "requires_network",
+                "requires_user_approval", "reason",
+            ],
+        },
+        "ingestion": ["spotter_results", "journal_review_results", "jobs_package", "humanize_results", "narrative_review"],
+        "integrations": {
+            "edsl": _command_available("ep"),
+            "expected_parrot": True,
+            "github_via_gh": _command_available("gh"),
+        },
+        "safety": {
+            "bootstrap_is_read_only": True,
+            "unified_ingest_previews_by_default": True,
+            "external_writes_require_explicit_agent_authority": True,
+            "issue_ingestion_is_idempotent": True,
+        },
+        "schemas": schema_names,
+    })
+
+
 @app.command()
 def validate(commit: Optional[str] = typer.Option(None, "--commit")) -> None:
     """Validate a katz version without modifying files."""
@@ -1631,6 +2031,91 @@ def issue_list(
                 }
             )
         emit_json(results)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@issue_app.command("next")
+def issue_next(
+    state: str = typer.Option("draft", "--state"),
+    context_lines: int = typer.Option(3, "--context-lines", min=0, max=20),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Return one complete, deterministic issue investigation packet."""
+    try:
+        if state not in VALID_STATES:
+            raise KatzError("Invalid issue state", "validation_error", {"state": state})
+        resolved, dest, _, pmap, canonical = load_version(commit)
+        candidates: list[tuple[str, Path]] = []
+        issues_dir = dest / "issues"
+        if issues_dir.is_dir():
+            for path in sorted(issues_dir.glob("*/issue.json")):
+                record = _load_issue(path.parent)
+                if record.get("state") == state:
+                    candidates.append((str(record.get("created_at", "")), path.parent))
+        if not candidates:
+            emit_json({
+                "schema_version": AGENT_API_VERSION,
+                "commit": resolved,
+                "state": state,
+                "issue": None,
+                "remaining": 0,
+                "next_actions": [],
+            })
+            return
+        candidates.sort(key=lambda item: (item[0], item[1].name))
+        issue_dir = candidates[0][1]
+        issue = _full_issue_record(issue_dir, pmap)
+        location = issue.get("location", {})
+        manuscript_lines = canonical.read_text(encoding="utf-8").splitlines()
+        line_start = int(location.get("line_start") or 1)
+        line_end = int(location.get("line_end") or line_start)
+        context_start = max(1, line_start - context_lines)
+        context_end = min(len(manuscript_lines), line_end + context_lines)
+        context = "\n".join(
+            f"{number}: {manuscript_lines[number - 1]}"
+            for number in range(context_start, context_end + 1)
+        )
+        spotter_instructions = None
+        spotter_name = issue.get("spotter")
+        if spotter_name:
+            spotter_path = dest / "spotters" / f"{spotter_name}.md"
+            if spotter_path.is_file():
+                spotter_instructions = _parse_spotter(spotter_path.read_text(encoding="utf-8"))
+        issue_id = str(issue["id"])
+        emit_json({
+            "schema_version": AGENT_API_VERSION,
+            "commit": resolved,
+            "state": state,
+            "issue": issue,
+            "manuscript_context": {
+                "line_start": context_start,
+                "line_end": context_end,
+                "numbered_text": context,
+            },
+            "review_procedure": spotter_instructions,
+            "remaining": len(candidates),
+            "allowed_verdicts": ["confirmed", "rejected", "uncertain"],
+            "next_actions": [
+                _agent_action(
+                    "record_investigation",
+                    "Record an evidence-backed verdict after checking the manuscript and related artifacts",
+                    [
+                        "katz", "issue", "investigate", "--id", issue_id[:12],
+                        "--verdict", "<confirmed|rejected|uncertain>",
+                        "--notes", "<evidence-backed notes>",
+                        "--state", "<confirmed|rejected|draft>",
+                    ],
+                    mutates_state=True,
+                ),
+                _agent_action(
+                    "show_issue",
+                    "Re-read the complete issue record",
+                    ["katz", "issue", "show", issue_id[:12]],
+                    mutates_state=False,
+                ),
+            ],
+        })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 
@@ -2606,6 +3091,151 @@ def review_ingest(
         fail(exc.message, exc.code, exc.details)
     except Exception as exc:
         fail(str(exc), "edsl_error", {"results": str(results_path)})
+
+
+def _detect_ingest_source(path: Path) -> dict[str, Any]:
+    suffix = path.suffix.lower()
+    if suffix in {".md", ".txt", ".rst"}:
+        return {
+            "kind": "narrative_review",
+            "object_type": "text",
+            "supported_apply": False,
+            "recommended_command": ["katz", "review", "add", str(path)],
+            "reason": "Register the source review first so provenance is preserved before parsing.",
+        }
+    if suffix != ".ep":
+        return {
+            "kind": "unknown",
+            "object_type": None,
+            "supported_apply": False,
+            "recommended_command": None,
+            "reason": "Katz currently detects EDSL .ep packages and human-review text files.",
+        }
+    try:
+        from edsl import Jobs, Results
+    except ImportError as exc:
+        raise KatzError("EDSL is required to inspect .ep objects", "dependency_error") from exc
+    try:
+        results = Results.git.load(path)
+    except Exception:
+        try:
+            jobs = Jobs.git.load(path)
+        except Exception as exc:
+            raise KatzError("Unable to load .ep package as Jobs or Results", "validation_error", {"path": str(path)}) from exc
+        return {
+            "kind": "jobs_package",
+            "object_type": "Jobs",
+            "supported_apply": False,
+            "question_names": list(jobs.survey.question_names),
+            "scenario_count": len(jobs.scenarios),
+            "recommended_command": ["ep", "run", str(path), "--model", "<model-name>", "--output", "results.ep"],
+            "reason": "Jobs packages must be executed by EDSL before Katz can ingest findings.",
+        }
+    answer_keys: set[str] = set()
+    scenario_keys: set[str] = set()
+    for result in results:
+        try:
+            answer = result["answer"]
+            scenario = result["scenario"]
+        except (KeyError, TypeError):
+            continue
+        if isinstance(answer, dict):
+            answer_keys.update(str(key) for key in answer)
+        else:
+            try:
+                answer_keys.update(str(key) for key in dict(answer))
+            except Exception:
+                pass
+        if isinstance(scenario, dict):
+            scenario_keys.update(str(key) for key in scenario)
+        else:
+            try:
+                scenario_keys.update(str(key) for key in dict(scenario))
+            except Exception:
+                pass
+    if "spotter_result" in answer_keys:
+        kind = "spotter_results"
+        supported = True
+        recommended = ["katz", "spotter", "ingest", str(path)]
+    elif "journal_review_issues" in answer_keys:
+        kind = "journal_review_results"
+        supported = True
+        recommended = ["katz", "review", "ingest", str(path)]
+    elif "economic_review" in answer_keys:
+        kind = "whole_paper_review_results"
+        supported = False
+        recommended = ["ep", "results", "select", "--file", str(path), "--column", "answer.economic_review"]
+    elif "issue_id" in scenario_keys:
+        kind = "humanize_results"
+        supported = False
+        recommended = ["katz", "guide", "skill", "review-paper"]
+    else:
+        kind = "unknown_results"
+        supported = False
+        recommended = None
+    return {
+        "kind": kind,
+        "object_type": "Results",
+        "supported_apply": supported,
+        "result_count": len(results),
+        "answer_keys": sorted(answer_keys),
+        "scenario_keys": sorted(scenario_keys),
+        "recommended_command": recommended,
+        "reason": {
+            "whole_paper_review_results": "A coherent referee report requires agent judgment before individual concerns are filed.",
+            "humanize_results": "Human triage decisions require explicit label validation before ledger mutations.",
+            "unknown_results": "No supported Katz ingestion contract was detected.",
+        }.get(kind),
+    }
+
+
+@app.command("ingest")
+def ingest(
+    path: Path = typer.Argument(..., exists=True, readable=True),
+    apply: bool = typer.Option(False, "--apply", help="Apply a supported ingestion after previewing its detected contract."),
+    state: str = typer.Option("draft", "--state"),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Detect review artifacts safely; preview by default and mutate only with --apply."""
+    try:
+        detection = _detect_ingest_source(path)
+        if not apply:
+            command = detection.get("recommended_command")
+            apply_action = None
+            if detection.get("supported_apply"):
+                apply_action = _agent_action(
+                    "apply_ingestion",
+                    "Apply the detected, version-checked ingestion contract",
+                    ["katz", "ingest", str(path), "--apply", "--state", state],
+                    mutates_state=True,
+                )
+            emit_json({
+                "schema_version": AGENT_API_VERSION,
+                "mode": "preview",
+                "path": str(path),
+                "detection": detection,
+                "will_mutate": False,
+                "next_actions": [apply_action] if apply_action else (
+                    [_agent_action("recommended_followup", "Continue with the detected artifact", command, mutates_state=False)]
+                    if command else []
+                ),
+            })
+            return
+        if not detection.get("supported_apply"):
+            raise KatzError(
+                "Detected artifact does not support automatic application",
+                "unsupported_ingestion",
+                {"detection": detection},
+            )
+        if detection["kind"] == "spotter_results":
+            spotter_ingest(path, state=state, commit=commit)
+            return
+        if detection["kind"] == "journal_review_results":
+            review_ingest(path, state=state, commit=commit)
+            return
+        raise KatzError("No ingestion handler is available", "unsupported_ingestion", {"detection": detection})
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
 
 
 @spotter_app.command("jobs")

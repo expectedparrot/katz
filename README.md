@@ -47,6 +47,35 @@ coding agent in the Git repository containing the manuscript and tell it to use
 Katz’s packaged guide. The agent can inspect every command before acting, while
 Katz’s JSON responses provide machine-readable state between steps.
 
+The shortest reliable agent loop is:
+
+```bash
+katz agent bootstrap
+katz agent next
+```
+
+`bootstrap` is read-only. It reports Git state, Katz initialization, ranked
+manuscript candidates, EDSL and Expected Parrot prerequisites, blockers, and
+complete command arrays for valid next actions. `agent next` returns only the
+highest-priority action plus alternatives. After executing an authorized action,
+the agent calls `agent next` again.
+
+Other agent-facing primitives are:
+
+```bash
+katz capabilities                    # supported contracts and schema versions
+katz agent status                    # complete phase and next-action state
+katz issue next                      # one full investigation packet
+katz ingest artifact.ep              # detect and preview; never mutates by default
+katz ingest results.ep --apply       # apply a supported detected contract
+katz agent instructions codex        # return the bundled AGENTS.md template
+katz agent instructions claude       # return the bundled CLAUDE.md template
+```
+
+Every proposed action says whether it mutates state, uses the network, or needs
+user approval. The versioned JSON Schemas for envelopes, actions, and agent
+status ship in `katz/schemas/`.
+
 For Codex:
 
 ```bash

@@ -28,7 +28,7 @@
   <a class="brand" href="https://www.expectedparrot.com/"><strong>Expected Parrot</strong><small>Open-source research tools</small></a>
   <div class="book">Version-aware manuscript review with Katz</div>
   <button class="nav-toggle" type="button" aria-expanded="false">Show tutorial contents</button>
-  <div class="part">Foundations</div><a href="#orientation">1. What Katz does</a><a href="#install">2. Prepare the workspace</a><a href="#paper2md">3. Convert a PDF when needed</a><a href="#register">4. Save the exact paper version</a>
+  <div class="part">Foundations</div><a href="#orientation">1. What Katz does</a><a href="#agent-interface">Let an agent discover the workflow</a><a href="#install">2. Prepare the workspace</a><a href="#paper2md">3. Convert a PDF when needed</a><a href="#register">4. Save the exact paper version</a>
   <div class="part">Review</div><a href="#structure">5. Divide the paper into sections</a><a href="#spotters">6. Choose what to look for</a><a href="#edsl-run">7. Run the automated first pass</a><a href="#one-shot-review">8. Ask for one expert review</a><a href="#journal-review">Import a journal referee report</a><a href="#issues">9. Read the proposed findings</a><a href="#investigate">10. Decide which findings are real</a><a href="#human-triage">11. Ask people to classify findings</a><a href="#github-issues">12. Turn findings into work items</a>
   <div class="part">Assessment</div><a href="#evaluate">13. Record whole-paper judgments</a><a href="#validate">14. Check the review data</a><a href="#report">15. Build the review website</a><a href="#revision">16. Track fixes in a revision</a>
   <div class="part">Reference</div><a href="#commands">17. Command reference</a><a href="#checklist">18. Files created</a>
@@ -57,6 +57,7 @@
     <h2 id="contents-heading">Contents</h2>
     <ol>
       <li><a href="#orientation">What Katz does</a></li>
+      <li><a href="#agent-interface">Let an agent discover the workflow</a></li>
       <li><a href="#install">Prepare the workspace</a></li>
       <li><a href="#paper2md">Convert a PDF when needed</a></li>
       <li><a href="#register">Save the exact paper version</a></li>
@@ -83,6 +84,130 @@
     <p>The worked example is Roni W. Kobrosly’s short software paper <a href="https://joss.theoj.org/papers/10.21105/joss.02523"><em>causal-curve: A Python Causal Inference Package to Estimate Causal Dose-Response Curves</em></a>, published by the Journal of Open Source Software in 2020. Its Markdown source is public, and its <a href="https://github.com/openjournals/joss-reviews/issues/2523">completed public peer review</a> provides useful context when checking model-generated concerns.</p>
     <p><strong>This is a workflow demonstration, not a new assessment of the author or published article.</strong> We review the source to learn Katz. JOSS’s accepted version and public review remain the authoritative publication record.</p>
     <p>Katz manages the review record; EDSL runs the model jobs. Neither replaces judgment. The model proposes candidates, while the reviewer checks the quoted passage, surrounding paper, code, documentation, and public review before deciding what belongs in the report.</p>
+  </section>
+
+  <section id="agent-interface">
+    <h2>Let an agent discover the workflow instead of memorizing it</h2>
+    <p>Codex, Claude Code, or another coding agent does not need the user to paste this tutorial into every session. Katz exposes a small, versioned agent API. The agent begins with a read-only repository scan, receives complete command arrays for valid next actions, executes only an authorized action, and asks Katz again. This makes the workflow depend on repository state rather than a fragile prompt.</p>
+    <pre><code>katz agent bootstrap</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["agent", "bootstrap"],
+  "data": {
+    "schema_version": "1.0",
+    "mode": "read_only_bootstrap",
+    "phase": "katz_setup",
+    "ready": false,
+    "repository": {
+      "is_git_repository": true,
+      "root": "/path/to/causal-curve",
+      "dirty": false
+    },
+    "prerequisites": {
+      "ep": {"available": true},
+      "expected_parrot_key": {"configured": true}
+    },
+    "review": {
+      "initialized": false,
+      "manuscript_candidates": [
+        {"path": "paper/paper.md", "format": "md", "confidence": 155}
+      ]
+    },
+    "next_actions": [{
+      "id": "katz_init",
+      "purpose": "Initialize the Katz ledger",
+      "command": ["katz", "init"],
+      "mutates_state": true,
+      "requires_network": false,
+      "requires_user_approval": false
+    }],
+    "blockers": [],
+    "applied": []
+  }
+}</code></pre>
+    <p><code>bootstrap</code> never changes the repository. Candidate ranking is deliberately advisory; when several plausible manuscripts exist, the registration action requires user approval. Each action declares whether it mutates state, uses the network, or requires approval.</p>
+    <pre><code>katz agent next</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["agent", "next"],
+  "data": {
+    "schema_version": "1.0",
+    "phase": "katz_setup",
+    "ready": false,
+    "action": {
+      "id": "katz_init",
+      "command": ["katz", "init"],
+      "mutates_state": true,
+      "requires_network": false,
+      "requires_user_approval": false
+    },
+    "alternatives": [],
+    "blockers": []
+  }
+}</code></pre>
+    <p>After completing the returned action, the agent runs <code>katz agent next</code> again. The state machine advances through initialization, manuscript registration, section mapping, review configuration, EDSL execution, investigation, validation, and reporting. <code>katz agent status</code> returns the complete state when one next action is not enough context.</p>
+    <pre><code>katz capabilities</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["capabilities"],
+  "data": {
+    "schema_version": "1.0",
+    "agent_api": {
+      "commands": [
+        "katz agent bootstrap",
+        "katz agent status",
+        "katz agent next",
+        "katz ingest PATH",
+        "katz issue next"
+      ],
+      "action_fields": [
+        "id", "purpose", "command", "mutates_state",
+        "requires_network", "requires_user_approval", "reason"
+      ]
+    },
+    "safety": {
+      "bootstrap_is_read_only": true,
+      "unified_ingest_previews_by_default": true,
+      "external_writes_require_explicit_agent_authority": true,
+      "issue_ingestion_is_idempotent": true
+    },
+    "schemas": [
+      "action.schema.json",
+      "agent-status.schema.json",
+      "envelope.schema.json"
+    ]
+  }
+}</code></pre>
+    <p>Repository-native instructions are also bundled. Write the appropriate template without echoing its complete Markdown into the response:</p>
+    <pre><code>katz agent instructions codex \
+  --output AGENTS.md \
+  --no-content</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["agent", "instructions", "codex", "--output", "AGENTS.md", "--no-content"],
+  "data": {
+    "schema_version": "1.0",
+    "target": "codex",
+    "suggested_filename": "AGENTS.md",
+    "written": "AGENTS.md",
+    "bytes": 1159
+  }
+}</code></pre>
+    <pre><code>katz agent instructions claude \
+  --output CLAUDE.md \
+  --no-content</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["agent", "instructions", "claude", "--output", "CLAUDE.md", "--no-content"],
+  "data": {
+    "schema_version": "1.0",
+    "target": "claude",
+    "suggested_filename": "CLAUDE.md",
+    "written": "CLAUDE.md",
+    "bytes": 1159
+  }
+}</code></pre>
+    <p>Both commands refuse to overwrite an existing instruction file. The templates tell the agent to use the state machine, preserve Jobs and Results, preview ingestion, investigate drafts, and request authority before paid or external actions.</p>
   </section>
 
   <section id="install">
@@ -874,10 +999,38 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
 }</code></pre>
 
     <h3>File the grounded comments as drafts</h3>
-    <pre><code>katz review ingest journal-review-results.ep</code></pre>
+    <pre><code>katz ingest journal-review-results.ep</code></pre>
     <pre class="wrap"><code>{
   "ok": true,
-  "command": ["review", "ingest", "journal-review-results.ep"],
+  "command": ["ingest", "journal-review-results.ep"],
+  "data": {
+    "schema_version": "1.0",
+    "mode": "preview",
+    "path": "journal-review-results.ep",
+    "detection": {
+      "kind": "journal_review_results",
+      "object_type": "Results",
+      "supported_apply": true,
+      "result_count": 1,
+      "answer_keys": ["journal_review_issues"],
+      "scenario_keys": ["journal_review", "katz_commit", "manuscript", "review_id"],
+      "recommended_command": ["katz", "review", "ingest", "journal-review-results.ep"]
+    },
+    "will_mutate": false,
+    "next_actions": [{
+      "id": "apply_ingestion",
+      "command": ["katz", "ingest", "journal-review-results.ep", "--apply", "--state", "draft"],
+      "mutates_state": true,
+      "requires_network": false,
+      "requires_user_approval": false
+    }]
+  }
+}</code></pre>
+    <p>The bare unified command detects the EDSL contract and previews the mutation. It can also recognize unexecuted Jobs, whole-paper reports, Humanize Results, and narrative review files; unsupported automatic mutations return an inspection or judgment action rather than guessing.</p>
+    <pre><code>katz ingest journal-review-results.ep --apply</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["ingest", "journal-review-results.ep", "--apply"],
   "data": {
     "results": "journal-review-results.ep",
     "commit": "aab15fb…",
@@ -1110,6 +1263,56 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
 
   <section id="investigate">
     <h2><span class="chapter">10</span> Decide which proposed findings are real</h2>
+    <p>An agent can request one complete, deterministic investigation packet instead of joining several command responses itself:</p>
+    <pre><code>katz issue next</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["issue", "next"],
+  "data": {
+    "schema_version": "1.0",
+    "commit": "aab15fb…",
+    "state": "draft",
+    "issue": {
+      "id": "ISSUE_CAUSAL_LANGUAGE",
+      "title": "Exercise example states a causal effect too directly",
+      "body": "The example says exercise causes positive health outcomes after controlling for confounding…",
+      "location": {
+        "line_start": 39,
+        "line_end": 40,
+        "resolved_text": "…causes positive health outcomes…",
+        "section": "summary"
+      },
+      "meta": {},
+      "investigations": [],
+      "suggestions": []
+    },
+    "manuscript_context": {
+      "line_start": 36,
+      "line_end": 43,
+      "numbered_text": "36: …\n39: …causes positive health outcomes…\n43: …"
+    },
+    "review_procedure": {
+      "scope": "section",
+      "title": "Causal Language",
+      "investigation": "Check whether the design and stated assumptions support causal interpretation…"
+    },
+    "remaining": 4,
+    "allowed_verdicts": ["confirmed", "rejected", "uncertain"],
+    "next_actions": [{
+      "id": "record_investigation",
+      "command": [
+        "katz", "issue", "investigate", "--id", "ISSUE_CAUS",
+        "--verdict", "&lt;confirmed|rejected|uncertain&gt;",
+        "--notes", "&lt;evidence-backed notes&gt;",
+        "--state", "&lt;confirmed|rejected|draft&gt;"
+      ],
+      "mutates_state": true,
+      "requires_network": false,
+      "requires_user_approval": false
+    }]
+  }
+}</code></pre>
+    <p>The packet includes the full issue record, numbered surrounding manuscript lines, human-review provenance when present, the frozen spotter investigation procedure, allowed verdicts, and the exact mutation shape. Repeating the command returns the same oldest draft until an investigation changes its state, which makes retries predictable.</p>
     <p>Katz includes an agent-readable investigation workflow. <code>katz guide skill investigate-issues</code> prints the complete procedure: select drafts, read the full registered manuscript, inspect surrounding text and source artifacts, deduplicate related candidates, record a verdict, and update state. The guide is procedural Markdown rather than another model run.</p>
     <pre><code>katz guide skill investigate-issues</code></pre>
     <pre class="wrap"><code>{

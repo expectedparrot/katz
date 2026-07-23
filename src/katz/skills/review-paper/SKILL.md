@@ -17,7 +17,19 @@ Orchestrates a full paper review using katz. Start here.
 
 ## Workflow
 
-Run `katz guide overview` to understand what katz can do and how to use it.
+Begin with the read-only agent contract:
+
+```bash
+katz agent bootstrap
+katz agent next
+```
+
+Follow the returned command arrays only after checking their mutation, network,
+and approval flags. Call `katz agent next` again after each completed action.
+Run `katz capabilities` when feature or schema discovery is needed. The
+step-by-step procedure below explains the judgment behind that state machine.
+
+Run `katz guide overview` for additional background.
 
 Then follow the typical workflow. At each step, **check prerequisites before proceeding** — if a step is already done, skip it.
 
@@ -147,6 +159,10 @@ This creates a single parent issue and marks the children as wontfix. Read throu
 ### 7. Investigate issues
 
 Follow: `katz guide skill investigate-issues` — review each draft issue against the manuscript. Expect ~5–10% confirmation rate.
+
+Use `katz issue next` to retrieve one deterministic investigation packet with
+the full issue, numbered manuscript context, source-review metadata, frozen
+spotter procedure, allowed verdicts, and exact follow-up command shape.
 
 For each issue, read the manuscript context, determine a verdict (confirmed/rejected/uncertain), and record it with `katz issue investigate` and `katz issue update`.
 
