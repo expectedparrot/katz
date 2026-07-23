@@ -27,9 +27,9 @@
   <div class="book">Version-aware manuscript review with Katz</div>
   <button class="nav-toggle" type="button" aria-expanded="false">Show tutorial contents</button>
   <div class="part">Foundations</div><a href="#orientation">1. The paper and the method</a><a href="#install">2. Set up the worked example</a><a href="#paper2md">3. Starting from a PDF</a><a href="#register">4. Register the paper</a>
-  <div class="part">Review</div><a href="#structure">5. Map the paper</a><a href="#spotters">6. Add and enable spotters</a><a href="#edsl-run">7. Run spotters with EDSL</a><a href="#issues">8. Read the candidate issues</a><a href="#investigate">9. Investigate and revise</a>
-  <div class="part">Assessment</div><a href="#evaluate">10. Evaluate criteria</a><a href="#validate">11. Validate the ledger</a><a href="#report">12. Generate the report</a><a href="#revision">13. Review a revision</a>
-  <div class="part">Reference</div><a href="#commands">14. Command map</a><a href="#checklist">15. Artifacts produced</a>
+  <div class="part">Review</div><a href="#structure">5. Map the paper</a><a href="#spotters">6. Add and enable spotters</a><a href="#edsl-run">7. Run spotters with EDSL</a><a href="#issues">8. Read the candidate issues</a><a href="#investigate">9. Investigate findings</a><a href="#github-issues">10. Create GitHub issues</a>
+  <div class="part">Assessment</div><a href="#evaluate">11. Evaluate criteria</a><a href="#validate">12. Validate the ledger</a><a href="#report">13. Generate the report</a><a href="#revision">14. Review a revision</a>
+  <div class="part">Reference</div><a href="#commands">15. Command map</a><a href="#checklist">16. Artifacts produced</a>
   <div class="small">A practical tutorial for Katz, the version-aware paper-review ledger.</div>
 </nav>
 <main><article>
@@ -642,6 +642,33 @@ Pay special attention to:
 
   <section id="investigate">
     <h2><span class="chapter">09</span> Investigate, merge, and suggest</h2>
+    <p>Katz includes an agent-readable investigation workflow. <code>katz guide skill investigate-issues</code> prints the complete procedure: select drafts, read the full registered manuscript, inspect surrounding text and source artifacts, deduplicate related candidates, record a verdict, and update state. The guide is procedural Markdown rather than another model run.</p>
+    <pre><code>katz guide skill investigate-issues</code></pre>
+    <pre><code>---
+name: investigate-issues
+description: Review open katz issues, investigate them against the manuscript and code, and record findings
+---
+
+# Investigate Issues
+
+Reviews katz issues, investigates each one against the manuscript source
+and codebase, records investigation findings, and updates issue state.</code></pre>
+    <p>For an individual candidate, use its recorded section to retrieve the complete section boundary before reading the canonical manuscript:</p>
+    <pre><code>katz paper section summary</code></pre>
+    <pre><code>{
+  "ok": true,
+  "command": ["paper", "section", "summary"],
+  "data": {
+    "type": "section",
+    "id": "summary",
+    "title": "Summary",
+    "byte_start": 573,
+    "byte_end": 3763,
+    "line_start": 23,
+    "line_end": 73
+  }
+}</code></pre>
+    <p>The issue’s shorter range identifies the triggering quotation; this section range supplies the surrounding argument. The investigation workflow also directs the agent to read the complete registered manuscript and inspect relevant code, documentation, LaTeX, figures, or public review material before deciding.</p>
     <p>The causal-language candidate is anchored correctly, but its conclusion still needs human review. Read the surrounding summary, then compare the wording with the paper’s methods and stated identification assumptions. Here the passage makes a causal claim while mentioning adjustment for confounding, but it does not state what must be true for that adjustment to identify an effect. Record both that evidence and the decision:</p>
     <pre><code>katz issue investigate \
   --id ISSUE_CAUSAL_LANGUAGE \
@@ -681,8 +708,77 @@ Pay special attention to:
     </tbody></table>
   </section>
 
+  <section id="github-issues">
+    <h2><span class="chapter">10</span> Create GitHub issues from confirmed findings</h2>
+    <p>Once findings are investigated, Katz provides a second agent-readable workflow for turning them into actionable GitHub issues. This is deliberately not a <code>katz github</code> API: Katz supplies the structured review data and composition procedure, while the authenticated <code>gh</code> CLI performs the external write only after the user approves the proposed title and body.</p>
+    <pre><code>katz guide skill create-github-issues</code></pre>
+    <pre><code>---
+name: create-github-issues
+description: Collaboratively create GitHub issues from review findings
+---
+
+# Create GitHub Issues
+
+Gather confirmed findings, agree on a grouping, compose complete Markdown,
+show it to the user, and post with gh only after approval.</code></pre>
+    <h3>Gather the records</h3>
+    <p>The workflow starts with confirmed issues and completed evaluations, not raw model candidates:</p>
+    <pre><code>katz issue list --state confirmed</code></pre>
+    <pre><code>{
+  "ok": true,
+  "command": ["issue", "list", "--state", "confirmed"],
+  "data": [
+    {
+      "id": "ISSUE_CAUSAL_LANGUAGE",
+      "state": "confirmed",
+      "title": "Exercise example states a causal effect too directly",
+      "spotter": "causal_language",
+      "location": {
+        "line_start": 39,
+        "line_end": 40,
+        "section": "summary"
+      }
+    }
+  ]
+}</code></pre>
+    <p>Only the candidate investigated above appears in this walkthrough. For every selected ID, load the full record:</p>
+    <pre><code>katz issue show ISSUE_CAUSAL_LANGUAGE</code></pre>
+    <p>The full JSON record supplies the manuscript quotation, section and lines, investigation notes, suggestions, status history, and Katz ID. Those fields let a GitHub issue remain understandable without copying the entire review report.</p>
+    <h3>Choose the GitHub issue shape</h3>
+    <p>The workflow asks whether the user wants one summary issue, one issue per theme, or one issue per confirmed finding. Group by the underlying problem rather than by the spotter that happened to find it; multiple model candidates may describe the same requested change.</p>
+    <p>For this walkthrough, one confirmed finding becomes one proposed GitHub issue:</p>
+    <pre><code>## Problem
+
+The paper's exercise example says that minutes of aerobic exercise
+"causes positive health outcomes" after controlling for confounding.
+The surrounding text does not state the assumptions required for that
+adjustment to identify an effect.
+
+## Suggested revision
+
+State the identifying assumptions required for a causal interpretation,
+or describe the example as an association.
+
+## Source
+
+- Section: Summary
+- Lines: 39–40
+- Katz issue: ISSUE_CAUSAL_LANGUAGE
+- Review commit: c658feac</code></pre>
+    <p>Show this complete Markdown and title to the user before doing anything on GitHub. The user may change the wording, combine it with another finding, add labels or an assignee, or decide not to post it.</p>
+    <h3>Post only after approval</h3>
+    <p>After approval, save the reviewed body as <code>github-issue.md</code> and use <code>gh</code> against a repository where you are authorized to create issues:</p>
+    <pre><code>gh issue create \
+  --repo OWNER/REPOSITORY \
+  --title "Clarify assumptions behind the causal exercise example" \
+  --body-file github-issue.md</code></pre>
+    <p>On success, <code>gh</code> prints the new issue URL:</p>
+    <pre><code>https://github.com/OWNER/REPOSITORY/issues/NUMBER</code></pre>
+    <p>Do not use the original <code>causal-curve</code> repository for a tutorial post unless its maintainers have asked for the review. Use a repository you control when testing this workflow.</p>
+  </section>
+
   <section id="evaluate">
-    <h2><span class="chapter">10</span> Evaluate review criteria</h2>
+    <h2><span class="chapter">11</span> Evaluate review criteria</h2>
     <p>Issues are tied to particular passages. An evaluation records a paper-level judgment that may depend on evidence spread across sections—for example, whether the design supports the paper’s claims. Evaluations are entered deliberately after reading; they are not additional spotter jobs.</p>
     <pre><code>katz eval init-catalog</code></pre>
     <p>As with spotters, this copies reusable definitions into the repository catalog. The response lists every added criterion; only the relevant entry is shown here:</p>
@@ -732,7 +828,7 @@ Pay special attention to:
   </section>
 
   <section id="validate">
-    <h2><span class="chapter">11</span> Validate the ledger</h2>
+    <h2><span class="chapter">12</span> Validate the ledger</h2>
     <p>Validation checks the internal consistency of registered versions, source hashes, section bounds, issue anchors, and references. Run it before relying on a report and after any manual changes to review state.</p>
     <pre><code>katz validate</code></pre>
     <p>Checks the active version by default. Add <code>--commit SHA</code> to validate another registered version. The worked ledger passes:</p>
@@ -750,7 +846,7 @@ Pay special attention to:
   </section>
 
   <section id="report">
-    <h2><span class="chapter">12</span> Generate the review report</h2>
+    <h2><span class="chapter">13</span> Generate the review report</h2>
     <p>Once material issues have been investigated and criteria answered, generate a navigable HTML report:</p>
     <pre><code>katz report generate --output review.html</code></pre>
     <p><code>--output</code> chooses the destination HTML file. Katz also writes the Expected Parrot logo beside it. The report reads the ledger; it does not rerun models or alter issue state.</p>
@@ -771,7 +867,7 @@ Pay special attention to:
   </section>
 
   <section id="revision">
-    <h2><span class="chapter">13</span> Review a revision</h2>
+    <h2><span class="chapter">14</span> Review a revision</h2>
     <p>A revision receives a new Git commit and a new Katz version because its byte ranges no longer describe the old manuscript. Prior issues stay with the version where they were found; review them explicitly rather than moving their anchors onto changed prose.</p>
     <pre><code>git add paper/paper_ventilated.md</code></pre>
     <p>Stage the revised version of the same canonical file used in this tutorial.</p>
@@ -799,7 +895,7 @@ Pay special attention to:
   </section>
 
   <section id="commands">
-    <h2><span class="chapter">14</span> Command map</h2>
+    <h2><span class="chapter">15</span> Command map</h2>
     <table><thead><tr><th>Command family</th><th>Purpose</th></tr></thead><tbody>
       <tr><td><code>katz init</code></td><td>Create repository-scoped review state.</td></tr>
       <tr><td><code>katz paper …</code></td><td>Register versions, map sections, inspect sentences, and resolve locations.</td></tr>
@@ -808,19 +904,21 @@ Pay special attention to:
       <tr><td><code>katz eval …</code></td><td>Enable broader criteria and record reasoned assessments.</td></tr>
       <tr><td><code>katz validate</code></td><td>Check ledger consistency and anchor integrity.</td></tr>
       <tr><td><code>katz report …</code></td><td>Generate a shareable view of the structured review.</td></tr>
-      <tr><td><code>katz docs</code> / <code>katz guide</code></td><td>Read built-in reference and workflow guidance.</td></tr>
+      <tr><td><code>katz docs</code> / <code>katz guide</code></td><td>Read built-in reference and agent workflows, including investigation and GitHub issue creation.</td></tr>
+      <tr><td><code>gh issue create</code></td><td>Post an approved issue body to GitHub; this is an external CLI action, not a Katz command.</td></tr>
     </tbody></table>
     <p>Use <code>katz &lt;command&gt; --help</code> for the exact options supported by the installed version.</p>
   </section>
 
   <section id="checklist">
-    <h2><span class="chapter">15</span> Artifacts produced</h2>
+    <h2><span class="chapter">16</span> Artifacts produced</h2>
     <p>The tutorial ends with four related artifacts. Keeping their roles distinct is the central Katz workflow:</p>
     <table><thead><tr><th>Artifact</th><th>What it contains</th><th>Why it remains separate</th></tr></thead><tbody>
       <tr><td><code>.katz/</code></td><td>Registered versions, maps, frozen spotters, issues, investigations, suggestions, and evaluations.</td><td>This is the version-aware review ledger and source of truth.</td></tr>
       <tr><td><code>jobs.ep</code></td><td>The EDSL survey, manuscript scenarios, spotter instructions, and run configuration inputs.</td><td>It can be inspected and costed before any model call.</td></tr>
       <tr><td><code>results.ep</code></td><td>Complete positive and null model results with scenario and model provenance.</td><td>It preserves more than the positive findings imported into Katz.</td></tr>
       <tr><td><code>review.html</code> and <code>logo.png</code></td><td>A human-readable view of the current ledger and its source passages.</td><td>It is regenerated output, not the underlying review state.</td></tr>
+      <tr><td><code>github-issue.md</code></td><td>An approved, traceable issue body assembled from confirmed findings.</td><td>It is reviewed before <code>gh</code> creates any external issue.</td></tr>
     </tbody></table>
     <p>A reader should be able to move from a report finding to its issue, from the issue to an exact manuscript version and passage, and from a model-generated issue back to the EDSL result that proposed it.</p>
   </section>
