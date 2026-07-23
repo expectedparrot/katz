@@ -485,12 +485,15 @@ MathJax = {{
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
 <style>
   :root {{
-    --bg: #ffffff;
-    --fg: #1a1a2e;
-    --muted: #6b7280;
-    --border: #e5e7eb;
-    --card-bg: #f9fafb;
-    --accent: #2563eb;
+    --ep-green: #428a5f;
+    --ep-green-light: #5ba97a;
+    --ep-green-dark: #25614a;
+    --bg: #fafaf9;
+    --fg: #1a1a1a;
+    --muted: #666666;
+    --border: #e0e0e0;
+    --card-bg: #ffffff;
+    --accent: var(--ep-green);
     --quote-bg: #fef3c7;
     --hl: #fef08a;
   }}
@@ -503,6 +506,7 @@ MathJax = {{
     display: flex;
     height: 100vh;
     overflow: hidden;
+    border-top: 6px solid var(--ep-green);
   }}
   .ep-brand {{
     display: flex;
@@ -523,7 +527,7 @@ MathJax = {{
     gap: 0.1rem;
   }}
   .ep-brand-name {{
-    color: #25614a;
+    color: var(--ep-green-dark);
     font-size: 0.95rem;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -539,7 +543,7 @@ MathJax = {{
     width: 50%;
     height: 100vh;
     overflow-y: auto;
-    padding: 1.5rem;
+    padding: 1.75rem 2rem 3rem;
     order: 1;
   }}
   #manuscript-pane {{
@@ -551,7 +555,7 @@ MathJax = {{
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     font-size: 0.78rem;
     line-height: 1.5;
-    background: #fafafa;
+    background: #f5f5f5;
     order: 2;
   }}
   .ms-toolbar {{
@@ -577,7 +581,7 @@ MathJax = {{
     line-height: 1.7;
   }}
   .ms-h1 {{ font-size: 1.3rem; font-weight: 700; margin: 1.5rem 0 0.5rem; }}
-  .ms-h2 {{ font-size: 1.1rem; font-weight: 600; margin: 1.25rem 0 0.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; }}
+  .ms-h2 {{ color: var(--ep-green-dark); font-size: 1.1rem; font-weight: 600; margin: 1.25rem 0 0.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; }}
   .ms-h3 {{ font-size: 0.95rem; font-weight: 600; margin: 1rem 0 0.3rem; }}
   .ms-h4 {{ font-size: 0.9rem; font-weight: 600; margin: 0.75rem 0 0.25rem; }}
   .ms-p {{ margin-bottom: 0.6rem; }}
@@ -650,7 +654,7 @@ MathJax = {{
     font-size: 0.85rem;
     margin-bottom: 1.5rem;
     padding: 0.5rem 0.75rem;
-    background: var(--card-bg);
+    background: #f5f5f5;
     border: 1px solid var(--border);
     border-radius: 6px;
   }}
@@ -662,14 +666,15 @@ MathJax = {{
     text-decoration: underline;
   }}
   .about-review {{
-    background: #f0f4ff;
-    border: 1px solid #c7d2fe;
+    background: #f1f7f3;
+    border: 1px solid #c9dfd1;
+    border-left: 4px solid var(--ep-green);
     border-radius: 6px;
     padding: 0.75rem 1rem;
     margin-bottom: 1.5rem;
     font-size: 0.85rem;
     line-height: 1.6;
-    color: #374151;
+    color: var(--fg);
   }}
   .about-review p {{ margin-bottom: 0.4rem; }}
   .about-review p:last-child {{ margin-bottom: 0; }}
@@ -693,8 +698,11 @@ MathJax = {{
   .referee-report p {{ margin-bottom: 0.5rem; }}
   .referee-report ul {{ margin: 0.3rem 0 0.5rem 1.5rem; }}
   .referee-report li {{ margin-bottom: 0.25rem; }}
-  h1 {{ font-size: 1.5rem; margin-bottom: 0.25rem; }}
-  h2 {{ font-size: 1.15rem; margin-top: 2rem; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }}
+  h1, h2, h3, .ms-h1, .ms-h2, .ms-h3 {{
+    font-family: Georgia, "Times New Roman", serif;
+  }}
+  h1 {{ font-size: 1.8rem; margin-bottom: 0.25rem; }}
+  h2 {{ color: var(--ep-green-dark); font-size: 1.25rem; margin-top: 2rem; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }}
   h3 {{ font-size: 1rem; margin-top: 1.5rem; margin-bottom: 0.5rem; color: var(--accent); }}
   .meta {{ color: var(--muted); font-size: 0.85rem; margin-bottom: 1.5rem; }}
   .meta code {{ background: var(--card-bg); padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.85em; }}
@@ -719,7 +727,7 @@ MathJax = {{
   .issue-card {{
     background: var(--card-bg);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 4px;
     padding: 0.75rem 1rem;
     margin-bottom: 0.6rem;
     transition: border-color 0.15s;
@@ -792,7 +800,7 @@ MathJax = {{
   .eval-card {{
     background: var(--card-bg);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 4px;
     padding: 0.75rem 1rem;
     margin-bottom: 0.6rem;
   }}
