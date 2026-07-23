@@ -798,7 +798,7 @@ MathJax = {{
     border-top: 1px dashed var(--border);
   }}
   .suggestion::before {{
-    content: "\1f4a1  Suggestion";
+    content: "\\1f4a1  Suggestion";
     display: block;
     font-size: 0.75rem;
     font-weight: 600;

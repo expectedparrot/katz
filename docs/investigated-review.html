@@ -436,7 +436,7 @@ MathJax = {
 <h2 id="summary">Summary</h2>
 <div class="stats">
   <span class="total">3 issues</span>
-  <span class="badge" style="background:#6b7280">Draft</span> 3
+  <span class="badge" style="background:#ef4444">Confirmed</span> 2
 </div>
 
 
@@ -447,7 +447,7 @@ MathJax = {
 <table>
   <thead><tr><th>Section</th><th style="color:#ef4444">Confirmed</th><th>Total</th><th>Lines</th></tr></thead>
   <tbody>
-    <tr><td class="sec-title"><a href="#summary" onclick="highlightLines(23,73,null)">Summary</a></td><td><span class="issue-count zero">0</span></td><td><span class="issue-count">1</span></td><td>L23–L73</td></tr><tr><td class="sec-title"><a href="#methods" onclick="highlightLines(74,119,null)">Methods</a></td><td><span class="issue-count zero">0</span></td><td><span class="issue-count">2</span></td><td>L74–L119</td></tr><tr><td class="sec-title"><a href="#statement-of-need" onclick="highlightLines(120,131,null)">Statement of Need</a></td><td><span class="issue-count zero">0</span></td><td><span class="issue-count zero">0</span></td><td>L120–L131</td></tr><tr><td class="sec-title"><a href="#acknowledgements" onclick="highlightLines(132,137,null)">Acknowledgements</a></td><td><span class="issue-count zero">0</span></td><td><span class="issue-count zero">0</span></td><td>L132–L137</td></tr><tr><td class="sec-title"><a href="#references" onclick="highlightLines(138,138,null)">References</a></td><td><span class="issue-count zero">0</span></td><td><span class="issue-count zero">0</span></td><td>L138–L138</td></tr>
+    <tr><td class="sec-title"><a href="#summary" onclick="highlightLines(23,73,null)">Summary</a></td><td><span style="color:#ef4444;font-weight:600">1</span></td><td><span class="issue-count">1</span></td><td>L23–L73</td></tr><tr><td class="sec-title"><a href="#methods" onclick="highlightLines(74,119,null)">Methods</a></td><td><span style="color:#ef4444;font-weight:600">1</span></td><td><span class="issue-count">2</span></td><td>L74–L119</td></tr><tr><td class="sec-title"><a href="#statement-of-need" onclick="highlightLines(120,131,null)">Statement of Need</a></td><td><span class="issue-count zero">0</span></td><td><span class="issue-count zero">0</span></td><td>L120–L131</td></tr><tr><td class="sec-title"><a href="#acknowledgements" onclick="highlightLines(132,137,null)">Acknowledgements</a></td><td><span class="issue-count zero">0</span></td><td><span class="issue-count zero">0</span></td><td>L132–L137</td></tr><tr><td class="sec-title"><a href="#references" onclick="highlightLines(138,138,null)">References</a></td><td><span class="issue-count zero">0</span></td><td><span class="issue-count zero">0</span></td><td>L138–L138</td></tr>
   </tbody>
 </table>
 
@@ -456,45 +456,45 @@ MathJax = {
 <div style="margin-bottom:0.75rem">
   <label style="font-size:0.85rem;color:var(--muted);cursor:pointer;user-select:none">
     <input type="checkbox" id="show-rejected" onchange="toggleRejected(this.checked)" style="margin-right:0.3rem">
-    Show rejected (0)
+    Show rejected (1)
   </label>
 </div>
 <h3 id="summary" style="cursor:pointer" onclick="highlightLines(23,73)">Summary</h3><details class="issue-card" data-line-start="39" data-line-end="40" open>
   <summary>
     <div class="issue-header">
-      <span class="badge" style="background:#6b7280">Draft</span>
+      <span class="badge" style="background:#ef4444">Confirmed</span>
       <span class="issue-title">Overclaiming causal effects from observational data</span>
       <span class="issue-lines">L39–L40</span>
     </div>
   </summary>
   
   <div class="issue-body">The phrase 'causes positive health outcomes' implies a definitive causal relationship, yet the evidence is based on observational data and causal inference methods that attempt to estimate but cannot fully guarantee causality due to potential residual confounding and bias. This overstates the strength of the evidence, especially given the known limitations of observational causal inference.</div>
-  
-  
-</details><h3 id="methods" style="cursor:pointer" onclick="highlightLines(74,119)">Methods</h3><details class="issue-card" data-line-start="97" data-line-end="98" open>
+  <div class="investigations"><div class="investigation"><span class="inv-verdict" style="color:#ef4444;font-weight:600">confirmed</span> <span class="inv-notes">The exercise example makes an unqualified causal statement, while the surrounding text does not state the assumptions under which adjustment identifies an effect.</span></div></div>
+  <div class="suggestion"><div class="suggestion-text">State the assumptions required for a causal interpretation, or describe the exercise example as an association.</div></div>
+</details><h3 id="methods" style="cursor:pointer" onclick="highlightLines(74,119)">Methods</h3><details class="issue-card rejected" data-line-start="97" data-line-end="98" >
   <summary>
     <div class="issue-header">
-      <span class="badge" style="background:#6b7280">Draft</span>
+      <span class="badge" style="background:#6b7280">Rejected</span>
       <span class="issue-title">Overclaiming causal inference without full support</span>
       <span class="issue-lines">L97–L98</span>
     </div>
   </summary>
   
   <div class="issue-body">The phrase &quot;to estimate an unbiased causal effect&quot; is an unhedged claim of causality. While TMLE is designed for causal inference under certain assumptions, the Methods section does not specify the identification assumptions or whether they hold in the current application. This overstates the method’s ability to produce unbiased causal effects without qualification. A more cautious phrasing (e.g., &quot;to estimate a causal effect under identification assumptions&quot;) would be appropriate to avoid overclaiming.</div>
-  
+  <div class="investigations"><div class="investigation"><span class="inv-verdict" style="color:#10b981;font-weight:600">rejected</span> <span class="inv-notes">This candidate duplicates the confirmed causal-language issue b451a62fc869487292a71a87d36c249d at the same passage.</span></div></div>
   
 </details><details class="issue-card" data-line-start="97" data-line-end="98" open>
   <summary>
     <div class="issue-header">
-      <span class="badge" style="background:#6b7280">Draft</span>
+      <span class="badge" style="background:#ef4444">Confirmed</span>
       <span class="issue-title">Causal language used without explicit identification assumptions</span>
       <span class="issue-lines">L97–L98</span>
     </div>
   </summary>
   
   <div class="issue-body">The Methods section describes TMLE as estimating an &quot;unbiased causal effect&quot; but does not explicitly state the identification assumptions (e.g., conditional independence, no unmeasured confounding) required for this causal interpretation. Without stating these assumptions or clarifying what would need to be true for the estimates to be causal, the causal language is not fully justified given the observational nature of the methods described.</div>
-  
-  
+  <div class="investigations"><div class="investigation"><span class="inv-verdict" style="color:#ef4444;font-weight:600">confirmed</span> <span class="inv-notes">The Methods section calls the estimate unbiased and causal without stating the identification assumptions required for that interpretation.</span></div></div>
+  <div class="suggestion"><div class="suggestion-text">State the identification assumptions and qualify the claim as applying under those assumptions.</div></div>
 </details>
 
 </div>
