@@ -82,6 +82,18 @@ MathJax = {
     color: var(--muted);
     font-size: 0.84rem;
   }
+  .review-audit {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin: 1rem 0;
+    padding: 0.8rem 1rem;
+    border-left: 4px solid #d97706;
+    background: #fffbeb;
+    font-size: 0.9rem;
+  }
+  .review-audit.complete { border-color: var(--ep-green); background: #f0fdf4; }
+  .review-audit.incomplete { border-color: #dc2626; background: #fef2f2; }
 
   /* Split pane layout */
   #review-pane {
@@ -416,8 +428,15 @@ MathJax = {
   Source: <code>paper</code> &middot;
   Commit: <code>c658feac</code> &middot;
   5 sections, 103 sentences &middot;
-  Generated 2026-07-23 15:34
+  Generated 2026-07-23 19:37
 </div>
+
+
+<div class="review-audit unknown">
+  <strong>Automated review coverage not audited</strong>
+  <span>This report must not be interpreted as a complete zero-issue review.</span>
+</div>
+
 
 <nav class="nav-bar"><a href="#summary">Summary</a> &middot; <a href="#sections">Sections</a> &middot; <a href="#issues">Issues</a></nav>
 
