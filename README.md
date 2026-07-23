@@ -29,6 +29,65 @@ python -m pip install -e '.[test]'
 pytest
 ```
 
+Install the EDSL CLI as well, and put a valid Expected Parrot key in the paper
+repository’s uncommitted `.env` file:
+
+```bash
+python -m pip install edsl
+```
+
+```dotenv
+EXPECTED_PARROT_API_KEY=your-key-here
+```
+
+## Use Katz directly with Codex or Claude Code
+
+Katz does not require a special Codex or Claude Code integration. Start either
+coding agent in the Git repository containing the manuscript and tell it to use
+Katz’s packaged guide. The agent can inspect every command before acting, while
+Katz’s JSON responses provide machine-readable state between steps.
+
+For Codex:
+
+```bash
+cd path/to/paper-repository
+codex 'Use Katz to review this manuscript. First run `katz guide skill review-paper`
+and follow that procedure. Inspect the repository and `katz paper status` before
+changing anything. Preserve EDSL Jobs and Results, keep proposed findings as
+drafts until investigated, and show me the final HTML report.'
+```
+
+For Claude Code:
+
+```bash
+cd path/to/paper-repository
+claude 'Use Katz to review this manuscript. First run `katz guide skill review-paper`
+and follow that procedure. Inspect the repository and `katz paper status` before
+changing anything. Preserve EDSL Jobs and Results, keep proposed findings as
+drafts until investigated, and show me the final HTML report.'
+```
+
+The prompt can name the canonical file and review priorities when they are
+known—for example, “register `paper/paper.md` and prioritize identification,
+claim support, and figures.” Otherwise the agent should identify the likely
+manuscript and ask before making a choice that changes the review’s scope.
+
+To process an existing referee report, add this to either prompt:
+
+```text
+The human-written review is reviews/reviewer-2.md. Preserve it with
+`katz review add`, build and inspect the parsing Jobs object, run it with EDSL,
+inspect the returned Results, and use `katz review ingest` to file only
+manuscript-grounded comments. Preserve repository-only comments for separate
+investigation rather than forcing them onto manuscript text.
+```
+
+The agent should run `ep run ... --task-timeout 900` for a whole-paper frontier
+review that may exceed the normal remote interview deadline. This differs from
+`--timeout`, which controls only local polling with `--background --wait`.
+Creating GitHub issues or publishing artifacts is an external write; ask the
+user before doing it unless that action was already explicitly requested.
+
 ## When to use this
 <!-- id: katz/when-to-use -->
 
