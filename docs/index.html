@@ -29,9 +29,9 @@
   <div class="book">Version-aware manuscript review with Katz</div>
   <button class="nav-toggle" type="button" aria-expanded="false">Show tutorial contents</button>
   <div class="part">Foundations</div><a href="#orientation">1. The paper and the method</a><a href="#install">2. Set up the worked example</a><a href="#paper2md">3. Starting from a PDF</a><a href="#register">4. Register the paper</a>
-  <div class="part">Review</div><a href="#structure">5. Map the paper</a><a href="#spotters">6. Add and enable spotters</a><a href="#edsl-run">7. Run spotters with EDSL</a><a href="#issues">8. Read the candidate issues</a><a href="#investigate">9. Investigate findings</a><a href="#github-issues">10. Create GitHub issues</a>
-  <div class="part">Assessment</div><a href="#evaluate">11. Evaluate criteria</a><a href="#validate">12. Validate the ledger</a><a href="#report">13. Generate the report</a><a href="#revision">14. Review a revision</a>
-  <div class="part">Reference</div><a href="#commands">15. Command map</a><a href="#checklist">16. Artifacts produced</a>
+  <div class="part">Review</div><a href="#structure">5. Map the paper</a><a href="#spotters">6. Add and enable spotters</a><a href="#edsl-run">7. Run spotters with EDSL</a><a href="#issues">8. Read the candidate issues</a><a href="#investigate">9. Investigate findings</a><a href="#human-triage">10. Human triage with EDSL</a><a href="#github-issues">11. Create GitHub issues</a>
+  <div class="part">Assessment</div><a href="#evaluate">12. Evaluate criteria</a><a href="#validate">13. Validate the ledger</a><a href="#report">14. Generate the report</a><a href="#revision">15. Review a revision</a>
+  <div class="part">Reference</div><a href="#commands">16. Command map</a><a href="#checklist">17. Artifacts produced</a>
   <div class="small">A practical tutorial for Katz, the version-aware paper-review ledger.</div>
 </nav>
 <main><article>
@@ -48,7 +48,7 @@
     <ol>
       <li><strong>Put the paper into canonical form.</strong> Preserve one reviewable manuscript representation, tie it to a Git commit, and map stable sections and source ranges.</li>
       <li><strong>Use a map-reduce pattern to identify candidate issues.</strong> Map selected spotters across manuscript sections—or the whole paper when global context is required—then reduce the returned results into a deduplicated, source-anchored issue ledger.</li>
-      <li><strong>Let an agent triage and investigate the ledger.</strong> The agent reads surrounding manuscript context and relevant code, figures, documentation, or citations; rejects false positives; merges duplicates; confirms material findings; and records its reasoning.</li>
+      <li><strong>Let an agent triage and investigate the ledger.</strong> The agent reads surrounding context, rejects false positives, merges duplicates, confirms material findings, and records its reasoning. When human judgment is required, it can route the same issue records through an EDSL Humanize survey and apply the returned decisions.</li>
       <li><strong>Promote confirmed findings into the work system.</strong> With human approval, turn appropriate findings into GitHub issues, preserve their Katz IDs and manuscript evidence, and use those issues to organize the actual revisions or implementation work.</li>
     </ol>
   </section>
@@ -65,6 +65,7 @@
       <li><a href="#edsl-run">Run spotters with EDSL</a></li>
       <li><a href="#issues">Read candidate issues</a></li>
       <li><a href="#investigate">Investigate findings</a></li>
+      <li><a href="#human-triage">Human triage with EDSL</a></li>
       <li><a href="#github-issues">Create GitHub issues</a></li>
       <li><a href="#evaluate">Evaluate criteria</a></li>
       <li><a href="#validate">Validate the ledger</a></li>
@@ -815,8 +816,239 @@ and codebase, records investigation findings, and updates issue state.</code></p
     </figure>
   </section>
 
+  <section id="human-triage">
+    <h2><span class="chapter">10</span> Send Katz issues to a human reviewer with EDSL</h2>
+    <p>Agent investigation is the default workflow, but some decisions should be assigned to a human editor, domain expert, or paper author. EDSL Humanize can present Katz issues as a browser survey and return the responses as a standard <code>Results</code> object. The agent then applies those decisions to Katz explicitly.</p>
+    <p>Do not humanize the original <code>jobs.ep</code>: that survey asks a reviewer to <em>find</em> issues in manuscript sections. Human triage starts after issues exist, so it needs a new survey whose scenarios are issue records and whose questions ask for verdicts, reasoning, severity, and an adequate response.</p>
+
+    <h3>Build one scenario per Katz issue</h3>
+    <p>Start with <code>katz issue list</code> and <code>katz issue show</code>. For each candidate, preserve the Katz ID, title, spotter, source location, exact quotation, and generated reason in a scenario. The complete three-item file for this example is <a href="https://github.com/expectedparrot/katz/blob/main/examples/causal-curve-review/human-triage-scenarios.json"><code>human-triage-scenarios.json</code></a>; one entry looks like this:</p>
+    <pre class="wrap"><code>[
+  {
+    "issue_id": "ISSUE_CAUSAL_LANGUAGE",
+    "issue_title": "Exercise example states a causal effect too directly",
+    "spotter": "causal_language",
+    "section": "summary",
+    "line_start": 39,
+    "line_end": 40,
+    "resolved_text": "the number of minutes per week of aerobic exercise causes positive health outcomes, after controlling for confounding effects.",
+    "generated_reason": "Covariate adjustment does not by itself establish identification; the wording should state the required assumptions or describe an association."
+  }
+]</code></pre>
+    <p>Convert that JSON array into a portable EDSL <code>ScenarioList</code>:</p>
+    <pre><code>ep scenarios create \
+  --from-json human-triage-scenarios.json \
+  --output triage-scenarios.ep</code></pre>
+    <pre><code>{
+  "status": "ok",
+  "data": {
+    "object_type": "ScenarioList",
+    "source": "human-triage-scenarios.json",
+    "scenario_count": 3,
+    "keys": [
+      "generated_reason", "issue_id", "issue_title",
+      "line_end", "line_start", "resolved_text",
+      "section", "spotter"
+    ],
+    "saved": {
+      "path": "triage-scenarios.ep",
+      "format": "ep",
+      "object_type": "ScenarioList"
+    }
+  },
+  "warnings": []
+}</code></pre>
+
+    <h3>Build the human triage survey</h3>
+    <p>The first question renders scenario fields as Markdown and asks for the investigation verdict:</p>
+    <pre class="wrap"><code>ep surveys create \
+  --question-type multiple_choice \
+  --question-name triage_verdict \
+  --question-text "## {{ issue_title }}
+
+**Spotter:** {{ spotter }} · **Location:** {{ section }}, lines {{ line_start }}–{{ line_end }}
+
+> {{ resolved_text }}
+
+**Why it was flagged:** {{ generated_reason }}
+
+After checking the paper and relevant artifacts, how should this candidate be classified?" \
+  --option confirmed \
+  --option rejected \
+  --option uncertain \
+  --output triage-survey.ep</code></pre>
+    <pre><code>{
+  "status": "ok",
+  "data": {
+    "object_type": "Survey",
+    "question_count": 1,
+    "questions": [
+      {
+        "question_name": "triage_verdict",
+        "question_type": "multiple_choice"
+      }
+    ],
+    "saved": {
+      "path": "triage-survey.ep",
+      "format": "ep",
+      "object_type": "Survey"
+    }
+  },
+  "warnings": []
+}</code></pre>
+    <p>Add three questions that capture the rest of an investigation record:</p>
+    <pre><code>ep surveys add-question triage-survey.ep \
+  --question-type multiple_choice \
+  --question-name severity \
+  --question-text "If confirmed, how consequential is this issue?" \
+  --option major \
+  --option minor \
+  --option suggestion \
+  --option not_applicable</code></pre>
+    <pre><code>{
+  "status": "ok",
+  "data": {
+    "object_type": "Survey",
+    "question_count": 2,
+    "questions": [
+      {"question_name": "triage_verdict", "question_type": "multiple_choice"},
+      {"question_name": "severity", "question_type": "multiple_choice"}
+    ]
+  },
+  "warnings": []
+}</code></pre>
+    <pre><code>ep surveys add-question triage-survey.ep \
+  --question-type free_text \
+  --question-name investigation_notes \
+  --question-text "Explain the evidence for your verdict. Mention context elsewhere in the paper or repository that confirms or resolves the concern."</code></pre>
+    <pre><code>{
+  "status": "ok",
+  "data": {
+    "object_type": "Survey",
+    "question_count": 3,
+    "questions": [
+      {"question_name": "triage_verdict", "question_type": "multiple_choice"},
+      {"question_name": "severity", "question_type": "multiple_choice"},
+      {"question_name": "investigation_notes", "question_type": "free_text"}
+    ]
+  },
+  "warnings": []
+}</code></pre>
+    <pre><code>ep surveys add-question triage-survey.ep \
+  --question-type free_text \
+  --question-name suggested_action \
+  --question-text "If the issue is confirmed, what change would adequately address it?"</code></pre>
+    <pre><code>{
+  "status": "ok",
+  "data": {
+    "object_type": "Survey",
+    "question_count": 4,
+    "questions": [
+      {"question_name": "triage_verdict", "question_type": "multiple_choice"},
+      {"question_name": "severity", "question_type": "multiple_choice"},
+      {"question_name": "investigation_notes", "question_type": "free_text"},
+      {"question_name": "suggested_action", "question_type": "free_text"}
+    ]
+  },
+  "warnings": []
+}</code></pre>
+    <p>Inspect the final object before making anything public:</p>
+    <pre><code>ep inspect triage-survey.ep</code></pre>
+    <pre><code>{
+  "status": "ok",
+  "data": {
+    "object_type": "Survey",
+    "length": 4,
+    "question_count": 4,
+    "question_names": [
+      "triage_verdict",
+      "severity",
+      "investigation_notes",
+      "suggested_action"
+    ],
+    "question_types": [
+      "multiple_choice",
+      "multiple_choice",
+      "free_text",
+      "free_text"
+    ]
+  },
+  "warnings": []
+}</code></pre>
+
+    <h3>Create the Humanize survey</h3>
+    <p>The <code>ordered</code> scenario method assigns the next issue to each new response. After three completed responses, every candidate in this example has been reviewed once and each Results row retains a single <code>scenario.issue_id</code>. Humanize does not use an EDSL model or agent here—the respondent is the human:</p>
+    <pre><code>ep humanize create \
+  --survey triage-survey.ep \
+  --scenario_list triage-scenarios.ep \
+  --scenario_method ordered \
+  --name "causal-curve issue triage"</code></pre>
+    <pre><code>{
+  "status": "ok",
+  "data": {
+    "name": "causal-curve issue triage",
+    "uuid": "HUMAN_SURVEY_UUID",
+    "admin_url": "https://www.expectedparrot.com/home/human-surveys/HUMAN_SURVEY_UUID",
+    "respondent_url": "https://www.expectedparrot.com/respond/human-surveys/HUMAN_SURVEY_UUID",
+    "n_responses": 0,
+    "survey_uuid": "SURVEY_UUID",
+    "agent_list_uuid": null,
+    "scenario_list_uuid": "SCENARIO_LIST_UUID"
+  },
+  "warnings": []
+}</code></pre>
+    <p>This command creates a remote survey, so inspect the local objects first and share the respondent URL only with authorized reviewers. Use <code>randomize</code> instead when independently sampling issues across many reviewers. Use <code>loop</code> when one respondent must answer the whole question set for every issue; that produces a longer survey with scenario-indexed answer columns. The Expected Parrot API key configured at the start of the tutorial authenticates creation and response retrieval.</p>
+
+    <h3>Retrieve and apply human decisions</h3>
+    <pre><code>ep humanize responses HUMAN_SURVEY_UUID \
+  --output human-triage-results.ep</code></pre>
+    <pre><code>{
+  "status": "ok",
+  "data": {
+    "human_survey_uuid": "HUMAN_SURVEY_UUID",
+    "object_type": "Results",
+    "result_count": 3,
+    "saved": {
+      "path": "human-triage-results.ep",
+      "format": "ep",
+      "object_type": "Results"
+    }
+  },
+  "warnings": []
+}</code></pre>
+    <p>The saved object contains each human answer together with the issue scenario that produced it. Extract the fields the applying agent needs:</p>
+    <pre><code>ep results export human-triage-results.ep \
+  --column scenario.issue_id \
+  --column answer.triage_verdict \
+  --column answer.severity \
+  --column answer.investigation_notes \
+  --column answer.suggested_action \
+  --format json \
+  --output human-triage-decisions.json</code></pre>
+    <pre><code>{
+  "status": "ok",
+  "data": {
+    "path": "human-triage-decisions.json",
+    "format": "json",
+    "row_count": 3
+  },
+  "warnings": []
+}</code></pre>
+    <p>The agent reads each row and maps the human label into Katz: <code>confirmed</code> becomes verdict/state <code>confirmed</code>, <code>rejected</code> becomes verdict/state <code>rejected</code>, and <code>uncertain</code> becomes verdict <code>uncertain</code> with state <code>open</code>. It preserves the Humanize response UUID and severity as structured evidence:</p>
+    <pre class="wrap"><code>katz issue investigate \
+  --id ISSUE_CAUSAL_LANGUAGE \
+  --verdict confirmed \
+  --state confirmed \
+  --evidence '{"source":"humanize","response_uuid":"HUMAN_RESPONSE_UUID","severity":"minor"}' \
+  --notes "The reviewer confirmed that adjustment alone does not establish identification; the required assumptions are not stated."</code></pre>
+    <pre><code>katz issue suggest \
+  --id ISSUE_CAUSAL_LANGUAGE \
+  --text "State the assumptions required for a causal interpretation, or describe the example as an association."</code></pre>
+    <p>Katz does not currently auto-ingest Humanize responses. That is intentional in this example: the applying agent checks issue IDs, validates allowed labels, retains the complete <code>human-triage-results.ep</code>, and makes each ledger mutation explicit. After application, regenerate <code>investigated-review.html</code> to show the human-backed verdicts and suggestions.</p>
+  </section>
+
   <section id="github-issues">
-    <h2><span class="chapter">10</span> Create GitHub issues from confirmed findings</h2>
+    <h2><span class="chapter">11</span> Create GitHub issues from confirmed findings</h2>
     <p>Once findings are investigated, Katz provides a second agent-readable workflow for turning them into actionable GitHub issues. This is deliberately not a <code>katz github</code> API: Katz supplies the structured review data and composition procedure, while the authenticated <code>gh</code> CLI performs the external write only after the user approves the proposed title and body.</p>
     <pre><code>katz guide skill create-github-issues</code></pre>
     <pre><code>---
@@ -885,7 +1117,7 @@ or describe the example as an association.
   </section>
 
   <section id="evaluate">
-    <h2><span class="chapter">11</span> Evaluate review criteria</h2>
+    <h2><span class="chapter">12</span> Evaluate review criteria</h2>
     <p>Issues are tied to particular passages. An evaluation records a paper-level judgment that may depend on evidence spread across sections—for example, whether the design supports the paper’s claims. Evaluations are entered deliberately after reading; they are not additional spotter jobs.</p>
     <pre><code>katz eval init-catalog</code></pre>
     <p>As with spotters, this copies reusable definitions into the repository catalog. The response lists every added criterion; only the relevant entry is shown here:</p>
@@ -935,7 +1167,7 @@ or describe the example as an association.
   </section>
 
   <section id="validate">
-    <h2><span class="chapter">12</span> Validate the ledger</h2>
+    <h2><span class="chapter">13</span> Validate the ledger</h2>
     <p>Validation checks the internal consistency of registered versions, source hashes, section bounds, issue anchors, and references. Run it before relying on a report and after any manual changes to review state.</p>
     <pre><code>katz validate</code></pre>
     <p>Checks the active version by default. Add <code>--commit SHA</code> to validate another registered version. The worked ledger passes:</p>
@@ -953,7 +1185,7 @@ or describe the example as an association.
   </section>
 
   <section id="report">
-    <h2><span class="chapter">13</span> Generate the review report</h2>
+    <h2><span class="chapter">14</span> Generate the review report</h2>
     <p>Once material issues have been investigated and criteria answered, generate a navigable HTML report:</p>
     <pre><code>katz report generate --output review.html</code></pre>
     <p><code>--output</code> chooses the destination HTML file. Katz also writes the Expected Parrot logo beside it. The report reads the ledger; it does not rerun models or alter issue state.</p>
@@ -974,7 +1206,7 @@ or describe the example as an association.
   </section>
 
   <section id="revision">
-    <h2><span class="chapter">14</span> Review a revision</h2>
+    <h2><span class="chapter">15</span> Review a revision</h2>
     <p>A revision receives a new Git commit and a new Katz version because its byte ranges no longer describe the old manuscript. Prior issues stay with the version where they were found; review them explicitly rather than moving their anchors onto changed prose.</p>
     <pre><code>git add paper/paper_ventilated.md</code></pre>
     <p>Stage the revised version of the same canonical file used in this tutorial.</p>
@@ -1002,7 +1234,7 @@ or describe the example as an association.
   </section>
 
   <section id="commands">
-    <h2><span class="chapter">15</span> Command map</h2>
+    <h2><span class="chapter">16</span> Command map</h2>
     <table><thead><tr><th>Command family</th><th>Purpose</th></tr></thead><tbody>
       <tr><td><code>katz init</code></td><td>Create repository-scoped review state.</td></tr>
       <tr><td><code>katz paper …</code></td><td>Register versions, map sections, inspect sentences, and resolve locations.</td></tr>
@@ -1012,18 +1244,20 @@ or describe the example as an association.
       <tr><td><code>katz validate</code></td><td>Check ledger consistency and anchor integrity.</td></tr>
       <tr><td><code>katz report …</code></td><td>Generate a shareable view of the structured review.</td></tr>
       <tr><td><code>katz docs</code> / <code>katz guide</code></td><td>Read built-in reference and agent workflows, including investigation and GitHub issue creation.</td></tr>
+      <tr><td><code>ep humanize …</code></td><td>Create a browser survey for human triage and retrieve its responses as EDSL Results.</td></tr>
       <tr><td><code>gh issue create</code></td><td>Post an approved issue body to GitHub; this is an external CLI action, not a Katz command.</td></tr>
     </tbody></table>
     <p>Use <code>katz &lt;command&gt; --help</code> for the exact options supported by the installed version.</p>
   </section>
 
   <section id="checklist">
-    <h2><span class="chapter">16</span> Artifacts produced</h2>
+    <h2><span class="chapter">17</span> Artifacts produced</h2>
     <p>The tutorial ends with four related artifacts. Keeping their roles distinct is the central Katz workflow:</p>
     <table><thead><tr><th>Artifact</th><th>What it contains</th><th>Why it remains separate</th></tr></thead><tbody>
       <tr><td><code>.katz/</code></td><td>Registered versions, maps, frozen spotters, issues, investigations, suggestions, and evaluations.</td><td>This is the version-aware review ledger and source of truth.</td></tr>
       <tr><td><code>jobs.ep</code></td><td>The EDSL survey, manuscript scenarios, spotter instructions, and run configuration inputs.</td><td>It can be inspected and costed before any model call.</td></tr>
       <tr><td><code>results.ep</code></td><td>Complete positive and null model results with scenario and model provenance.</td><td>It preserves more than the positive findings imported into Katz.</td></tr>
+      <tr><td><code>triage-survey.ep</code>, <code>triage-scenarios.ep</code>, and <code>human-triage-results.ep</code></td><td>The human review instrument, issue payloads, and returned decisions.</td><td>They preserve the human judgment layer before an agent applies it to Katz.</td></tr>
       <tr><td><code>review.html</code>, <code>investigated-review.html</code>, and <code>logo.png</code></td><td>Human-readable views before and after investigation, with their source passages.</td><td>They are regenerated outputs, not the underlying review state.</td></tr>
       <tr><td><code>github-issue.md</code></td><td>An approved, traceable issue body assembled from confirmed findings.</td><td>It is reviewed before <code>gh</code> creates any external issue.</td></tr>
     </tbody></table>

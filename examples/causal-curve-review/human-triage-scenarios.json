@@ -1,0 +1,32 @@
+[
+  {
+    "issue_id": "ISSUE_CAUSAL_LANGUAGE",
+    "issue_title": "Exercise example states a causal effect too directly",
+    "spotter": "causal_language",
+    "section": "summary",
+    "line_start": 39,
+    "line_end": 40,
+    "resolved_text": "the number of minutes per week of aerobic exercise causes positive health outcomes, after controlling for confounding effects.",
+    "generated_reason": "Covariate adjustment does not by itself establish identification; the wording should state the required assumptions or describe an association."
+  },
+  {
+    "issue_id": "ISSUE_UNBIASED_EFFECT",
+    "issue_title": "Unbiased-effect claim omits required assumptions",
+    "spotter": "overclaiming",
+    "section": "methods",
+    "line_start": 98,
+    "line_end": 98,
+    "resolved_text": "Targeted Regularization adds an additional term to the loss function to estimate an unbiased causal effect.",
+    "generated_reason": "The description does not state the identification assumptions under which the estimate can be interpreted as unbiased and causal."
+  },
+  {
+    "issue_id": "ISSUE_CLAIM_SUPPORT",
+    "issue_title": "Python-package novelty claim needs a reproducible search basis",
+    "spotter": "software_claim_support",
+    "section": "statement-of-need",
+    "line_start": 122,
+    "line_end": 124,
+    "resolved_text": "To our knowledge, there are no other Python packages currently available that can estimate causal dose-response curves for continuous treatments.",
+    "generated_reason": "The claim may be correct, but the paper should provide a documented comparison or reproducible pointer before treating it as established."
+  }
+]
