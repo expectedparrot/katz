@@ -126,6 +126,17 @@ def test_auto_chunk_detects_headings(tmp_path: Path) -> None:
     assert status["valid"] is True
 
 
+def test_register_pdf_returns_prepare_action(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    pdf = repo / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+
+    error = katz_fail(repo, "paper", "register", "--canonical", str(pdf))
+
+    assert error["code"] == "binary_manuscript"
+    assert error["details"]["next_action"][0:3] == ["katz", "paper", "prepare"]
+
+
 def test_auto_chunk_rejects_if_sections_exist(tmp_path: Path) -> None:
     repo, commit = setup_rich_repo(tmp_path)
 
@@ -202,6 +213,8 @@ def test_spotter_jobs_builds_edsl_package(tmp_path: Path) -> None:
     assert first["spotter_name"] == "causal_language"
     assert first["spotter_scope"] == "section"
     assert first["manuscript_content"]
+    assert "Section map:" in first["paper_context"]
+    assert result["answer_contract"]["pilot_required_before_large_run"] is False
 
 
 def test_paper_review_jobs_embeds_manuscript_and_figure_attachments(tmp_path: Path) -> None:
@@ -331,6 +344,20 @@ def test_spotter_jobs_can_filter_section_and_spotter(tmp_path: Path) -> None:
     assert result["section_scenarios"] == 1
 
 
+def test_spotter_jobs_can_build_five_scenario_pilot(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "--recommended")
+    output = repo / "pilot.jobs.ep"
+
+    result = katz(repo, "spotter", "jobs", "--pilot", "5", "--output", str(output))
+
+    assert result["pilot"] is True
+    assert result["scenario_count"] == 5
+    assert result["estimated_prompt_characters"] > 0
+
+
 def test_spotter_ingest_files_anchored_issue_idempotently(tmp_path: Path) -> None:
     from edsl import Agent, Model, Results, Scenario, Survey
     from edsl.results import Result
@@ -387,8 +414,8 @@ def test_spotter_ingest_files_anchored_issue_idempotently(tmp_path: Path) -> Non
     results_path = repo / "results.ep"
     Results(survey=Survey([]), data=[result, null_result]).git.save(results_path)
 
-    first = katz(repo, "spotter", "ingest", str(results_path))
-    second = katz(repo, "spotter", "ingest", str(results_path))
+    first = katz(repo, "spotter", "ingest", str(results_path), "--allow-partial")
+    second = katz(repo, "spotter", "ingest", str(results_path), "--allow-partial")
 
     assert first["issues_found"] == 1
     assert first["issues_filed"] == 1
@@ -399,6 +426,58 @@ def test_spotter_ingest_files_anchored_issue_idempotently(tmp_path: Path) -> Non
     assert issue["spotter"] == "causal_language"
     assert issue["location"]["resolved_text"] == quoted
     assert issue["meta"]["edsl_model"] == "test"
+
+
+def test_spotter_audit_rejects_null_and_accepts_explicit_negative(tmp_path: Path) -> None:
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "audit.jobs.ep"
+    katz(
+        repo, "spotter", "jobs",
+        "--output", str(jobs_path),
+        "--section", "abstract",
+        "--spotters", "causal_language",
+    )
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+
+    null_path = repo / "audit-results.ep"
+    null_result = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": None},
+    )
+    Results(survey=Survey([]), data=[null_result]).git.save(null_path)
+
+    audit = katz(repo, "results", "audit", str(null_path), "--jobs", str(jobs_path))
+    assert audit["complete"] is False
+    assert audit["coverage"] == 0
+    assert audit["null_answers"] == 1
+    error = katz_fail(repo, "spotter", "ingest", str(null_path), "--jobs", str(jobs_path))
+    assert error["code"] == "incomplete_results"
+
+    negative_path = repo / "negative-results.ep"
+    negative_result = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": {
+            "found": False,
+            "title": "",
+            "quoted_text": "",
+            "description": "",
+        }},
+    )
+    Results(survey=Survey([]), data=[negative_result]).git.save(negative_path)
+    complete = katz(repo, "results", "audit", str(negative_path), "--jobs", str(jobs_path))
+    assert complete["complete"] is True
+    assert complete["valid_negative_findings"] == 1
+    ingested = katz(
+        repo, "spotter", "ingest", str(negative_path), "--jobs", str(jobs_path),
+    )
+    assert ingested["run_status"] == "ingested"
+    assert ingested["issues_found"] == 0
 
 
 def test_locate_quoted_text_allows_line_break_normalization() -> None:
@@ -443,6 +522,18 @@ def test_spotter_enable_and_list(tmp_path: Path) -> None:
     listed = katz(repo, "spotter", "list")
     names = {s["name"] for s in listed}
     assert names == {"overclaiming", "logical_gaps"}
+
+
+def test_spotter_enable_recommended_activates_default_set(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+
+    enabled = katz(repo, "spotter", "enable", "--recommended")
+
+    assert enabled["selection"] == "recommended"
+    assert enabled["enabled_count"] == 13
+    assert len(katz(repo, "spotter", "list")) == 13
 
 
 def test_spotter_catalog_show(tmp_path: Path) -> None:
@@ -697,6 +788,50 @@ def test_issue_commands_accept_unambiguous_id_prefixes(tmp_path: Path) -> None:
     assert shown["state"] == "open"
     assert shown["investigations"][0]["verdict"] == "uncertain"
     assert shown["suggestions"][0]["text"] == "Clarify this sentence."
+
+
+def test_uncertain_investigation_moves_draft_to_open(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    issue = katz(
+        repo, "issue", "write",
+        "--title", "Needs investigation",
+        "--byte-start", "0",
+        "--byte-end", "10",
+        "--body", "Evidence is ambiguous.",
+    )
+
+    investigated = katz(
+        repo, "issue", "investigate",
+        "--id", issue["id"],
+        "--verdict", "uncertain",
+        "--notes", "The available artifact cannot resolve this.",
+    )
+
+    assert investigated["state_updated"] == "open"
+    assert katz(repo, "issue", "show", issue["id"])["state"] == "open"
+    assert katz(repo, "issue", "next")["issue"] is None
+
+
+def test_issue_clusters_suggests_merge_for_overlapping_findings(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    first = katz(
+        repo, "issue", "write",
+        "--title", "Null result interpreted as no effect",
+        "--byte-start", "0", "--byte-end", "20",
+        "--body", "The null estimate is described as proof of no effect.",
+    )
+    second = katz(
+        repo, "issue", "write",
+        "--title", "No-effect claim overstates null result",
+        "--byte-start", "10", "--byte-end", "30",
+        "--body", "The null result does not establish absence of an effect.",
+    )
+
+    result = katz(repo, "issue", "clusters")
+
+    assert result["cluster_count"] == 1
+    assert set(result["clusters"][0]["issue_ids"]) == {first["id"], second["id"]}
+    assert result["clusters"][0]["suggested_command"][0:4] == ["katz", "issue", "merge", "--ids"]
 
 
 def test_issue_show_accepts_batch_ids(tmp_path: Path) -> None:

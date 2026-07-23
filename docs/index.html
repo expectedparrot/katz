@@ -205,7 +205,7 @@
     "target": "codex",
     "suggested_filename": "AGENTS.md",
     "written": "AGENTS.md",
-    "bytes": 1379
+    "bytes": 1879
   }
 }</code></pre>
     <pre><code>katz agent instructions claude \
@@ -219,7 +219,7 @@
     "target": "claude",
     "suggested_filename": "CLAUDE.md",
     "written": "CLAUDE.md",
-    "bytes": 1379
+    "bytes": 1879
   }
 }</code></pre>
     <p>Both commands refuse to overwrite an existing instruction file. The templates tell the agent to use the state machine, preserve Jobs and Results, preview ingestion, investigate drafts, and request authority before paid or external actions.</p>
@@ -337,15 +337,15 @@
     <pre><code>python -m pip install \
   "paper2md @ git+https://github.com/expectedparrot/paper2md.git"</code></pre>
     <p>This direct-reference requirement installs paper2md from its Expected Parrot Git repository.</p>
-    <pre><code>paper2md paper.pdf \
+    <pre><code>katz paper prepare paper.pdf \
   --backend marker \
-  --output paper_md</code></pre>
+  --output paper_md/paper.md</code></pre>
     <table><thead><tr><th>Argument or option</th><th>Meaning</th></tr></thead><tbody>
       <tr><td><code>paper.pdf</code></td><td>Source PDF to convert.</td></tr>
       <tr><td><code>--backend marker</code></td><td>Uses Marker for layout-aware Markdown, equations, captions, and tables.</td></tr>
-      <tr><td><code>--output paper_md</code></td><td>Writes <code>paper.md</code> and extracted images into this directory.</td></tr>
+      <tr><td><code>--output paper_md/paper.md</code></td><td>Writes canonical Markdown at this path and copies extracted images beside it.</td></tr>
     </tbody></table>
-    <p>The output directory contains <code>paper_md/paper.md</code> and normalized image assets. paper2md rewrites image references and attempts to reconstruct tables in Markdown. This matters because Katz anchors review findings to the converted text; a reading-order or table-conversion error can otherwise become a false manuscript issue.</p>
+    <p>Katz delegates extraction to paper2md, returns the generated Markdown and asset paths in its JSON envelope, and warns when the result has no Markdown headings. paper2md rewrites image references and attempts to reconstruct tables. This matters because Katz anchors review findings to converted text; a reading-order or table-conversion error can otherwise become a false manuscript issue. Katz refuses to register a PDF directly.</p>
     <h3>Inspect the conversion</h3>
     <p>PDF conversion is lossy. Before registration, compare the bundle with the PDF and check the parts most likely to affect a review:</p>
     <pre><code>find paper_md -maxdepth 1 -type f -print</code></pre>
@@ -637,12 +637,18 @@ Pay special attention to:
     <h2><span class="chapter">07</span> Run an automated first pass over the paper</h2>
     <p>Katz prepares the review but does not run models. It combines the active manuscript version, mapped sections, and enabled spotters into a standard EDSL <code>Jobs</code> object. The object is saved as <code>jobs.ep</code>, so it can be inspected, costed, run, shared, or archived with the normal <code>ep</code> CLI.</p>
     <p>This separation lets Katz own manuscript identity and anchoring while EDSL owns model selection and execution. The number of scenarios is <code>sections × section spotters + holistic spotters</code>, so scope choices made in the previous chapter directly determine the work and cost of the run.</p>
-    <h3>Package the paper and review instructions</h3>
+    <h3>Test the model on five review items first</h3>
+    <pre><code>katz spotter jobs --pilot 5 --output pilot.jobs.ep
+ep run pilot.jobs.ep --model gpt-4.1-mini --output pilot-results.ep
+katz results audit pilot-results.ep --jobs pilot.jobs.ep</code></pre>
+    <p>The pilot checks model/schema compatibility before a large paid run. Continue only when the audit reports <code>"complete": true</code>. A structured <code>found=false</code> is a completed negative judgment; a null answer, malformed dictionary, model exception, missing scenario, or duplicate row is a failed review item—not evidence that the paper has no issues.</p>
+    <h3>Package the full paper and review instructions</h3>
     <pre><code>katz spotter jobs --output jobs.ep</code></pre>
     <table><thead><tr><th>Option</th><th>Meaning</th></tr></thead><tbody>
       <tr><td><code>--output jobs.ep</code></td><td>Writes a real EDSL <code>Jobs</code> package. Katz refuses to overwrite an existing package.</td></tr>
       <tr><td><code>--section ID</code></td><td>Optional: limits section-scoped spotters to one mapped section. Holistic spotters still use the complete manuscript.</td></tr>
       <tr><td><code>--spotters a,b</code></td><td>Optional: includes only these comma-separated enabled spotters.</td></tr>
+      <tr><td><code>--pilot N</code></td><td>Builds a deterministic N-scenario compatibility package before the complete run.</td></tr>
       <tr><td><code>--commit SHA</code></td><td>Optional: builds from another registered Katz version instead of the active one.</td></tr>
     </tbody></table>
     <p>For this paper, five sections crossed with the two enabled section spotters produce ten section scenarios; <code>software_claim_support</code> adds one holistic scenario:</p>
@@ -690,15 +696,18 @@ Pay special attention to:
   "byte_end": 3763,
   "review_target": "section \"Summary\"",
   "spotter_instructions": "---\nscope: section\n---\n# Causal Language\n\nCheck whether causal language is appropriate…",
+  "paper_context": "Section map:\n- Summary (lines 39–82)\n…\n\nAbstract:\n…",
   "manuscript_content": "# Summary\n\n`causal-curve` is a Python package…"
 }</code></pre>
-    <p><code>spotter_instructions</code> is the complete frozen spotter Markdown, including its investigation guidance. <code>manuscript_content</code> is the exact UTF-8 slice identified by the scenario’s half-open byte range. A holistic scenario uses the same field names, but sets <code>section_id</code> to <code>null</code>, labels the target <em>Complete manuscript</em>, uses bytes <code>0</code> through the manuscript length, and includes the entire canonical text.</p>
-    <p>Section scenarios do not currently receive an additional abstract, paper summary, or neighboring-section field. Their paper context is the section itself; use a holistic spotter when the first-pass judgment genuinely requires the whole paper. The later investigation workflow deliberately reads broader manuscript and repository context before confirming any candidate.</p>
-    <p>The survey prompt interpolates three scenario values:</p>
+    <p><code>spotter_instructions</code> is the complete frozen spotter Markdown, including its investigation guidance. <code>manuscript_content</code> is the exact UTF-8 slice identified by the scenario’s half-open byte range. <code>paper_context</code> supplies the section map and abstract so a section spotter can distinguish “not in this excerpt” from “not in the paper.” A holistic scenario contains the complete manuscript.</p>
+    <p>The survey prompt interpolates four scenario values:</p>
     <pre><code>You are reviewing {{ review_target }} from an academic manuscript.
 
 Issue spotter:
 {{ spotter_instructions }}
+
+Paper context:
+{{ paper_context }}
 
 Manuscript content:
 {{ manuscript_content }}
@@ -735,13 +744,15 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
       <tr><td><code>--output results.ep</code></td><td>Preserves the complete EDSL <code>Results</code> object, including answers, scenarios, model metadata, and run provenance.</td></tr>
     </tbody></table>
     <p>Use <code>--local</code> to disable remote inference. For an asynchronous remote run, use <code>--background</code>, then retrieve the completed object with <code>ep jobs results JOB_UUID --output results.ep</code>.</p>
-    <h3>Bring the proposed findings back into Katz</h3>
-    <pre><code>katz spotter ingest results.ep</code></pre>
-    <p>The positional path must contain an EDSL <code>Results</code> object. Katz verifies the embedded manuscript commit and enabled spotter, locates the exact quoted text within the original scenario range, and files valid findings as draft issues. <code>--state STATE</code> changes the initial state; <code>--commit SHA</code> selects a registered version.</p>
+    <h3>Prove the run completed, then bring its findings into Katz</h3>
+    <pre><code>katz results audit results.ep --jobs jobs.ep
+katz spotter ingest results.ep --jobs jobs.ep</code></pre>
+    <p>The audit compares returned scenario identities with the originating Jobs and reports valid positive and negative answers, nulls, schema failures, model exceptions, missing scenarios, duplicates, and coverage. Ingestion fails closed unless coverage is complete. <code>--allow-partial</code> is an explicit recovery mechanism: it preserves valid rows but records a partial run that cannot support a clean zero-issue conclusion.</p>
+    <p>After the audit passes, Katz verifies the embedded manuscript commit and enabled spotter, locates exact quoted text within each original scenario range, and files valid findings as draft issues.</p>
     <p>Because model findings and UUIDs vary between runs, the tutorial uses a deterministic completed-run fixture with three positive findings. Ingestion returns:</p>
     <pre><code>{
   "ok": true,
-  "command": ["spotter", "ingest", "results.ep"],
+  "command": ["spotter", "ingest", "results.ep", "--jobs", "jobs.ep"],
   "data": {
     "results": "results.ep",
     "commit": "c658feac957d3052e30da8e0365e4d982d091d9a",
@@ -756,9 +767,9 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
     ]
   }
 }</code></pre>
-    <p>The fixture uses readable issue labels because generated UUIDs vary from run to run. The counts and meanings are the fields an agent should inspect: eleven EDSL results, three positive findings, three filed issues, and no unlocatable quotations.</p>
+    <p>The complete response also includes the audit contract and <code>"run_status": "ingested"</code>. The fixture uses readable issue labels because generated UUIDs vary from run to run. The counts and meanings are the fields an agent should inspect: eleven valid EDSL results, three positive findings, three filed issues, and no unlocatable quotations.</p>
     <p>Answers with <code>found: false</code> are retained in <code>results.ep</code> but do not become issues. Answers whose quotation cannot be found are skipped rather than assigned a guessed anchor. Re-ingesting the same results is idempotent.</p>
-    <p>The manuscript commit, spotter, scope, section, and source range travel into each scenario. EDSL adds model and execution metadata; ingestion verifies the commit and quotation and stores a result hash to prevent duplicates. Keep <code>results.ep</code>: it is the full run record, including null answers that do not become issues.</p>
+    <p>The manuscript commit, spotter, scope, section, and source range travel into each scenario. EDSL adds model and execution metadata; ingestion verifies the commit and quotation and stores a result hash to prevent duplicates. Keep <code>results.ep</code>: it is the full run record. Null answers remain visible as failures and prevent complete ingestion.</p>
     <p>Imported issues remain drafts because a locatable quotation proves provenance, not correctness. After the optional one-shot review, the investigation chapters check candidates in detail.</p>
   </section>
 
@@ -1378,7 +1389,8 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
   }
 }</code></pre>
     <p>The packet includes the full issue record, numbered surrounding manuscript lines, human-review provenance when present, the frozen spotter investigation procedure, allowed verdicts, and the exact mutation shape. Repeating the command returns the same oldest draft until an investigation changes its state, which makes retries predictable.</p>
-    <p>Katz includes an agent-readable investigation workflow. <code>katz guide skill investigate-issues</code> prints the complete procedure: select drafts, read the full registered manuscript, inspect surrounding text and source artifacts, deduplicate related candidates, record a verdict, and update state. The guide is procedural Markdown rather than another model run.</p>
+    <p>Before working the queue, run <code>katz issue clusters</code>. It suggests groups with overlapping anchors or substantially similar titles and explanations and returns explicit <code>katz issue merge --ids …</code> commands without mutating anything. This makes repeated manifestations of one underlying concern visible before an agent spends time investigating each independently.</p>
+    <p>Katz includes an agent-readable investigation workflow. <code>katz guide skill investigate-issues</code> prints the complete procedure: select drafts, read the full registered manuscript, inspect surrounding text and source artifacts, deduplicate related candidates, record a verdict, and update state. A confirmed verdict now advances to <code>confirmed</code>, a rejected verdict to <code>rejected</code>, and an uncertain verdict to <code>open</code>, so uncertainty does not leave the same draft at the front of the queue.</p>
     <pre><code>katz guide skill investigate-issues</code></pre>
     <pre class="wrap"><code>{
   "ok": true,

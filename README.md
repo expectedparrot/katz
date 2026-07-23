@@ -33,7 +33,7 @@ Install the EDSL CLI as well. Let EDSL own Expected Parrot authentication and
 repository-local `.env` configuration:
 
 ```bash
-python -m pip install edsl
+python -m pip install "edsl @ git+https://github.com/expectedparrot/edsl.git"
 ep auth login
 ep profiles current
 ep check
@@ -76,13 +76,22 @@ katz agent status                    # complete phase and next-action state
 katz issue next                      # one full investigation packet
 katz ingest artifact.ep              # detect and preview; never mutates by default
 katz ingest results.ep --apply       # apply a supported detected contract
+katz results audit results.ep --jobs jobs.ep
+katz results failures results.ep     # compact null/schema/model failures
 katz agent instructions codex        # return the bundled AGENTS.md template
 katz agent instructions claude       # return the bundled CLAUDE.md template
+katz agent instructions --write      # write AGENTS.md and CLAUDE.md
 ```
 
 Every proposed action says whether it mutates state, uses the network, or needs
 user approval. The versioned JSON Schemas for envelopes, actions, and agent
 status ship in `katz/schemas/`.
+
+Katz runs a small compatibility pilot before proposing a large automated
+review. It audits the resulting structured answers against the originating
+Jobs package. Full ingestion fails closed if answers are null, malformed,
+duplicated, missing, or produced for unexpected scenarios. A valid
+`found=false` is a completed negative judgment; a null answer is not.
 
 For Codex:
 
@@ -237,7 +246,8 @@ Canonical sequence:
 3. `katz spotter ...` — load or enable relevant issue spotters.
 4. `katz spotter jobs --output jobs.ep` — package spotters and manuscript content as EDSL Jobs.
 5. `ep run jobs.ep --model <model> --output results.ep` — execute with EDSL.
-6. `katz spotter ingest results.ep` — verify quotations and file anchored draft issues.
+6. `katz results audit results.ep --jobs jobs.ep` — prove response validity and coverage.
+7. `katz spotter ingest results.ep --jobs jobs.ep` — verify quotations and file anchored draft issues.
 7. Optionally run `katz paper review-jobs --output one-shot-review.jobs.ep` to package the complete manuscript and figures for one frontier-model referee review.
 8. Investigate imported candidates and file any additional issues from the one-shot report or human review.
    A journal report can be preserved with `katz review add`, converted into a
@@ -314,7 +324,9 @@ katz init
 katz paper register --canonical paper.md --source-format markdown --source-method manuscript
 katz paper auto-chunk
 katz spotter init-catalog
-katz spotter enable identification_threats
+katz spotter enable --recommended
+katz spotter jobs --pilot 5 --output pilot.jobs.ep
+# Run and audit the pilot before creating and running the complete jobs.ep.
 katz issue write --byte-start 1200 --byte-end 1500 --spotter identification_threats --title "Identification assumption not defended" --body "The Methods section states the identifying assumption but does not justify why it should hold in this setting."
 katz validate
 katz report generate

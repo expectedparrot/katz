@@ -78,6 +78,32 @@ def test_agent_status_advances_and_instruction_templates_are_available(tmp_path:
     assert codex["suggested_filename"] == "AGENTS.md"
     assert claude["suggested_filename"] == "CLAUDE.md"
     assert "katz agent bootstrap" in codex["markdown"]
+    written = katz(repo, "agent", "instructions", "--write")
+    assert {item["path"] for item in written["written"]} == {"AGENTS.md", "CLAUDE.md"}
+    assert (repo / "AGENTS.md").is_file()
+    assert (repo / "CLAUDE.md").is_file()
+
+
+def test_agent_ignores_agent_files_and_prepares_pdf_candidate(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init")
+    git(repo, "config", "user.name", "Test User")
+    git(repo, "config", "user.email", "test@example.com")
+    agent_file = repo / ".claude" / "agents" / "review-report.md"
+    agent_file.parent.mkdir(parents=True)
+    agent_file.write_text("# Abstract\n\n## Methods\n\n## Results\n" + "agent " * 1000)
+    pdf = repo / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n" + b"paper " * 1000)
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "Add upload")
+    katz(repo, "init")
+
+    status = katz(repo, "agent", "status")
+    candidates = status["review"]["manuscript_candidates"]
+    assert [candidate["path"] for candidate in candidates] == ["paper.pdf"]
+    assert status["next_actions"][0]["id"] == "prepare_manuscript"
+    assert status["next_actions"][0]["command"][0:3] == ["katz", "paper", "prepare"]
 
 
 def test_issue_next_returns_context_and_allowed_mutation(tmp_path: Path) -> None:
@@ -132,10 +158,13 @@ def test_unified_ingest_detects_jobs_without_mutating(tmp_path: Path) -> None:
     assert status["review"]["runs"]["latest"]["status"] == "packaged"
     action_ids = [action["id"] for action in status["next_actions"]]
     assert action_ids[0] == "inspect_jobs"
-    assert "expected_parrot_login" in action_ids
     profile = status["prerequisites"]["ep"]["profile"]
     assert profile["source"] in {"ep_profiles_current", "environment_or_dotenv_fallback"}
-    assert profile["api_key_configured"] is False
+    if profile["api_key_configured"]:
+        assert "expected_parrot_login" not in action_ids
+        assert "check_expected_parrot" in action_ids
+    else:
+        assert "expected_parrot_login" in action_ids
 
 
 def test_capabilities_lists_versioned_schemas(tmp_path: Path) -> None:

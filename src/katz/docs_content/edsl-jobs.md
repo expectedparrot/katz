@@ -53,7 +53,8 @@ ep jobs results <job-uuid> --output results.ep
 ## 4. Ingest into Katz
 
 ```bash
-katz spotter ingest results.ep
+katz results audit results.ep --jobs jobs.ep
+katz spotter ingest results.ep --jobs jobs.ep
 ```
 
 Human-written journal reviews use the same separation between packaging,
@@ -66,6 +67,12 @@ ep run journal-review.jobs.ep --model <model-name> --task-timeout 900 \
   --output journal-review-results.ep
 katz review ingest journal-review-results.ep
 ```
+
+Katz first proves coverage against the originating Jobs package. A structured
+`found=false` answer is a valid negative judgment; a null or malformed answer
+is not. Ingestion fails closed for incomplete coverage unless an agent
+deliberately passes `--allow-partial`, in which case the run remains visibly
+partial and cannot support a clean zero-issue conclusion.
 
 Katz loads the EDSL `Results` object, verifies its embedded manuscript commit
 and spotter, and searches for the exact returned quotation inside the original

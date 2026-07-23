@@ -45,6 +45,7 @@ katz paper find <text> [--mode exact] [--ignore-case] [--limit 20]
 katz paper review-jobs --output one-shot-review.jobs.ep  # whole paper + figures
 
 katz paper auto-chunk [--commit <sha>]     # auto-detect sections from headings
+katz paper prepare paper.pdf --output paper.md  # paper2md text/figure extraction
 katz paper add-sections --sections '[...]' # append sections manually
 ```
 
@@ -54,6 +55,8 @@ katz paper add-sections --sections '[...]' # append sections manually
 
 ```bash
 katz spotter init-catalog [--preset default]   # populate from built-in catalog
+katz spotter enable --recommended              # activate the default set
+katz spotter jobs --pilot 5 --output pilot.jobs.ep
 katz spotter catalog [--scope section|holistic] # list available spotters
 katz spotter catalog-show <name>               # show a spotter's content
 
@@ -71,11 +74,14 @@ katz spotter jobs \
   [--output jobs.ep] \
   [--section <id>] \
   [--spotters <name1>,<name2>] \
+  [--pilot 5] \
   [--commit <sha>]            # build a standard EDSL Jobs package
 
 katz spotter ingest results.ep \
+  [--jobs jobs.ep] \
+  [--allow-partial] \
   [--state draft] \
-  [--commit <sha>]            # verify and file findings from EDSL Results
+  [--commit <sha>]            # audit, verify, and file valid EDSL findings
 ```
 
 ---
@@ -184,6 +190,7 @@ katz agent status                    # phase, blockers, review state, next actio
 katz agent next                      # highest-priority action and alternatives
 katz agent instructions codex        # return AGENTS.md template
 katz agent instructions claude       # return CLAUDE.md template
+katz agent instructions --write      # write both repository-native templates
 katz capabilities                    # contracts, schemas, integrations, safety
 katz ingest <path>                   # detect and preview an artifact
 katz ingest <path> --apply           # apply supported Results ingestion
@@ -209,6 +216,18 @@ ep check               # verify URL reachability and authentication
 `katz agent bootstrap` consumes the redacted `ep profiles current` response.
 It never returns a key. When authentication is missing, the proposed action is
 `ep auth login`; before a paid run, the state machine proposes `ep check`.
+
+Results are audited before ingestion:
+
+```bash
+katz results audit results.ep --jobs jobs.ep
+katz results sample results.ep --valid 5
+katz results failures results.ep
+```
+
+Ingestion fails closed unless every expected scenario has a valid structured
+answer. Use `--allow-partial` only to preserve valid rows from a damaged run;
+the run remains partial and reports cannot present it as a complete review.
 
 ---
 

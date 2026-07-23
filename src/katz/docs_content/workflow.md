@@ -112,14 +112,19 @@ katz spotter add --name "sutva_violations" \
 
 **Goal:** Sweep the manuscript for issues using parallel LLM calls.
 
-Katz builds a portable EDSL object; EDSL owns execution:
+Katz builds a portable EDSL object; EDSL owns execution. Prove structured
+output compatibility with a small pilot before the full sweep:
 
 ```bash
+katz spotter jobs --pilot 5 --output pilot.jobs.ep
+ep run pilot.jobs.ep --model <model-name> --output pilot-results.ep
+katz results audit pilot-results.ep --jobs pilot.jobs.ep
 katz spotter jobs --output jobs.ep
 ep inspect jobs.ep
 ep jobs cost jobs.ep
 ep run jobs.ep --model <model-name> --output results.ep
-katz spotter ingest results.ep
+katz results audit results.ep --jobs jobs.ep
+katz spotter ingest results.ep --jobs jobs.ep
 ```
 
 Section spotters produce one scenario per section and holistic spotters produce one

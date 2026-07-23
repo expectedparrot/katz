@@ -35,8 +35,15 @@ is registered yet — that's expected.
 
 ## Step 2 — Register the Paper
 
-The manuscript must be in ventilated prose (one sentence per line) for issue locations
-to be precise. Convert from PDF with a tool like `marker` or `nougat`, then reformat:
+The canonical manuscript must be UTF-8 text. When the source is a PDF, use
+Katz's `paper2md` wrapper to extract Markdown, figures, and tables, then inspect
+the conversion before registration:
+
+```bash
+katz paper prepare paper.pdf --output paper/manuscript.md
+```
+
+Ventilated prose (one sentence per line) makes issue locations more precise:
 
 ```bash
 katz paper register \
@@ -98,16 +105,23 @@ List what's available:
 katz spotter catalog
 ```
 
-Enable the spotters relevant to this paper:
+Enable the recommended review set in one operation:
 
 ```bash
-katz spotter enable overclaiming
-katz spotter enable logical_gaps
-katz spotter enable causal_language
-katz spotter enable identification_threats
-katz spotter enable statistical_errors
-katz spotter enable methodology_concerns
+katz spotter enable --recommended
 ```
+
+Before a large run, build and run a small model-compatibility pilot:
+
+```bash
+katz spotter jobs --pilot 5 --output pilot.jobs.ep
+ep run pilot.jobs.ep --model <model-name> --output pilot-results.ep
+katz results audit pilot-results.ep --jobs pilot.jobs.ep
+```
+
+Proceed only when the audit reports `complete: true`. Null answers, malformed
+objects, model exceptions, duplicate rows, and missing scenarios are failures,
+not evidence that the paper has no issues.
 
 Read a spotter before enabling to understand what it checks:
 ```bash
@@ -140,7 +154,8 @@ ep run jobs.ep --model <model-name> --output results.ep
 Finally, let Katz verify the returned quotations and create anchored draft issues:
 
 ```bash
-katz spotter ingest results.ep
+katz results audit results.ep --jobs jobs.ep
+katz spotter ingest results.ep --jobs jobs.ep
 ```
 
 The complete Results object—including null findings and model provenance—remains in

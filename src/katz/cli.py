@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 import warnings
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ guide_app = typer.Typer(help="Self-documenting guide for agents.")
 report_app = typer.Typer(help="Generate review reports.")
 review_app = typer.Typer(help="Register and parse human-written peer reviews.")
 agent_app = typer.Typer(help="Discover state and next actions for coding agents.")
+results_app = typer.Typer(help="Audit and inspect EDSL review Results.")
 app.add_typer(paper_app, name="paper")
 app.add_typer(issue_app, name="issue")
 app.add_typer(spotter_app, name="spotter")
@@ -36,6 +38,7 @@ app.add_typer(guide_app, name="guide")
 app.add_typer(report_app, name="report")
 app.add_typer(review_app, name="review")
 app.add_typer(agent_app, name="agent")
+app.add_typer(results_app, name="results")
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 CATALOG_DIR = Path(__file__).parent / "catalog"
@@ -663,6 +666,22 @@ def record_run(dest: Path, kind: str, status: str, **details: Any) -> Path:
     })
 
 
+def _latest_packaged_run(dest: Path, results_path: Path | None = None) -> dict[str, Any] | None:
+    """Find the newest packaged run, optionally matching its expected Results path."""
+    runs_dir = dest / "runs"
+    if not runs_dir.is_dir():
+        return None
+    target = results_path.resolve() if results_path is not None else None
+    for path in reversed(sorted(runs_dir.glob("*.json"))):
+        record = read_json(path)
+        if record.get("status") != "packaged":
+            continue
+        expected = record.get("expected_results_path")
+        if target is None or (expected and Path(str(expected)).resolve() == target):
+            return record
+    return None
+
+
 def parse_meta(meta: Optional[str]) -> dict[str, Any]:
     if meta is None:
         return {}
@@ -765,6 +784,18 @@ def paper_register(
     added later with ``katz paper add-sections``.
     """
     try:
+        if canonical.suffix.lower() == ".pdf":
+            raise KatzError(
+                "A PDF cannot be the canonical review text; extract it to Markdown first",
+                "binary_manuscript",
+                {
+                    "canonical": str(canonical),
+                    "next_action": [
+                        "katz", "paper", "prepare", str(canonical),
+                        "--output", str(canonical.with_suffix(".md")),
+                    ],
+                },
+            )
         ensure_initialized()
         commit = current_commit()
         checksum = sha256_file(canonical)
@@ -842,6 +873,83 @@ def paper_register(
                 "Consider reformatting the manuscript so each sentence is on its own line."
             )
         emit_json(result)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@paper_app.command("prepare")
+def paper_prepare(
+    source: Path = typer.Argument(..., exists=True, file_okay=True, dir_okay=False, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    backend: str = typer.Option("auto", "--backend"),
+) -> None:
+    """Extract a PDF into canonical Markdown plus sibling figure assets using paper2md."""
+    try:
+        if source.suffix.lower() != ".pdf":
+            raise KatzError("paper prepare currently accepts PDF input", "validation_error", {"source": str(source)})
+        if output.suffix.lower() not in {".md", ".markdown"}:
+            raise KatzError("--output must be a Markdown path", "validation_error", {"output": str(output)})
+        if output.exists():
+            raise KatzError("Refusing to overwrite the output manuscript", "validation_error", {"output": str(output)})
+        executable = shutil.which("paper2md")
+        if executable is None:
+            raise KatzError(
+                "paper2md is required to extract PDF text, figures, and tables",
+                "dependency_error",
+                {
+                    "install": ["python", "-m", "pip", "install", "paper2md"],
+                    "fallback": ["pdftotext", str(source), str(output.with_suffix(".txt"))],
+                },
+            )
+        if backend not in {"auto", "marker", "pymupdf"}:
+            raise KatzError("Invalid paper2md backend", "validation_error", {"backend": backend})
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="katz-paper2md-") as temp_dir:
+            completed = subprocess.run(
+                [executable, str(source), "--output", temp_dir, "--backend", backend],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if completed.returncode != 0:
+                raise KatzError(
+                    "paper2md extraction failed",
+                    "conversion_error",
+                    {"returncode": completed.returncode, "stderr": completed.stderr[-2000:]},
+                )
+            extracted = sorted(Path(temp_dir).rglob("*.md"))
+            if not extracted:
+                raise KatzError("paper2md produced no Markdown file", "conversion_error")
+            shutil.copyfile(extracted[0], output)
+            assets: list[str] = []
+            for asset in sorted(Path(temp_dir).rglob("*")):
+                if not asset.is_file() or asset == extracted[0] or asset.suffix.lower() not in {
+                    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
+                }:
+                    continue
+                destination = output.parent / asset.name
+                if destination.exists():
+                    destination = output.parent / f"{asset.stem}-{len(assets) + 1}{asset.suffix}"
+                shutil.copyfile(asset, destination)
+                assets.append(str(destination))
+        text = output.read_text(encoding="utf-8")
+        headings = sum(bool(re.match(r"^#{1,6}\s+", line)) for line in text.splitlines())
+        emit_json({
+            "prepared": True,
+            "source": str(source),
+            "output": str(output),
+            "backend": backend,
+            "bytes": output.stat().st_size,
+            "headings": headings,
+            "assets": assets,
+            "warnings": [] if headings else [
+                "No Markdown headings were detected; section mapping will require cleanup before registration."
+            ],
+            "next_actions": [
+                ["katz", "ventilate", str(output), "--output-path", str(output.with_name(f"{output.stem}_ventilated.md"))],
+            ],
+        })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 
@@ -1266,7 +1374,14 @@ def _ep_local_profile_state(root: Path) -> dict[str, Any]:
 
 def _manuscript_candidates(root: Path) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
-    ignored = {".git", ".katz", ".venv", "node_modules", "dist", "build"}
+    ignored = {
+        ".git", ".katz", ".venv", "node_modules", "dist", "build",
+        ".claude", ".codex", ".agents", "site-packages",
+    }
+    ignored_names = {
+        "agents.md", "claude.md", "readme.md", "contributing.md",
+        "review.md", "review.html", "investigated-review.html",
+    }
     preferred_names = {"paper.md", "manuscript.md", "article.md", "paper.tex", "manuscript.tex"}
     for path in root.rglob("*"):
         if not path.is_file() or any(part in ignored for part in path.parts):
@@ -1274,6 +1389,8 @@ def _manuscript_candidates(root: Path) -> list[dict[str, Any]]:
         if path.suffix.lower() not in {".md", ".tex", ".pdf"}:
             continue
         relative = path.relative_to(root)
+        if path.name.lower() in ignored_names or path.name.lower().endswith((".jobs.ep", "-results.ep")):
+            continue
         score = 0
         if path.name.lower() in preferred_names:
             score += 100
@@ -1288,6 +1405,7 @@ def _manuscript_candidates(root: Path) -> list[dict[str, Any]]:
             continue
         if size > 2_000:
             score += 5
+        academic_markers = 0
         if path.suffix.lower() in {".md", ".tex"}:
             try:
                 sample = path.read_text(encoding="utf-8", errors="replace")[:40_000].lower()
@@ -1298,11 +1416,19 @@ def _manuscript_candidates(root: Path) -> list[dict[str, Any]]:
                 for marker in ("abstract", "introduction", "methods", "results", "references")
             )
             score += academic_markers * 8
+        reasons: list[str] = []
+        if path.name.lower() in preferred_names:
+            reasons.append("preferred manuscript filename")
+        if academic_markers:
+            reasons.append(f"contains {academic_markers} academic section markers")
+        if size > 2_000:
+            reasons.append("substantial document length")
         candidates.append({
             "path": str(relative),
             "format": path.suffix.lower().lstrip("."),
             "bytes": size,
             "confidence": score,
+            "confidence_reasons": reasons,
         })
     return sorted(candidates, key=lambda item: (-item["confidence"], item["path"]))[:20]
 
@@ -1392,18 +1518,29 @@ def _agent_state() -> dict[str, Any]:
         actions = []
         if candidates and candidates[0]["confidence"] >= 25:
             candidate = candidates[0]
-            actions.append(_agent_action(
-                "register_manuscript",
-                "Register the most likely canonical manuscript after confirming it",
-                [
-                    "katz", "paper", "register", "--canonical", candidate["path"],
-                    "--source-format", candidate["format"],
-                    "--source-method", "agent-selected-repository-source",
-                ],
-                mutates_state=True,
-                requires_user_approval=len(candidates) > 1,
-                reason="Candidate ranking is heuristic; confirm the canonical source.",
-            ))
+            if candidate["format"] == "pdf":
+                output = str(Path(candidate["path"]).with_suffix(".md"))
+                actions.append(_agent_action(
+                    "prepare_manuscript",
+                    "Extract the likely manuscript PDF into reviewable Markdown and figure assets",
+                    ["katz", "paper", "prepare", candidate["path"], "--output", output],
+                    mutates_state=True,
+                    requires_user_approval=True,
+                    reason="Katz anchors findings to canonical UTF-8 text; PDFs must be extracted first.",
+                ))
+            else:
+                actions.append(_agent_action(
+                    "register_manuscript",
+                    "Register the most likely canonical manuscript after confirming it",
+                    [
+                        "katz", "paper", "register", "--canonical", candidate["path"],
+                        "--source-format", candidate["format"],
+                        "--source-method", "agent-selected-repository-source",
+                    ],
+                    mutates_state=True,
+                    requires_user_approval=len(candidates) > 1,
+                    reason="Candidate ranking is heuristic; confirm the canonical source.",
+                ))
         return {
             "schema_version": AGENT_API_VERSION,
             "phase": "manuscript_registration",
@@ -1472,22 +1609,41 @@ def _agent_state() -> dict[str, Any]:
         ])
     elif not spotters:
         phase = "review_configuration"
-        actions.extend([
-            _agent_action("init_spotter_catalog", "Install reusable review procedures", ["katz", "spotter", "init-catalog"], mutates_state=True),
-            _agent_action("list_spotter_catalog", "Inspect available review procedures", ["katz", "spotter", "catalog"], mutates_state=False),
-        ])
+        catalog_names = sorted(path.stem for path in (root / KATZ_DIR / "spotters").glob("*.md"))
+        if not catalog_names:
+            actions.append(
+                _agent_action("init_spotter_catalog", "Install reusable review procedures", ["katz", "spotter", "init-catalog"], mutates_state=True)
+            )
+        else:
+            actions.extend([
+                _agent_action(
+                    "enable_recommended_spotters",
+                    "Enable the recommended manuscript review procedures",
+                    ["katz", "spotter", "enable", "--recommended"],
+                    mutates_state=True,
+                ),
+                _agent_action("list_spotter_catalog", "Inspect available review procedures", ["katz", "spotter", "catalog"], mutates_state=False),
+            ])
     else:
         phase = "automated_review"
         if latest_run and latest_run.get("status") == "packaged":
             expected_results = Path(str(latest_run.get("expected_results_path", "")))
             jobs_path = Path(str(latest_run.get("jobs_path", "jobs.ep")))
             if expected_results.is_file():
-                actions.append(_agent_action(
-                    "preview_ingestion",
-                    "Detect and preview the completed EDSL Results before mutating the ledger",
-                    ["katz", "ingest", str(expected_results)],
-                    mutates_state=False,
-                ))
+                if latest_run.get("pilot"):
+                    actions.append(_agent_action(
+                        "audit_pilot_results",
+                        "Prove that the selected model returned valid structured answers before a full run",
+                        ["katz", "results", "audit", str(expected_results), "--jobs", str(jobs_path)],
+                        mutates_state=True,
+                    ))
+                else:
+                    actions.append(_agent_action(
+                        "preview_ingestion",
+                        "Audit and preview the completed EDSL Results before mutating the ledger",
+                        ["katz", "ingest", str(expected_results)],
+                        mutates_state=False,
+                    ))
             else:
                 actions.append(_agent_action(
                     "inspect_jobs", "Inspect the packaged EDSL job before execution",
@@ -1495,9 +1651,18 @@ def _agent_state() -> dict[str, Any]:
                     mutates_state=False,
                 ))
         else:
+            pilot_succeeded = bool(
+                latest_run
+                and latest_run.get("kind") == "spotter_pilot"
+                and latest_run.get("status") == "audited"
+            )
             actions.append(_agent_action(
-                "build_review_jobs", "Package enabled spotters and manuscript sections",
-                ["katz", "spotter", "jobs", "--output", "jobs.ep"], mutates_state=True,
+                "build_review_jobs" if pilot_succeeded else "build_pilot_jobs",
+                "Package enabled spotters and manuscript sections"
+                if pilot_succeeded else "Build a five-scenario model compatibility pilot",
+                ["katz", "spotter", "jobs", "--output", "jobs.ep"]
+                if pilot_succeeded else ["katz", "spotter", "jobs", "--pilot", "5", "--output", "pilot.jobs.ep"],
+                mutates_state=True,
             ))
 
         needs_remote_run = bool(
@@ -1594,12 +1759,28 @@ def agent_next() -> None:
 
 @agent_app.command("instructions")
 def agent_instructions(
-    target: str = typer.Argument(..., help="codex or claude"),
+    target: Optional[str] = typer.Argument(None, help="codex or claude"),
     output: Optional[Path] = typer.Option(None, "--output"),
+    write: bool = typer.Option(False, "--write", help="Write native AGENTS.md and CLAUDE.md files."),
     content: bool = typer.Option(True, "--content/--no-content", help="Include template Markdown in the JSON response."),
 ) -> None:
     """Return or write native repository instructions for a coding agent."""
     try:
+        if target is None and not write:
+            raise KatzError("Specify codex or claude, or pass --write", "validation_error")
+        if write and target is None:
+            written: list[dict[str, Any]] = []
+            for normalized, filename in (("codex", "AGENTS.md"), ("claude", "CLAUDE.md")):
+                destination = Path(filename)
+                if destination.exists():
+                    written.append({"target": normalized, "path": filename, "status": "already_exists"})
+                    continue
+                markdown = (TEMPLATES_DIR / filename).read_text(encoding="utf-8")
+                destination.write_text(markdown, encoding="utf-8")
+                written.append({"target": normalized, "path": filename, "status": "written", "bytes": len(markdown.encode("utf-8"))})
+            emit_json({"schema_version": AGENT_API_VERSION, "written": written})
+            return
+        assert target is not None
         normalized = target.lower()
         filenames = {"codex": "AGENTS.md", "claude": "CLAUDE.md"}
         if normalized not in filenames:
@@ -1608,17 +1789,19 @@ def agent_instructions(
         if not template_path.is_file():
             raise KatzError("Agent instruction template is missing", "not_found", {"target": target})
         markdown = template_path.read_text(encoding="utf-8")
-        written = None
+        written_path = None
+        if write and output is None:
+            output = Path(filenames[normalized])
         if output is not None:
             if output.exists():
                 raise KatzError("Refusing to overwrite an existing instruction file", "validation_error", {"output": str(output)})
             output.write_text(markdown, encoding="utf-8")
-            written = str(output)
+            written_path = str(output)
         response = {
             "schema_version": AGENT_API_VERSION,
             "target": normalized,
             "suggested_filename": filenames[normalized],
-            "written": written,
+            "written": written_path,
             "bytes": len(markdown.encode("utf-8")),
         }
         if content:
@@ -1657,8 +1840,11 @@ def capabilities() -> None:
         "agent_api": {
             "commands": [
                 "katz agent bootstrap", "katz agent status", "katz agent next",
-                "katz agent instructions codex", "katz agent instructions claude",
-                "katz agent schema NAME", "katz capabilities", "katz ingest PATH", "katz issue next",
+                "katz agent instructions --write", "katz agent instructions codex",
+                "katz agent instructions claude", "katz agent schema NAME",
+                "katz capabilities", "katz ingest PATH", "katz issue next",
+                "katz results audit RESULTS --jobs JOBS", "katz results failures RESULTS",
+                "katz issue clusters",
             ],
             "action_fields": [
                 "id", "purpose", "command", "mutates_state", "requires_network",
@@ -1676,6 +1862,9 @@ def capabilities() -> None:
             "unified_ingest_previews_by_default": True,
             "external_writes_require_explicit_agent_authority": True,
             "issue_ingestion_is_idempotent": True,
+            "spotter_ingestion_fails_closed": True,
+            "zero_issue_requires_complete_coverage": True,
+            "api_keys_are_never_returned": True,
         },
         "schemas": schema_names,
     })
@@ -2029,12 +2218,15 @@ def issue_investigate(
             inv_record["notes"] = notes
         write_event_json(issue_dir / "investigations", inv_record)
 
-        # Optionally update state in the same call
-        if state is not None:
-            reason = notes[:200] if notes else verdict
-            status_record = {"state": state, "reason": reason, "timestamp": timestamp}
-            write_event_json(issue_dir / "status", status_record)
-            inv_record["state_updated"] = state
+        target_state = state or {
+            "confirmed": "confirmed",
+            "rejected": "rejected",
+            "uncertain": "open",
+        }[verdict]
+        reason = notes[:200] if notes else verdict
+        status_record = {"state": target_state, "reason": reason, "timestamp": timestamp}
+        write_event_json(issue_dir / "status", status_record)
+        inv_record["state_updated"] = target_state
 
         emit_json(inv_record)
     except KatzError as exc:
@@ -2154,12 +2346,15 @@ def issue_list(
 def issue_next(
     state: str = typer.Option("draft", "--state"),
     context_lines: int = typer.Option(3, "--context-lines", min=0, max=20),
+    view: str = typer.Option("full", "--view", help="full or compact"),
     commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
     """Return one complete, deterministic issue investigation packet."""
     try:
         if state not in VALID_STATES:
             raise KatzError("Invalid issue state", "validation_error", {"state": state})
+        if view not in {"full", "compact"}:
+            raise KatzError("Invalid view", "validation_error", {"view": view, "valid": ["full", "compact"]})
         resolved, dest, _, pmap, canonical = load_version(commit)
         candidates: list[tuple[str, Path]] = []
         issues_dir = dest / "issues"
@@ -2198,6 +2393,16 @@ def issue_next(
             if spotter_path.is_file():
                 spotter_instructions = _parse_spotter(spotter_path.read_text(encoding="utf-8"))
         issue_id = str(issue["id"])
+        if view == "compact":
+            issue = {
+                "id": issue.get("id"),
+                "state": issue.get("state"),
+                "title": issue.get("title"),
+                "body": issue.get("body"),
+                "spotter": issue.get("spotter"),
+                "location": issue.get("location"),
+            }
+            spotter_instructions = None
         emit_json({
             "schema_version": AGENT_API_VERSION,
             "commit": resolved,
@@ -2219,7 +2424,6 @@ def issue_next(
                         "katz", "issue", "investigate", "--id", issue_id[:12],
                         "--verdict", "<confirmed|rejected|uncertain>",
                         "--notes", "<evidence-backed notes>",
-                        "--state", "<confirmed|rejected|draft>",
                     ],
                     mutates_state=True,
                 ),
@@ -2233,6 +2437,83 @@ def issue_next(
         })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
+
+
+def _issue_duplicate_clusters(dest: Path) -> list[dict[str, Any]]:
+    records = [
+        _load_issue(path.parent)
+        for path in sorted((dest / "issues").glob("*/issue.json"))
+    ] if (dest / "issues").is_dir() else []
+    parent = list(range(len(records)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    def words(record: dict[str, Any]) -> set[str]:
+        text = f"{record.get('title', '')} {record.get('body', '')}".lower()
+        return {
+            token for token in re.findall(r"[a-z0-9]+", text)
+            if len(token) > 3 and token not in {"this", "that", "with", "from", "paper", "issue"}
+        }
+
+    token_sets = [words(record) for record in records]
+    for left in range(len(records)):
+        for right in range(left + 1, len(records)):
+            left_location = records[left].get("location", {})
+            right_location = records[right].get("location", {})
+            overlap = (
+                left_location.get("byte_start", -1) < right_location.get("byte_end", -1)
+                and right_location.get("byte_start", -1) < left_location.get("byte_end", -1)
+            )
+            union_tokens = token_sets[left] | token_sets[right]
+            similarity = len(token_sets[left] & token_sets[right]) / len(union_tokens) if union_tokens else 0.0
+            if overlap or similarity >= 0.45:
+                union(left, right)
+
+    groups: dict[int, list[dict[str, Any]]] = {}
+    for index, record in enumerate(records):
+        groups.setdefault(find(index), []).append(record)
+    clusters = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        primary = members[0]
+        clusters.append({
+            "primary_issue_id": primary["id"],
+            "issue_ids": [record["id"] for record in members],
+            "titles": [record.get("title") for record in members],
+            "spotters": sorted({str(record.get("spotter")) for record in members if record.get("spotter")}),
+            "suggested_command": [
+                "katz", "issue", "merge", "--ids",
+                ",".join(record["id"] for record in members),
+            ],
+        })
+    return clusters
+
+
+@issue_app.command("clusters")
+def issue_clusters(commit: Optional[str] = typer.Option(None, "--commit")) -> None:
+    """Suggest groups of overlapping or textually similar issue candidates."""
+    try:
+        resolved, dest, _, _, _ = load_version(commit)
+        clusters = _issue_duplicate_clusters(dest)
+        emit_json({"commit": resolved, "cluster_count": len(clusters), "clusters": clusters})
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@issue_app.command("merge-suggest")
+def issue_merge_suggest(commit: Optional[str] = typer.Option(None, "--commit")) -> None:
+    """Return duplicate clusters and explicit merge commands without mutating issues."""
+    issue_clusters(commit=commit)
 
 
 VALID_SCOPES = {"section", "holistic"}
@@ -2453,24 +2734,51 @@ def spotter_add(
 
 @spotter_app.command("enable")
 def spotter_enable(
-    name: str,
+    name: Optional[str] = typer.Argument(None),
     commit: Optional[str] = typer.Option(None, "--commit"),
+    recommended: bool = typer.Option(False, "--recommended", help="Enable the built-in default review set."),
+    all_spotters: bool = typer.Option(False, "--all", help="Enable every spotter currently in the catalog."),
 ) -> None:
     """Enable a catalog spotter for the active version (copies it from catalog to version)."""
     try:
         ensure_initialized()
-        catalog_path = katz_root() / "spotters" / f"{name}.md"
-        if not catalog_path.exists():
-            raise KatzError(f"Spotter '{name}' not in catalog", "not_found", {"name": name})
         _, dest, _, _, _ = load_version(commit)
         spotters_dir = dest / "spotters"
         spotters_dir.mkdir(parents=True, exist_ok=True)
-        out_path = spotters_dir / f"{name}.md"
-        if out_path.exists():
-            emit_json({"enabled": name, "already_enabled": True})
-            return
-        shutil.copyfile(catalog_path, out_path)
-        emit_json({"enabled": name, "already_enabled": False})
+        selected = sum(bool(value) for value in (name, recommended, all_spotters))
+        if selected != 1:
+            raise KatzError(
+                "Choose exactly one name, --recommended, or --all",
+                "validation_error",
+            )
+        catalog_dir = katz_root() / "spotters"
+        if recommended:
+            names = _load_collection("spotters", "default")
+        elif all_spotters:
+            names = sorted(path.stem for path in catalog_dir.glob("*.md"))
+        else:
+            names = [str(name)]
+        enabled: list[str] = []
+        already_enabled: list[str] = []
+        for selected_name in names:
+            catalog_path = catalog_dir / f"{selected_name}.md"
+            if not catalog_path.exists():
+                raise KatzError(f"Spotter '{selected_name}' not in catalog", "not_found", {"name": selected_name})
+            out_path = spotters_dir / f"{selected_name}.md"
+            if out_path.exists():
+                already_enabled.append(selected_name)
+                continue
+            shutil.copyfile(catalog_path, out_path)
+            enabled.append(selected_name)
+        if name is not None:
+            emit_json({"enabled": name, "already_enabled": bool(already_enabled)})
+        else:
+            emit_json({
+                "selection": "recommended" if recommended else "all",
+                "enabled": enabled,
+                "already_enabled": already_enabled,
+                "enabled_count": len(enabled),
+            })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 
@@ -2811,12 +3119,17 @@ You are reviewing {{ review_target }} from an academic manuscript.
 Issue spotter:
 {{ spotter_instructions }}
 
+Paper context:
+{{ paper_context }}
+
 Manuscript content:
 {{ manuscript_content }}
 
 Apply the spotter carefully. Return found=false when there is no genuine,
 substantive issue. When found=true, quote the exact shortest passage that
-demonstrates the issue and explain why it matters. Do not invent text.
+demonstrates the issue and explain why it matters. Before claiming something is
+missing, use the paper context to distinguish “missing from this section” from
+“missing from the paper.” Do not invent text.
 """
 
 ECONOMICS_REVIEW_QUESTION_TEXT = """\
@@ -3341,12 +3654,25 @@ def _detect_ingest_source(path: Path) -> dict[str, Any]:
 def ingest(
     path: Path = typer.Argument(..., exists=True, readable=True),
     apply: bool = typer.Option(False, "--apply", help="Apply a supported ingestion after previewing its detected contract."),
+    allow_partial: bool = typer.Option(False, "--allow-partial", help="Ingest valid rows despite incomplete coverage; records a partial run."),
     state: str = typer.Option("draft", "--state"),
     commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
     """Detect review artifacts safely; preview by default and mutate only with --apply."""
     try:
         detection = _detect_ingest_source(path)
+        if detection.get("kind") == "spotter_results":
+            _, dest, _, _, _ = load_version(commit)
+            jobs_path = _resolve_audit_jobs(dest, path, None)
+            audit = _audit_spotter_results(path, jobs_path)
+            audit.pop("_rows", None)
+            detection["audit"] = audit
+            detection["supported_apply"] = bool(audit["complete"] or allow_partial)
+            if not audit["complete"]:
+                detection["reason"] = (
+                    "Spotter Results are incomplete or cannot be matched to their originating Jobs. "
+                    "Katz will not interpret missing answers as negative findings."
+                )
         if not apply:
             command = detection.get("recommended_command")
             apply_action = None
@@ -3354,7 +3680,8 @@ def ingest(
                 apply_action = _agent_action(
                     "apply_ingestion",
                     "Apply the detected, version-checked ingestion contract",
-                    ["katz", "ingest", str(path), "--apply", "--state", state],
+                    ["katz", "ingest", str(path), "--apply", "--state", state]
+                    + (["--allow-partial"] if allow_partial else []),
                     mutates_state=True,
                 )
             emit_json({
@@ -3376,7 +3703,7 @@ def ingest(
                 {"detection": detection},
             )
         if detection["kind"] == "spotter_results":
-            spotter_ingest(path, state=state, commit=commit)
+            spotter_ingest(path, state=state, commit=commit, allow_partial=allow_partial)
             return
         if detection["kind"] == "journal_review_results":
             review_ingest(path, state=state, commit=commit)
@@ -3391,6 +3718,7 @@ def spotter_jobs(
     output: Path = typer.Option(Path("jobs.ep"), "--output", "-o"),
     section: Optional[str] = typer.Option(None, "--section"),
     spotters: Optional[str] = typer.Option(None, "--spotters", help="Comma-separated enabled spotter names"),
+    pilot: Optional[int] = typer.Option(None, "--pilot", min=1, help="Build a small deterministic compatibility pilot."),
     commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
     """Build an EDSL Jobs package from enabled spotters and manuscript content."""
@@ -3425,6 +3753,24 @@ def spotter_jobs(
             if not selected_sections:
                 raise KatzError(f"Section '{section}' not found", "not_found", {"section": section})
 
+        section_map = "\n".join(
+            f"- {item.get('title', item['id'])} (lines {item.get('line_start', '?')}–{item.get('line_end', '?')})"
+            for item in pmap.sections
+        )
+        abstract_section = next(
+            (item for item in pmap.sections if "abstract" in str(item.get("id", "")).lower()),
+            None,
+        )
+        abstract_text = ""
+        if abstract_section is not None:
+            abstract_text = content.encode("utf-8")[
+                int(abstract_section["byte_start"]):int(abstract_section["byte_end"])
+            ].decode("utf-8")
+        paper_context = (
+            "Section map:\n" + section_map
+            + ("\n\nAbstract:\n" + abstract_text if abstract_text else "")
+        )
+
         scenarios: list[Any] = []
         for definition in definitions:
             if definition["scope"] == "section":
@@ -3441,6 +3787,7 @@ def spotter_jobs(
                         "byte_end": byte_end,
                         "review_target": f'section "{item.get("title", item["id"])}"',
                         "spotter_instructions": definition["content"],
+                        "paper_context": paper_context,
                         "manuscript_content": content.encode("utf-8")[byte_start:byte_end].decode("utf-8"),
                     }))
             else:
@@ -3454,8 +3801,11 @@ def spotter_jobs(
                     "byte_end": len(content.encode("utf-8")),
                     "review_target": "the complete manuscript",
                     "spotter_instructions": definition["content"],
+                    "paper_context": "This scenario contains the complete manuscript.",
                     "manuscript_content": content,
                 }))
+        if pilot is not None:
+            scenarios = scenarios[:pilot]
 
         question = QuestionDict(
             question_name="spotter_result",
@@ -3480,6 +3830,7 @@ def spotter_jobs(
             question="spotter_result",
             scenario_count=len(scenarios),
             spotters=[item["name"] for item in definitions],
+            pilot=pilot,
         )
         section_jobs = sum(1 for scenario in scenarios if scenario["spotter_scope"] == "section")
         holistic_jobs = len(scenarios) - section_jobs
@@ -3492,6 +3843,18 @@ def spotter_jobs(
             "scenario_count": len(scenarios),
             "section_scenarios": section_jobs,
             "holistic_scenarios": holistic_jobs,
+            "pilot": pilot is not None,
+            "estimated_prompt_characters": sum(
+                len(str(dict(scenario).get("manuscript_content", "")))
+                + len(str(dict(scenario).get("paper_context", "")))
+                + len(str(dict(scenario).get("spotter_instructions", "")))
+                for scenario in scenarios
+            ),
+            "answer_contract": {
+                "question_type": "dict",
+                "required_keys": ["found", "title", "quoted_text", "description"],
+                "pilot_required_before_large_run": len(scenarios) > 20,
+            },
             "saved": saved,
             "next": f"ep run {output} --model <model-name> --output {expected_results}",
         })
@@ -3520,6 +3883,216 @@ def _answer_is_found(value: Any) -> bool:
     return value == 1
 
 
+def _scenario_key(value: Any) -> str:
+    """Return a stable identity for one Katz review scenario."""
+    scenario = value if isinstance(value, dict) else dict(value)
+    identity = {
+        "katz_commit": scenario.get("katz_commit"),
+        "spotter_name": scenario.get("spotter_name"),
+        "spotter_scope": scenario.get("spotter_scope"),
+        "section_id": scenario.get("section_id"),
+        "byte_start": scenario.get("byte_start"),
+        "byte_end": scenario.get("byte_end"),
+    }
+    return json.dumps(identity, sort_keys=True, default=str)
+
+
+def _spotter_answer_error(answer: Any) -> str | None:
+    if answer is None:
+        return "null_answer"
+    if not isinstance(answer, dict):
+        return "answer_not_object"
+    found = answer.get("found")
+    valid_found = (
+        isinstance(found, bool)
+        or (isinstance(found, int) and not isinstance(found, bool) and found in {0, 1})
+        or (isinstance(found, str) and found.strip().lower() in {"true", "false"})
+    )
+    if not valid_found:
+        return "invalid_found"
+    if _answer_is_found(found):
+        missing = [
+            key for key in ("title", "quoted_text", "description")
+            if not isinstance(answer.get(key), str) or not answer.get(key, "").strip()
+        ]
+        if missing:
+            return "missing_positive_fields:" + ",".join(missing)
+    return None
+
+
+def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) -> dict[str, Any]:
+    """Audit structured spotter Results against the originating Jobs when available."""
+    _edsl_imports()
+    from edsl import Jobs, Results
+
+    results = Results.git.load(results_path)
+    expected_keys: list[str] = []
+    if jobs_path is not None:
+        jobs = Jobs.git.load(jobs_path)
+        expected_keys = [_scenario_key(scenario) for scenario in jobs.scenarios]
+
+    rows: list[dict[str, Any]] = []
+    returned_keys: list[str] = []
+    valid_positive = valid_negative = 0
+    null_answers = invalid_answers = model_exceptions = 0
+    failure_examples: list[dict[str, Any]] = []
+    models: set[str] = set()
+    for index, result in enumerate(results):
+        scenario = result["scenario"] if isinstance(result["scenario"], dict) else dict(result["scenario"])
+        key = _scenario_key(scenario)
+        returned_keys.append(key)
+        answer = _result_value(result, "answer", "spotter_result")
+        model = _result_value(result, "model", "model") or _result_value(result, "model", "_model_")
+        if model:
+            models.add(str(model))
+        exception = _result_value(result, "exceptions", "spotter_result")
+        error = _spotter_answer_error(answer)
+        if exception:
+            model_exceptions += 1
+            error = "model_exception"
+        elif error == "null_answer":
+            null_answers += 1
+        elif error:
+            invalid_answers += 1
+        elif _answer_is_found(answer.get("found")):
+            valid_positive += 1
+        else:
+            valid_negative += 1
+        row = {
+            "index": index,
+            "scenario": {
+                "spotter_name": scenario.get("spotter_name"),
+                "section_id": scenario.get("section_id"),
+                "section_title": scenario.get("section_title"),
+            },
+            "valid": error is None,
+            "found": _answer_is_found(answer.get("found")) if isinstance(answer, dict) and error is None else None,
+            "error": error,
+            "answer": answer,
+        }
+        rows.append(row)
+        if error and len(failure_examples) < 10:
+            failure_examples.append({key: value for key, value in row.items() if key != "answer"})
+
+    expected_set = set(expected_keys)
+    returned_set = set(returned_keys)
+    duplicate_rows = len(returned_keys) - len(returned_set)
+    missing_scenarios = len(expected_set - returned_set) if expected_keys else None
+    unexpected_scenarios = len(returned_set - expected_set) if expected_keys else None
+    expected_count = len(expected_keys) if expected_keys else None
+    valid_count = valid_positive + valid_negative
+    denominator = expected_count if expected_count is not None else len(results)
+    coverage = (valid_count / denominator) if denominator else 0.0
+    complete = bool(
+        expected_count is not None
+        and expected_count > 0
+        and valid_count == expected_count
+        and not duplicate_rows
+        and not missing_scenarios
+        and not unexpected_scenarios
+        and not null_answers
+        and not invalid_answers
+        and not model_exceptions
+    )
+    return {
+        "contract": "katz.spotter-results-audit.v1",
+        "results_path": str(results_path.resolve()),
+        "jobs_path": str(jobs_path.resolve()) if jobs_path is not None else None,
+        "expected_scenarios": expected_count,
+        "returned_rows": len(results),
+        "valid_answers": valid_count,
+        "valid_positive_findings": valid_positive,
+        "valid_negative_findings": valid_negative,
+        "null_answers": null_answers,
+        "invalid_answers": invalid_answers,
+        "model_exceptions": model_exceptions,
+        "missing_scenarios": missing_scenarios,
+        "unexpected_scenarios": unexpected_scenarios,
+        "duplicate_rows": duplicate_rows,
+        "coverage": round(coverage, 6),
+        "complete": complete,
+        "models": sorted(models),
+        "failure_examples": failure_examples,
+        "_rows": rows,
+    }
+
+
+def _resolve_audit_jobs(dest: Path, results_path: Path, jobs_path: Path | None) -> Path | None:
+    if jobs_path is not None:
+        return jobs_path
+    run = _latest_packaged_run(dest, results_path)
+    candidate = Path(str(run.get("jobs_path"))) if run and run.get("jobs_path") else None
+    return candidate if candidate is not None and candidate.is_file() else None
+
+
+@results_app.command("audit")
+def results_audit(
+    results_path: Path = typer.Argument(..., exists=True, readable=True),
+    jobs: Optional[Path] = typer.Option(None, "--jobs", exists=True, readable=True),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Audit coverage and structured-answer validity before ingestion."""
+    try:
+        _, dest, _, _, _ = load_version(commit)
+        packaged = _latest_packaged_run(dest, results_path)
+        resolved_jobs = _resolve_audit_jobs(dest, results_path, jobs)
+        audit = _audit_spotter_results(results_path, resolved_jobs)
+        audit.pop("_rows", None)
+        audit["ingestion_allowed"] = audit["complete"]
+        if resolved_jobs is None:
+            audit["blocker"] = {
+                "code": "originating_jobs_required",
+                "message": "Pass --jobs so Katz can prove scenario coverage.",
+            }
+        record_run(
+            dest,
+            "spotter_pilot" if packaged and packaged.get("pilot") else "spotter",
+            "audited" if audit["complete"] else "invalid",
+            results_path=str(results_path.resolve()),
+            jobs_path=str(resolved_jobs.resolve()) if resolved_jobs else None,
+            audit=audit,
+        )
+        emit_json(audit)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+    except Exception as exc:
+        fail(str(exc), "edsl_error", {"results": str(results_path)})
+
+
+@results_app.command("sample")
+def results_sample(
+    results_path: Path = typer.Argument(..., exists=True, readable=True),
+    valid: int = typer.Option(5, "--valid", min=1),
+) -> None:
+    """Return a compact sample of valid structured spotter answers."""
+    try:
+        audit = _audit_spotter_results(results_path)
+        rows = [
+            {key: value for key, value in row.items() if key != "valid"}
+            for row in audit.pop("_rows") if row["valid"]
+        ][:valid]
+        emit_json({"results": str(results_path), "count": len(rows), "rows": rows})
+    except Exception as exc:
+        fail(str(exc), "edsl_error", {"results": str(results_path)})
+
+
+@results_app.command("failures")
+def results_failures(
+    results_path: Path = typer.Argument(..., exists=True, readable=True),
+    limit: int = typer.Option(20, "--limit", min=1),
+) -> None:
+    """Return compact null, schema-invalid, and model-exception rows."""
+    try:
+        audit = _audit_spotter_results(results_path)
+        rows = [
+            {key: value for key, value in row.items() if key != "answer"}
+            for row in audit.pop("_rows") if not row["valid"]
+        ][:limit]
+        emit_json({"results": str(results_path), "count": len(rows), "rows": rows})
+    except Exception as exc:
+        fail(str(exc), "edsl_error", {"results": str(results_path)})
+
+
 def _locate_quoted_text(region: str, quoted: str) -> tuple[int, int] | None:
     """Locate an exact quote, allowing runs of whitespace to differ."""
     direct = region.find(quoted)
@@ -3540,6 +4113,8 @@ def spotter_ingest(
     results_path: Path = typer.Argument(..., exists=True, readable=True),
     state: str = typer.Option("draft", "--state"),
     commit: Optional[str] = typer.Option(None, "--commit"),
+    jobs: Optional[Path] = typer.Option(None, "--jobs", exists=True, readable=True),
+    allow_partial: bool = typer.Option(False, "--allow-partial"),
 ) -> None:
     """Parse an EDSL Results package and file manuscript-anchored Katz issues."""
     try:
@@ -3549,6 +4124,27 @@ def spotter_ingest(
         from edsl import Results
 
         resolved, dest, _, _, canonical = load_version(commit)
+        resolved_jobs = _resolve_audit_jobs(dest, results_path, jobs)
+        audit = _audit_spotter_results(results_path, resolved_jobs)
+        audit_rows = audit.pop("_rows")
+        if not audit["complete"] and not allow_partial:
+            record_run(
+                dest, "spotter", "invalid",
+                results_path=str(results_path.resolve()),
+                audit=audit,
+            )
+            raise KatzError(
+                "Refusing to ingest incomplete or unauditable spotter Results",
+                "incomplete_results",
+                {
+                    "audit": audit,
+                    "next_actions": [
+                        ["katz", "results", "failures", str(results_path)],
+                        ["katz", "results", "audit", str(results_path)]
+                        + (["--jobs", str(resolved_jobs)] if resolved_jobs else ["--jobs", "<jobs.ep>"]),
+                    ],
+                },
+            )
         results = Results.git.load(results_path)
         manuscript = canonical.read_text(encoding="utf-8")
         existing_keys: set[str] = set()
@@ -3562,7 +4158,10 @@ def spotter_ingest(
 
         found = filed = skipped = 0
         issue_ids: list[str] = []
-        for result in results:
+        for result_index, result in enumerate(results):
+            if result_index < len(audit_rows) and not audit_rows[result_index]["valid"]:
+                skipped += 1
+                continue
             answer = _result_value(result, "answer", "spotter_result")
             scenario = result["scenario"] if isinstance(result["scenario"], dict) else dict(result["scenario"])
             if not isinstance(answer, dict) or not _answer_is_found(answer.get("found")):
@@ -3627,12 +4226,13 @@ def spotter_ingest(
             filed += 1
 
         record_run(
-            dest, "spotter", "ingested",
+            dest, "spotter", "partial" if not audit["complete"] else "ingested",
             results_path=str(results_path.resolve()),
             result_count=len(results),
             issues_found=found,
             issues_filed=filed,
             skipped=skipped,
+            audit=audit,
         )
         emit_json({
             "results": str(results_path),
@@ -3642,6 +4242,8 @@ def spotter_ingest(
             "issues_filed": filed,
             "skipped": skipped,
             "issue_ids": issue_ids,
+            "audit": audit,
+            "run_status": "partial" if not audit["complete"] else "ingested",
         })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
@@ -3757,6 +4359,13 @@ def report_generate(
         source = version.get("source", {})
         if not isinstance(source, dict):
             source = {}
+        audited_run = None
+        if (dest / "runs").is_dir():
+            for path in reversed(sorted((dest / "runs").glob("*.json"))):
+                candidate = read_json(path)
+                if "audit" in candidate:
+                    audited_run = candidate
+                    break
         status = {
             "commit": resolved,
             "source_format": source.get("format"),
@@ -3767,6 +4376,7 @@ def report_generate(
             "sentences": len(pmap.sentences),
             "figures": len(pmap.figures),
             "valid": canonical.exists() and sha256_file(canonical) == version.get("checksum") == pmap.header.get("checksum"),
+            "review_audit": audited_run.get("audit") if audited_run else None,
         }
         html = report_module.build_html(
             status,

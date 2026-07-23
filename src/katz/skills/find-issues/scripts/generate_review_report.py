@@ -240,6 +240,28 @@ def build_html(status, sections, issues, manuscript=None, eval_criteria=None, ev
     commit = status["commit"]
     short_commit = commit[:8]
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    review_audit = status.get("review_audit") or {}
+    if review_audit:
+        coverage_percent = float(review_audit.get("coverage", 0)) * 100
+        audit_class = "complete" if review_audit.get("complete") else "incomplete"
+        audit_title = "Automated review coverage complete" if review_audit.get("complete") else "Automated review coverage incomplete"
+        audit_html = f"""
+<div class="review-audit {audit_class}">
+  <strong>{audit_title}</strong>
+  <span>{coverage_percent:.1f}% valid coverage ·
+  {review_audit.get('valid_answers', 0)} valid answers ·
+  {review_audit.get('null_answers', 0)} null ·
+  {review_audit.get('invalid_answers', 0)} invalid ·
+  {review_audit.get('model_exceptions', 0)} model exceptions</span>
+</div>
+"""
+    else:
+        audit_html = """
+<div class="review-audit unknown">
+  <strong>Automated review coverage not audited</strong>
+  <span>This report must not be interpreted as a complete zero-issue review.</span>
+</div>
+"""
     # The report references logo.png; this canonical copy is only a portability
     # fallback if the HTML is moved away from its generated asset.
     brand_logo_fallback = (
@@ -552,6 +574,18 @@ MathJax = {{
     color: var(--muted);
     font-size: 0.84rem;
   }}
+  .review-audit {{
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin: 1rem 0;
+    padding: 0.8rem 1rem;
+    border-left: 4px solid #d97706;
+    background: #fffbeb;
+    font-size: 0.9rem;
+  }}
+  .review-audit.complete {{ border-color: var(--ep-green); background: #f0fdf4; }}
+  .review-audit.incomplete {{ border-color: #dc2626; background: #fef2f2; }}
 
   /* Split pane layout */
   #review-pane {{
@@ -888,6 +922,8 @@ MathJax = {{
   {status['sections']} sections, {status['sentences']} sentences &middot;
   Generated {now}
 </div>
+
+{audit_html}
 
 {nav_html}
 
