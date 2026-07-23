@@ -611,7 +611,9 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
 }</code></pre>
     <p>This record contains what triage needs: the model’s reason, the exact text it relied on, and the source location. We will follow this one causal-language candidate through investigation rather than restating every item in the list.</p>
     <h3>Add an issue manually</h3>
-    <p>You can also file a finding manually. First search the registered manuscript for the passage you want to anchor:</p>
+    <p>You can also file a finding manually. “Manual” describes how the issue enters Katz, not where the critique originated: it may come from your own reading, a referee report, a collaborator, or an external review service such as <a href="https://www.refine.ink/" target="_blank" rel="noopener noreferrer">refine.ink</a>. Refine performs AI-assisted analysis of research drafts and returns substantive comments about matters such as logical gaps, inconsistent claims, notation, proofs, citations, and empirical specifications; its <a href="https://www.refine.ink/examples" target="_blank" rel="noopener noreferrer">published examples</a> illustrate the kinds of findings it can surface.</p>
+    <p>When using a Refine comment, preserve Refine’s wording or report reference in the issue metadata, but locate the supporting passage again in Katz’s registered canonical copy. This gives the external finding a commit, exact byte range, and later investigation history. Treat it as a <code>draft</code> candidate until an agent or human reviewer checks it against the manuscript and relevant artifacts.</p>
+    <p>First search the registered manuscript for the passage you want to anchor:</p>
     <pre><code>katz paper find "continuous treatment"</code></pre>
     <p>The positional query searches the registered canonical copy and returns byte ranges suitable for anchoring.</p>
     <pre><code>{
@@ -674,18 +676,18 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
     }
   ]
 }</code></pre>
-    <p>Choose the occurrence whose section and surrounding text match the finding. The manual example below uses placeholders so it is not accidentally anchored to the wrong occurrence after an upstream revision.</p>
+    <p>Choose the occurrence whose section and surrounding text match the finding. This example records a Refine comment as its provenance; replace the reference with the identifier or report location supplied by your own review.</p>
     <pre><code>katz issue write \
   --byte-start 6535 \
   --byte-end 6555 \
   --spotter software_claim_support \
   --title "Validation claim needs a reproducible pointer" \
   --body "The paper makes a concrete validation claim here. Check whether the text or linked artifacts identify the test, example, or result that supports it." \
-  --meta '{"severity":"minor"}'</code></pre>
+  --meta '{"severity":"minor","source":"refine.ink","source_reference":"Refine review comment 12"}'</code></pre>
     <table><thead><tr><th>Option</th><th>Meaning</th></tr></thead><tbody>
       <tr><td><code>--byte-start</code>, <code>--byte-end</code></td><td>Exact half-open source range for the finding.</td></tr>
       <tr><td><code>--spotter</code></td><td>Enabled spotter responsible for the finding.</td></tr>
-      <tr><td><code>--meta '{"severity":"minor"}'</code></td><td>Stores the tutorial's severity convention as structured issue metadata.</td></tr>
+      <tr><td><code>--meta</code></td><td>Stores severity and external provenance without confusing either field with the issue’s manuscript anchor.</td></tr>
       <tr><td><code>--title</code></td><td>Short, concrete finding summary.</td></tr>
       <tr><td><code>--body</code></td><td>Evidence, impact, and reasoning.</td></tr>
     </tbody></table>
@@ -698,7 +700,7 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
     "--spotter", "software_claim_support",
     "--title", "Validation claim needs a reproducible pointer",
     "--body", "The paper makes a concrete validation claim here. Check whether the text or linked artifacts identify the test, example, or result that supports it.",
-    "--meta", "{\"severity\":\"minor\"}"
+    "--meta", "{\"severity\":\"minor\",\"source\":\"refine.ink\",\"source_reference\":\"Refine review comment 12\"}"
   ],
   "data": {
     "schema_version": 2,
@@ -716,7 +718,11 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
       "resolved_text": "continuous treatment",
       "contains_math": false
     },
-    "meta": {"severity": "minor"},
+    "meta": {
+      "severity": "minor",
+      "source": "refine.ink",
+      "source_reference": "Refine review comment 12"
+    },
     "state": "draft"
   }
 }</code></pre>
@@ -999,6 +1005,10 @@ After checking the paper and relevant artifacts, how should this candidate be cl
   "warnings": []
 }</code></pre>
     <p><a href="https://chick.expectedparrot.com/respond/human-surveys/a9d3a6b4-7d1c-4d06-bc90-2221b814b8a1?save_response=false" target="_blank" rel="noopener noreferrer">Open the live Katz triage survey preview in a new tab.</a> The preview uses <code>save_response=false</code>, so tutorial visits do not enter the response dataset.</p>
+    <figure class="screenshot">
+      <img src="human-triage-survey.png" alt="The Expected Parrot Humanize preview displaying a Katz issue, its manuscript quotation and generated reason, followed by confirmed, rejected, and uncertain triage choices." width="2218" height="1478" loading="lazy">
+      <figcaption>The Humanize page presents one source-anchored Katz candidate at a time. The preview banner confirms that responses submitted from this tutorial view are not recorded.</figcaption>
+    </figure>
     <p>This command creates a remote survey, so inspect the local objects first and share the response-saving respondent URL only with authorized reviewers. Use <code>randomize</code> instead when independently sampling issues across many reviewers. Use <code>loop</code> when one respondent must answer the whole question set for every issue; that produces a longer survey with scenario-indexed answer columns. The Expected Parrot API key configured at the start of the tutorial authenticates creation and response retrieval.</p>
 
     <h3>Retrieve and apply human decisions</h3>
