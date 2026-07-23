@@ -25,7 +25,10 @@ def katz(repo: Path, *args: str) -> dict | list:
         cwd=repo, env=env, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
     )
-    return json.loads(result.stdout)
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["command"] == list(args)
+    return payload["data"]
 
 
 def katz_fail(repo: Path, *args: str) -> dict:
@@ -37,7 +40,10 @@ def katz_fail(repo: Path, *args: str) -> dict:
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
     )
     assert result.returncode != 0
-    return json.loads(result.stdout)
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["command"] == list(args)
+    return payload["error"]
 
 
 RICH_MANUSCRIPT = """\
@@ -125,7 +131,7 @@ def test_auto_chunk_rejects_if_sections_exist(tmp_path: Path) -> None:
 
     katz(repo, "paper", "auto-chunk")
     err = katz_fail(repo, "paper", "auto-chunk")
-    assert "already has" in err["error"]
+    assert "already has" in err["message"]
 
 
 def test_auto_chunk_sections_tile_manuscript(tmp_path: Path) -> None:
@@ -170,6 +176,140 @@ def test_spotter_init_catalog_from_files(tmp_path: Path) -> None:
     names = {s["name"] for s in catalog}
     assert "overclaiming" in names
     assert "logical_gaps" in names
+
+
+def test_spotter_jobs_builds_edsl_package(tmp_path: Path) -> None:
+    from edsl import Jobs
+
+    repo, commit = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    output = repo / "review-jobs.ep"
+
+    result = katz(repo, "spotter", "jobs", "--output", str(output))
+
+    assert result["object_type"] == "Jobs"
+    assert result["commit"] == commit
+    assert result["spotters"] == ["causal_language"]
+    assert result["scenario_count"] == result["section_scenarios"]
+    assert result["scenario_count"] >= 8
+    assert result["holistic_scenarios"] == 0
+    jobs = Jobs.git.load(output)
+    assert jobs.survey.question_names == ["spotter_result"]
+    first = dict(jobs.scenarios[0])
+    assert first["katz_commit"] == commit
+    assert first["spotter_name"] == "causal_language"
+    assert first["spotter_scope"] == "section"
+    assert first["manuscript_content"]
+
+
+def test_spotter_jobs_can_filter_section_and_spotter(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    katz(repo, "spotter", "enable", "overclaiming")
+    output = repo / "one-job.ep"
+
+    result = katz(
+        repo,
+        "spotter",
+        "jobs",
+        "--output",
+        str(output),
+        "--section",
+        "abstract",
+        "--spotters",
+        "causal_language",
+    )
+
+    assert result["spotters"] == ["causal_language"]
+    assert result["scenario_count"] == 1
+    assert result["section_scenarios"] == 1
+
+
+def test_spotter_ingest_files_anchored_issue_idempotently(tmp_path: Path) -> None:
+    from edsl import Agent, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, commit = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    manuscript = (repo / ".katz" / "versions" / commit / "paper" / "manuscript.md").read_text()
+    quoted = "This paper studies something important."
+    byte_start = manuscript.encode().find(quoted.encode())
+    result = Result(
+        agent=Agent(),
+        scenario=Scenario({
+            "katz_commit": commit,
+            "spotter_name": "causal_language",
+            "spotter_scope": "section",
+            "section_id": "abstract",
+            "byte_start": byte_start,
+            "byte_end": byte_start + len(quoted.encode()),
+        }),
+        model=Model("test"),
+        iteration=0,
+        answer={
+            "spotter_result": {
+                "found": "true",
+                "title": "Causal claim",
+                "quoted_text": quoted,
+                "description": "The wording needs qualification.",
+            }
+        },
+    )
+    null_result = Result(
+        agent=Agent(),
+        scenario=Scenario({
+            "katz_commit": commit,
+            "spotter_name": "causal_language",
+            "spotter_scope": "section",
+            "section_id": "methods",
+            "byte_start": 0,
+            "byte_end": len(manuscript.encode()),
+        }),
+        model=Model("test"),
+        iteration=0,
+        answer={
+            "spotter_result": {
+                "found": "false",
+                "title": "",
+                "quoted_text": "",
+                "description": "",
+            }
+        },
+    )
+    results_path = repo / "results.ep"
+    Results(survey=Survey([]), data=[result, null_result]).git.save(results_path)
+
+    first = katz(repo, "spotter", "ingest", str(results_path))
+    second = katz(repo, "spotter", "ingest", str(results_path))
+
+    assert first["issues_found"] == 1
+    assert first["issues_filed"] == 1
+    assert first["result_count"] == 2
+    assert second["issues_filed"] == 0
+    assert second["skipped"] == 1
+    issue = katz(repo, "issue", "show", first["issue_ids"][0])
+    assert issue["spotter"] == "causal_language"
+    assert issue["location"]["resolved_text"] == quoted
+    assert issue["meta"]["edsl_model"] == "test"
+
+
+def test_locate_quoted_text_allows_line_break_normalization() -> None:
+    from katz.cli import _locate_quoted_text
+
+    region = "TMLE employs a substitution “targeting”\nstep to estimate an effect."
+    quote = "TMLE employs a substitution “targeting” step to estimate an effect."
+
+    located = _locate_quoted_text(region, quote)
+
+    assert located is not None
+    start, end = located
+    assert region[start:end] == region
 
 
 def test_spotter_init_catalog_skips_existing(tmp_path: Path) -> None:
@@ -482,7 +622,9 @@ def test_issue_list_stdout_is_clean_json_for_pipelines(tmp_path: Path) -> None:
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
     )
     assert result.stderr == ""
-    assert json.loads(result.stdout)[0]["title"] == "Pipeline"
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["data"][0]["title"] == "Pipeline"
 
 
 # ---------------------------------------------------------------------------

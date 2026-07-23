@@ -102,13 +102,15 @@ keyed to a specific commit SHA. The active version is stored in `.katz/ACTIVE_VE
 
 ## Output Format
 
-All katz commands emit JSON to stdout. Errors also go to stdout:
+All katz commands emit one JSON envelope to stdout:
 
 ```json
-{"error": "message here", "code": "error_code", "details": {...}}
+{"ok": true, "command": ["paper", "status"], "data": {...}}
+{"ok": false, "command": ["paper", "status"], "error": {"code": "error_code", "message": "message here", "details": {...}}}
 ```
 
-Exit code 1 on error, 0 on success.
+Branch on `ok`, read successful results from `data`, and structured failures
+from `error`. Exit code 1 on error, 0 on success.
 
 ---
 

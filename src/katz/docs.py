@@ -23,10 +23,10 @@ DOCS: dict[str, dict] = {
         "summary": "Phase-by-phase guide: init, register, chunk, spotters, find, investigate, report.",
         "file": "workflow.md",
     },
-    "edsl-codegen": {
-        "title": "EDSL Code Generation",
-        "summary": "How to generate a Python EDSL review script from katz state instead of running one directly.",
-        "file": "edsl-codegen.md",
+    "edsl-jobs": {
+        "title": "EDSL Jobs Workflow",
+        "summary": "Build jobs.ep from Katz state, run it with ep, and ingest results.ep.",
+        "file": "edsl-jobs.md",
     },
     "cli-reference": {
         "title": "CLI Quick Reference",
@@ -84,12 +84,12 @@ CHECKLISTS: dict[str, list[str]] = {
     "chunked": [
         "Initialize the spotter catalog: `katz spotter init-catalog`",
         "Enable spotters for this review: `katz spotter enable overclaiming` (repeat for each)",
-        "Then generate an EDSL find-issues script via `katz docs show edsl-codegen`.",
+        "Build an EDSL Jobs package: `katz spotter jobs --output jobs.ep`.",
     ],
     "spotters_configured": [
-        "Read `katz docs show edsl-codegen` for the code generation template.",
-        "Generate a Python script using the template (sections and spotters are in the agent-start payload).",
-        "Show the script to the user and ask them to run it.",
+        "Build `jobs.ep` with `katz spotter jobs --output jobs.ep`.",
+        "Run it with `ep run jobs.ep --model <model> --output results.ep`.",
+        "Ingest findings with `katz spotter ingest results.ep`.",
     ],
     "issues_found": [
         "Expect ~5–10% of draft issues to be genuine. Investigate each one.",
@@ -120,11 +120,11 @@ NEXT_STEPS: dict[str, list[dict]] = {
         {"label": "Init spotter catalog", "command": "katz spotter init-catalog"},
         {"label": "List available spotters", "command": "katz spotter catalog"},
         {"label": "Enable a spotter", "command": "katz spotter enable overclaiming"},
-        {"label": "Read codegen guide", "command": "katz docs show edsl-codegen"},
+        {"label": "Build EDSL Jobs", "command": "katz spotter jobs --output jobs.ep"},
     ],
     "spotters_configured": [
         {"label": "List enabled spotters", "command": "katz spotter list"},
-        {"label": "Read EDSL codegen guide", "command": "katz docs show edsl-codegen"},
+        {"label": "Build EDSL Jobs", "command": "katz spotter jobs --output jobs.ep"},
     ],
     "issues_found": [
         {"label": "List draft issues", "command": "katz issue list --state draft"},
@@ -398,7 +398,7 @@ def file_issue(title, body, quoted, section_id, spotter_name):
             try:
                 hits = json.loads(subprocess.check_output(
                     ["katz", "paper", "find", quoted[:length]], text=True
-                ))
+                ))["data"]
                 if hits:
                     byte_start, byte_end = hits[0]["byte_start"], hits[0]["byte_end"]
                     break
@@ -408,7 +408,7 @@ def file_issue(title, body, quoted, section_id, spotter_name):
         try:
             sec = json.loads(subprocess.check_output(
                 ["katz", "paper", "section", section_id], text=True
-            ))
+            ))["data"]
             byte_start, byte_end = sec["byte_start"], sec["byte_end"]
         except Exception:
             print(f"  WARNING: could not locate text for issue '{{title}}' — skipping")
@@ -422,7 +422,7 @@ def file_issue(title, body, quoted, section_id, spotter_name):
         "--spotter", spotter_name,
     ]
     try:
-        return json.loads(subprocess.check_output(cmd, text=True))
+        return json.loads(subprocess.check_output(cmd, text=True))["data"]
     except Exception as exc:
         print(f"  WARNING: katz issue write failed for '{{title}}': {{exc}}")
         return None
@@ -584,26 +584,26 @@ phase the review is in without checking.
 | `initialized` | katz init'd but no paper registered | `katz paper register --canonical <file>` |
 | `registered` | Paper registered, no sections yet | `katz paper auto-chunk` |
 | `chunked` | Sections exist, no spotters enabled | `katz spotter init-catalog` + enable |
-| `spotters_configured` | Spotters ready, no issues yet | **Generate EDSL script** (see below) |
+| `spotters_configured` | Spotters ready, no issues yet | Build and run an EDSL Jobs object |
 | `issues_found` | Issues drafted, not yet investigated | Investigate each issue |
 | `investigated` | Issues confirmed/rejected | `katz report generate` |
 
 ---
 
-### CRITICAL — EDSL Codegen, Not Direct Execution
+### EDSL Jobs Workflow
 
-When it's time to find issues (phase `spotters_configured`), **do NOT run
-`edsl_find_issues.py` directly**. Instead, generate a custom Python script:
+When it's time to find issues (phase `spotters_configured`), build a portable
+EDSL Jobs object. Katz does not run models:
 
-1. Read sections: `katz paper sections`
-2. Read spotters and their content: `katz spotter list` then `katz spotter show <name>` for each
-3. Read the template: `katz docs show edsl-codegen`
-4. Generate a Python file from the template, substituting sections and spotters
-5. Show the script to the user and ask them to review and run it
-6. After the user runs it: `katz issue list --state draft`
+1. `katz spotter jobs --output jobs.ep`
+2. `ep inspect jobs.ep`
+3. `ep jobs cost jobs.ep`
+4. `ep run jobs.ep --model <model-name> --output results.ep`
+5. `katz spotter ingest results.ep`
+6. `katz issue list --state draft`
 
-The `agent-start` payload already includes a `codegen.script` field with a ready-to-run
-generated script when the phase is `spotters_configured`.
+The Jobs scenarios retain the Katz commit, spotter, manuscript range, and text.
+The Results object preserves positive and null answers plus model provenance.
 
 ---
 
@@ -637,8 +637,9 @@ Valid verdicts: `confirmed`, `rejected`, `uncertain`
 
 ### Output Format
 
-All katz commands emit JSON. Errors use `{"error": "...", "code": "...", "details": {...}}`.
-Parse `code` for structured error recovery.
+All katz commands emit a JSON envelope. Branch on `ok`; read successful
+results from `data` and failures from
+`error = {"code": "...", "message": "...", "details": {...}}`.
 
 ### Useful Documentation
 
@@ -646,7 +647,7 @@ Parse `code` for structured error recovery.
 katz docs list                        # all topics
 katz docs show overview               # concepts and storage layout
 katz docs show getting-started        # step-by-step walkthrough
-katz docs show edsl-codegen           # EDSL script generation guide
+katz docs show edsl-jobs              # EDSL Jobs and Results workflow
 katz docs show cli-reference          # all commands
 ```
 """

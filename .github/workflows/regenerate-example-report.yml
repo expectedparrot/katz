@@ -1,0 +1,43 @@
+name: Regenerate example report
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/katz/**"
+      - "examples/causal-curve-review/**"
+      - "scripts/regenerate-example-report.sh"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - name: Regenerate docs/review.html
+        run: uv run bash scripts/regenerate-example-report.sh
+
+      - name: Commit updated report
+        run: |
+          if git diff --quiet -- docs/review.html; then
+            echo "docs/review.html is current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/review.html
+          git commit -m "docs: regenerate example review report"
+          git push

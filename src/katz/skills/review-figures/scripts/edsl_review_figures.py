@@ -22,7 +22,10 @@ from edsl import Model, ModelList, QuestionFreeText, Scenario, ScenarioList
 
 def run_katz(*args):
     result = subprocess.run(["katz", *args], capture_output=True, text=True, check=True)
-    return json.loads(result.stdout)
+    payload = json.loads(result.stdout)
+    if not payload.get("ok"):
+        raise RuntimeError(payload["error"])
+    return payload["data"]
 
 
 def extract_figure_context(manuscript_text, img_filename):

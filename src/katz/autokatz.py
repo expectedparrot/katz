@@ -50,7 +50,8 @@ def get_paper_status():
             ["katz", "paper", "status"],
             capture_output=True, text=True, check=True,
         )
-        return json.loads(result.stdout)
+        payload = json.loads(result.stdout)
+        return payload["data"] if payload.get("ok") else None
     except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
         return None
 
@@ -70,7 +71,7 @@ def get_katz_state():
             result = subprocess.run(
                 ["katz", "issue", "list"], capture_output=True, text=True, check=True
             )
-            issues = json.loads(result.stdout)
+            issues = json.loads(result.stdout)["data"]
             from collections import Counter
             states = Counter(i.get("state") for i in issues)
             if issues:
@@ -84,7 +85,7 @@ def get_katz_state():
             result = subprocess.run(
                 ["katz", "eval", "results"], capture_output=True, text=True, check=True
             )
-            evals = json.loads(result.stdout)
+            evals = json.loads(result.stdout)["data"]
             if evals:
                 lines.append(f"Evaluations: {len(evals)} completed")
         except Exception:
@@ -95,7 +96,7 @@ def get_katz_state():
             result = subprocess.run(
                 ["katz", "spotter", "list"], capture_output=True, text=True, check=True
             )
-            spotters = json.loads(result.stdout)
+            spotters = json.loads(result.stdout)["data"]
             if spotters:
                 lines.append(f"Spotters: {len(spotters)} enabled")
         except Exception:

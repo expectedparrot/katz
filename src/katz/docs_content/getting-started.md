@@ -51,8 +51,13 @@ katz paper status
 # → {"commit": "abc...", "sections": 0, "sentences": 847, "valid": true}
 ```
 
-If `warning` appears about non-ventilated prose, reformat the manuscript so each
-sentence is on its own line before proceeding.
+If `warning` appears about non-ventilated prose, write a conservative Markdown
+copy, inspect its diff, commit it, and register that committed version:
+
+```bash
+katz ventilate paper.md --output-path paper_ventilated.md
+git diff --no-index paper.md paper_ventilated.md
+```
 
 ---
 
@@ -116,42 +121,30 @@ katz spotter list
 
 ---
 
-## Step 5 — Generate an EDSL Review Script
+## Step 5 — Build and Run an EDSL Jobs Object
 
-This is the key step. Rather than running a pre-built script, **generate a Python script
-tailored to this paper** and show it to the user.
-
-**Read the codegen guide:**
-```bash
-katz docs show edsl-codegen
-```
-
-**The `agent-start` payload already includes a ready-to-run script** when the phase is
-`spotters_configured`. Look for the `codegen.script` field in the response:
+Katz packages the manuscript sections and enabled spotters without making model calls:
 
 ```bash
-katz status
-# → response includes codegen.script with populated sections and spotters
+katz spotter jobs --output jobs.ep
 ```
 
-**Save and show the script to the user:**
-1. Extract `codegen.script` from the `agent-start` response
-2. Save it as `find_issues.py` (or a name specific to the paper)
-3. Show the script to the user and explain what it will do:
-   - How many sections and spotters are included
-   - Which models will be used (Claude Opus 4 + GPT-5.4 by default)
-   - How many total LLM calls will be made
-4. Ask the user to review it and run it when ready:
+Inspect and estimate the standard EDSL object, then run it with the `ep` CLI:
 
 ```bash
-python find_issues.py --dry-run    # preview call count without running
-python find_issues.py              # run the full sweep
+ep inspect jobs.ep
+ep jobs cost jobs.ep
+ep run jobs.ep --model <model-name> --output results.ep
 ```
 
-The script will file issues directly to katz via `katz issue write`.
+Finally, let Katz verify the returned quotations and create anchored draft issues:
 
-**Typical sweep:** A 30-page paper with 8 spotters × 12 sections × 2 models = 192 calls,
-taking 5–10 minutes via EDSL's remote runner.
+```bash
+katz spotter ingest results.ep
+```
+
+The complete Results object—including null findings and model provenance—remains in
+`results.ep`. Read `katz docs show edsl-jobs` for all options.
 
 ---
 

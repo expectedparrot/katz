@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "id": "1d773d816538443fb6d573834f2f0689",
+  "commit": "c658feac957d3052e30da8e0365e4d982d091d9a",
+  "title": "Overclaiming causal effects from observational data",
+  "body": "The phrase 'causes positive health outcomes' implies a definitive causal relationship, yet the evidence is based on observational data and causal inference methods that attempt to estimate but cannot fully guarantee causality due to potential residual confounding and bias. This overstates the strength of the evidence, especially given the known limitations of observational causal inference.",
+  "spotter": "overclaiming",
+  "artifacts": [],
+  "location": {
+    "byte_start": 1615,
+    "byte_end": 1743,
+    "line_start": 39,
+    "line_end": 40,
+    "resolved_text": "- the number of minutes per week of aerobic exercise causes positive health outcomes,\nafter controlling for confounding effects.",
+    "contains_math": false
+  },
+  "created_at": "2026-07-23T11:01:19Z",
+  "meta": {
+    "edsl_result_key": "b06f207419c65d1784526c8a45d6ffab4d16a9869a61f8b9d9f7b57a08adef45",
+    "edsl_model": "gpt-4.1-mini",
+    "edsl_results_path": "results.ep"
+  }
+}

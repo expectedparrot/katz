@@ -108,29 +108,23 @@ katz spotter add --name "sutva_violations" \
 
 ---
 
-## Phase 4: Issue Finding (EDSL Codegen)
+## Phase 4: Issue Finding (EDSL Jobs)
 
 **Goal:** Sweep the manuscript for issues using parallel LLM calls.
 
-**Do not run `edsl_find_issues.py` directly.** Instead, generate a custom script:
+Katz builds a portable EDSL object; EDSL owns execution:
 
 ```bash
-katz status
-# The response includes codegen.script — a complete Python script
-# populated with this paper's actual sections and spotters.
+katz spotter jobs --output jobs.ep
+ep inspect jobs.ep
+ep jobs cost jobs.ep
+ep run jobs.ep --model <model-name> --output results.ep
+katz spotter ingest results.ep
 ```
 
-Save the script, show it to the user, and ask them to run it:
-
-```bash
-python find_issues.py --dry-run    # preview: N calls, no LLM costs
-python find_issues.py              # run the full sweep
-```
-
-**What the script does:**
-1. Iterates sections × section_spotters × models (batched in groups of 3 sections)
-2. Runs holistic spotters once on the full manuscript
-3. Parses LLM responses and files each finding with `katz issue write`
+Section spotters produce one scenario per section and holistic spotters produce one
+full-manuscript scenario. Katz embeds version and anchor provenance in every scenario.
+Ingestion verifies that provenance and exact quotations before filing draft issues.
 
 **After the sweep:**
 ```bash

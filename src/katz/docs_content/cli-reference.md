@@ -1,6 +1,16 @@
 # CLI Quick Reference
 
-All commands emit JSON by default. Errors use `{"error": "...", "code": "...", "details": {...}}`.
+All commands emit one JSON envelope by default:
+
+```json
+{"ok": true, "command": ["paper", "status"], "data": {...}}
+```
+
+Failures use the same top-level contract:
+
+```json
+{"ok": false, "command": ["paper", "status"], "error": {"code": "...", "message": "...", "details": {...}}}
+```
 
 ---
 
@@ -8,6 +18,7 @@ All commands emit JSON by default. Errors use `{"error": "...", "code": "...", "
 
 ```bash
 katz init                             # Initialize .katz/ in current git repo
+katz ventilate <input.md> --output-path <output.md> [--force]
 katz validate [--commit <sha>]        # Validate version integrity
 katz status [--no-guide]         # Bootstrap payload with phase + codegen script
 ```
@@ -54,6 +65,16 @@ katz spotter add \
   --scope section|holistic \
   --description "..." \
   [--investigation "..."]    # add custom spotter to catalog + auto-enable
+
+katz spotter jobs \
+  [--output jobs.ep] \
+  [--section <id>] \
+  [--spotters <name1>,<name2>] \
+  [--commit <sha>]            # build a standard EDSL Jobs package
+
+katz spotter ingest results.ep \
+  [--state draft] \
+  [--commit <sha>]            # verify and file findings from EDSL Results
 ```
 
 ---
@@ -159,7 +180,7 @@ katz docs search <query>              # search across all docs
 #   overview         — concepts, storage layout, output format
 #   getting-started  — step-by-step review walkthrough
 #   workflow         — phase-by-phase reference
-#   edsl-codegen     — EDSL script generation guide
+#   edsl-jobs        — EDSL Jobs and Results workflow
 #   cli-reference    — this document
 ```
 
@@ -171,7 +192,7 @@ katz docs search <query>              # search across all docs
 katz guide overview          # show OVERVIEW.md
 katz guide skills            # list all skills
 katz guide skill <name>      # show a skill's SKILL.md
-katz guide script <path>     # show a script file (e.g. edsl-find-issues/edsl_find_issues.py)
+katz guide script <path>     # show a bundled helper script
 ```
 
 ---

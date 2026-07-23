@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "id": "0c899e1387584a4692c9635ccbc431e1",
+  "commit": "c658feac957d3052e30da8e0365e4d982d091d9a",
+  "title": "Overclaiming causal inference without full support",
+  "body": "The phrase \"to estimate an unbiased causal effect\" is an unhedged claim of causality. While TMLE is designed for causal inference under certain assumptions, the Methods section does not specify the identification assumptions or whether they hold in the current application. This overstates the method’s ability to produce unbiased causal effects without qualification. A more cautious phrasing (e.g., \"to estimate a causal effect under identification assumptions\") would be appropriate to avoid overclaiming.",
+  "spotter": "overclaiming",
+  "artifacts": [],
+  "location": {
+    "byte_start": 5005,
+    "byte_end": 5136,
+    "line_start": 97,
+    "line_end": 98,
+    "resolved_text": "TMLE also employs a substitution “targeting”\nstep to correct for covariate imbalance and to estimate an unbiased causal effect.",
+    "contains_math": false
+  },
+  "created_at": "2026-07-23T11:01:19Z",
+  "meta": {
+    "edsl_result_key": "45a30b08c68c0842a09d93f8dd269c0dae533e1db92b2ca00f675b7f88407183",
+    "edsl_model": "gpt-4.1-mini",
+    "edsl_results_path": "results.ep"
+  }
+}

@@ -128,10 +128,13 @@ Canonical sequence:
 1. `katz init` — initialize review state in the git repository.
 2. `katz paper ...` — register the manuscript and section boundaries.
 3. `katz spotter ...` — load or enable relevant issue spotters.
-4. Read the manuscript and file issues with `katz issue ...`.
-5. Add evaluation criteria or responses if the review includes scoring or revision tracking.
-6. `katz validate` — check consistency of paper versions, anchors, and issues.
-7. `katz report generate` — create the final review report.
+4. `katz spotter jobs --output jobs.ep` — package spotters and manuscript content as EDSL Jobs.
+5. `ep run jobs.ep --model <model> --output results.ep` — execute with EDSL.
+6. `katz spotter ingest results.ep` — verify quotations and file anchored draft issues.
+7. Investigate imported candidates and file any additional issues manually.
+8. Add evaluation criteria or responses if the review includes scoring or revision tracking.
+9. `katz validate` — check consistency of paper versions, anchors, and issues.
+10. `katz report generate` — create the final review report.
 
 When the user asks for a standard paper-review task in research-agent, keep
 Katz as the primary review ledger but produce the shareable deliverable through
@@ -229,8 +232,9 @@ For full options, run `katz <subcommand> --help`.
 | Command | Purpose |
 |---|---|
 | `katz init` | Initialize `.katz/` review state. |
+| `katz ventilate ...` | Write a conservative one-sentence-per-line Markdown copy. |
 | `katz paper ...` | Register papers, versions, and section maps. |
-| `katz spotter ...` | Manage review spotters/categories. |
+| `katz spotter ...` | Manage spotters, build EDSL Jobs, and ingest Results. |
 | `katz issue ...` | File, list, show, update, and close review issues. |
 | `katz eval ...` | Manage evaluation criteria and responses. |
 | `katz validate` | Check ledger consistency. |
@@ -246,9 +250,8 @@ For full options, run `katz <subcommand> --help`.
 - Running katz from a task subdirectory and expecting task-local `.katz/`.
   Katz is repo-scoped. Use the repository root and a repo-relative canonical
   manuscript path for research-agent task reports.
-- Generating a review report immediately after enabling spotters. Katz will
-  not magically critique the report; the agent must read, evaluate, and file
-  issues.
+- Treating imported model candidates as confirmed findings. Preserve the
+  complete EDSL Results object, then investigate each draft against the paper.
 - External peer-review tone differs from internal coauthor critique; elicit audience before report generation.
 
 ## Cross-references
@@ -266,4 +269,10 @@ For full options, run `katz <subcommand> --help`.
 ## JSON output and error codes
 <!-- id: katz/json -->
 
-katz commands support structured output for review automation. Treat validation failures as ledger consistency problems: fix missing paper versions, bad anchors, unknown spotters, or issue status mismatches, then rerun `katz validate`.
+katz commands emit one JSON envelope to stdout. Successful commands return
+`{"ok": true, "command": [...], "data": ...}`. Failures return
+`{"ok": false, "command": [...], "error": {"code": "...", "message": "...", "details": {...}}}`
+and exit with status 1. Agents should branch on `ok` and never infer success
+from the shape of `data`. Treat validation failures as ledger consistency
+problems: fix missing paper versions, bad anchors, unknown spotters, or issue
+status mismatches, then rerun `katz validate`.

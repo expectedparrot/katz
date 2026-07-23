@@ -62,7 +62,13 @@ Follow: `katz guide skill eval-paper` — read the paper and write narrative res
 
 ### 5. Find issues
 
-Run: `katz guide skill edsl-find-issues` — runs the EDSL-parallelized issue finder.
+Build and run the review as portable EDSL objects:
+
+```bash
+katz spotter jobs --output jobs.ep
+ep run jobs.ep --model <model-name> --output results.ep
+katz spotter ingest results.ep
+```
 
 By default, uses 2 models (Claude Opus + GPT-5.4) and katz-enabled spotters.
 - Pass `--models 3` to add Gemini.

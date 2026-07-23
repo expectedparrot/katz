@@ -46,10 +46,11 @@ We propose a novel framework for causal inference. The framework extends prior w
 two key directions. First, it relaxes the positivity assumption.
 ```
 
-Check ventilation before registering. If the text is not ventilated, encourage the user
-to reformat it — especially if the source is TeX, where this is easy to do by editing
-the `.tex` file so each sentence is on its own line. After registration, katz will emit
-a warning if it detects likely non-ventilated lines.
+Check ventilation before registering. For Markdown, use `katz ventilate input.md
+--output-path output.md`, inspect the diff, and commit the derivative before
+registering it. For TeX, encourage the user to reformat it directly so each
+sentence is on its own line. After registration, katz will emit a warning if it
+detects likely non-ventilated lines.
 
 ## Workflow
 

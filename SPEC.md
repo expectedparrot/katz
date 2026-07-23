@@ -188,6 +188,16 @@ Common external conversion paths include:
 
 These are conventions, not katz responsibilities.
 
+Katz provides a conservative helper for Markdown inputs:
+
+```bash
+katz ventilate paper.md --output-path paper_ventilated.md
+```
+
+It preserves structural blocks and writes a new file by default. Review the
+diff before using the generated file as a canonical manuscript. Conversion
+from PDF, DOCX, HTML, or multi-file LaTeX remains an external responsibility.
+
 ### LaTeX convention
 
 For LaTeX sources, an external converter may use `flatex++`, a patched

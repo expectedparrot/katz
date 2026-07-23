@@ -31,7 +31,10 @@ def katz(repo: Path, *args: str) -> dict | list:
         stderr=subprocess.PIPE,
         check=True,
     )
-    return json.loads(result.stdout)
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["command"] == list(args)
+    return payload["data"]
 
 
 def katz_fail(repo: Path, *args: str) -> dict:
@@ -47,7 +50,10 @@ def katz_fail(repo: Path, *args: str) -> dict:
         check=False,
     )
     assert result.returncode != 0
-    return json.loads(result.stdout)
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["command"] == list(args)
+    return payload["error"]
 
 
 def setup_repo(tmp_path: Path) -> tuple[Path, Path, str]:
@@ -132,7 +138,6 @@ def test_init_register_and_status(tmp_path: Path) -> None:
 
     # Validate
     assert katz(repo, "validate")["valid"] is True
-
     # Issue write
     issue = katz(
         repo, "issue", "write",
@@ -157,6 +162,38 @@ def test_init_register_and_status(tmp_path: Path) -> None:
     assert katz(repo, "validate")["valid"] is True
 
 
+def test_ventilate_markdown_preserves_structural_blocks(tmp_path: Path) -> None:
+    source = tmp_path / "paper.md"
+    output = tmp_path / "paper_ventilated.md"
+    source.write_text(
+        "# Paper\n\n"
+        "First sentence. Second sentence! Third sentence?\n\n"
+        "- List sentence. Keep this list item together.\n\n"
+        "```\nCode sentence. Do not split.\n```\n\n"
+        "| Cell sentence. Do not split. |\n",
+        encoding="utf-8",
+    )
+
+    result = katz(
+        tmp_path,
+        "ventilate",
+        str(source),
+        "--output-path",
+        str(output),
+    )
+
+    assert result["ventilated"] is True
+    assert result["lines_changed"] == 1
+    assert result["remaining_non_ventilated_lines"] == 0
+    assert output.read_text(encoding="utf-8") == (
+        "# Paper\n\n"
+        "First sentence.\nSecond sentence!\nThird sentence?\n\n"
+        "- List sentence. Keep this list item together.\n\n"
+        "```\nCode sentence. Do not split.\n```\n\n"
+        "| Cell sentence. Do not split. |\n"
+    )
+
+
 def test_add_sections_rejects_duplicates(tmp_path: Path) -> None:
     repo, canonical, commit = setup_repo(tmp_path)
     katz(repo, "init")
@@ -168,7 +205,7 @@ def test_add_sections_rejects_duplicates(tmp_path: Path) -> None:
     # Adding the same id again should fail
     err = katz_fail(repo, "paper", "add-sections", "--sections", sections)
     assert err["code"] == "validation_error"
-    assert "Duplicate" in err["error"]
+    assert "Duplicate" in err["message"]
 
 
 def test_add_sections_rejects_non_integer_byte_ranges(tmp_path: Path) -> None:
@@ -179,7 +216,7 @@ def test_add_sections_rejects_non_integer_byte_ranges(tmp_path: Path) -> None:
     sections = json.dumps([{"id": "s1", "title": "S1", "byte_start": "8", "byte_end": 21}])
     err = katz_fail(repo, "paper", "add-sections", "--sections", sections)
     assert err["code"] == "validation_error"
-    assert "must be integers" in err["error"]
+    assert "must be integers" in err["message"]
 
 
 def test_auto_chunk_uniquifies_duplicate_headings(tmp_path: Path) -> None:

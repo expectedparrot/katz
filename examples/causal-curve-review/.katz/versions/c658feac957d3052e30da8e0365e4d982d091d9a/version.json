@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "commit": "c658feac957d3052e30da8e0365e4d982d091d9a",
+  "registered_at": "2026-07-23T09:25:52Z",
+  "canonical": "paper/manuscript.md",
+  "paper_map": "paper_map.jsonl",
+  "checksum": "sha256:dbde1d437c329e879949050b69a72acfbf4fdea4ed93534ae46c8429f6859aeb",
+  "source": {
+    "format": "markdown",
+    "root": null,
+    "uri": null,
+    "method": "ventilated-published-joss-source",
+    "files_collapsed": []
+  },
+  "parent_commit": null
+}

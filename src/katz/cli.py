@@ -6,6 +6,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import uuid
 import warnings
 from dataclasses import dataclass, field
@@ -56,15 +57,29 @@ class PaperMap:
     figures: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _command_argv() -> list[str]:
+    """Return the invoked Katz arguments for machine-readable provenance."""
+    return sys.argv[1:]
+
+
 def emit_json(value: Any) -> None:
-    typer.echo(json.dumps(value, indent=2, sort_keys=False))
+    """Emit the stable, agent-facing success envelope."""
+    payload = {
+        "ok": True,
+        "command": _command_argv(),
+        "data": value,
+    }
+    typer.echo(json.dumps(payload, indent=2, sort_keys=False))
 
 
 def fail(message: str, code: str, details: dict[str, Any] | None = None) -> None:
-    payload: dict[str, Any] = {"error": message, "code": code}
-    if details:
-        payload["details"] = details
-    emit_json(payload)
+    error: dict[str, Any] = {"code": code, "message": message, "details": details or {}}
+    payload = {
+        "ok": False,
+        "command": _command_argv(),
+        "error": error,
+    }
+    typer.echo(json.dumps(payload, indent=2, sort_keys=False))
     raise typer.Exit(1)
 
 
@@ -204,21 +219,84 @@ _TEX_STRUCTURAL_RE = re.compile(
 # Heuristic: a line with a sentence boundary followed by a capital letter
 # suggests multiple sentences on one line (non-ventilated).
 _SENTENCE_BOUNDARY_RE = re.compile(r"[.!?]\s+[A-Z]")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
 
 def _count_non_ventilated_lines(text: str) -> int:
     """Return the count of lines that appear to contain multiple sentences."""
     count = 0
+    in_fence = False
+    in_display_math = False
     for line in text.split("\n"):
         stripped = line.strip()
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if stripped == "$$":
+            in_display_math = not in_display_math
+            continue
+        if in_fence or in_display_math:
+            continue
         # Only check substantive lines, skip obvious structural ones
         if len(stripped) < 40:
             continue
-        if stripped.startswith(("#", "![", "```", "%", "\\")):
+        if stripped.startswith(("#", "![", "```", "~~~", "%", "\\", "<", ">", "|", "$$")):
+            continue
+        if re.match(r"^(?:[-+*]|\d+[.)])\s", stripped):
             continue
         if _SENTENCE_BOUNDARY_RE.search(stripped):
             count += 1
     return count
+
+
+def ventilate_markdown(text: str) -> tuple[str, int]:
+    """Split likely multi-sentence Markdown prose lines conservatively.
+
+    Structural Markdown, fenced code, display math, tables, HTML, comments,
+    and list items are left unchanged. Returns (ventilated_text, lines_changed).
+    """
+    output: list[str] = []
+    changed = 0
+    in_fence = False
+    in_display_math = False
+
+    for line in text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        newline = line[len(content):]
+        stripped = content.strip()
+
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            output.append(line)
+            continue
+        if stripped == "$$":
+            in_display_math = not in_display_math
+            output.append(line)
+            continue
+
+        structural = (
+            in_fence
+            or in_display_math
+            or not stripped
+            or stripped.startswith(("#", "![", "%", "\\", "<", ">", "|", "$$"))
+            or re.match(r"^(?:[-+*]|\d+[.)])\s", stripped) is not None
+            or re.match(r"^ {4}", content) is not None
+        )
+        if structural or not _SENTENCE_BOUNDARY_RE.search(stripped):
+            output.append(line)
+            continue
+
+        indent = content[: len(content) - len(content.lstrip())]
+        parts = _SENTENCE_SPLIT_RE.split(stripped)
+        if len(parts) == 1:
+            output.append(line)
+            continue
+        changed += 1
+        for index, part in enumerate(parts):
+            suffix = newline if index == len(parts) - 1 else "\n"
+            output.append(f"{indent}{part}{suffix}")
+
+    return "".join(output), changed
 
 
 def segment_sentences(text: str, source_format: str = "markdown") -> list[dict[str, Any]]:
@@ -596,6 +674,60 @@ def init() -> None:
             "active_version": None,
         }
         emit_json(result)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@app.command()
+def ventilate(
+    input_path: Path = typer.Argument(..., exists=True, file_okay=True, dir_okay=False, readable=True),
+    output_path: Path = typer.Option(..., "--output-path"),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing output file."),
+) -> None:
+    """Write a conservatively ventilated Markdown copy (one sentence per line)."""
+    try:
+        source = input_path.resolve()
+        destination = output_path.resolve()
+        if source == destination:
+            raise KatzError(
+                "Input and output paths must differ",
+                "validation_error",
+                {"input_path": str(source), "output_path": str(destination)},
+            )
+        if input_path.suffix.lower() not in {".md", ".markdown"}:
+            raise KatzError(
+                "Ventilation currently supports Markdown files only",
+                "validation_error",
+                {"input_path": str(input_path), "supported_extensions": [".md", ".markdown"]},
+            )
+        if output_path.exists() and not force:
+            raise KatzError(
+                "Output path already exists; pass --force to overwrite it",
+                "validation_error",
+                {"output_path": str(output_path)},
+            )
+
+        text = input_path.read_text(encoding="utf-8")
+        ventilated, lines_changed = ventilate_markdown(text)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(ventilated, encoding="utf-8")
+        emit_json({
+            "ventilated": True,
+            "input_path": str(input_path),
+            "output_path": str(output_path),
+            "format": "markdown",
+            "lines_changed": lines_changed,
+            "lines_before": len(text.splitlines()),
+            "lines_after": len(ventilated.splitlines()),
+            "remaining_non_ventilated_lines": _count_non_ventilated_lines(ventilated),
+            "checksum": sha256_file(output_path),
+        })
+    except UnicodeDecodeError as exc:
+        fail(
+            "Input file must be UTF-8",
+            "validation_error",
+            {"input_path": str(input_path), "start": exc.start},
+        )
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 
@@ -2071,6 +2203,280 @@ def eval_remove(
         fail(exc.message, exc.code, exc.details)
 
 
+SPOTTER_QUESTION_TEXT = """\
+You are reviewing {{ review_target }} from an academic manuscript.
+
+Issue spotter:
+{{ spotter_instructions }}
+
+Manuscript content:
+{{ manuscript_content }}
+
+Apply the spotter carefully. Return found=false when there is no genuine,
+substantive issue. When found=true, quote the exact shortest passage that
+demonstrates the issue and explain why it matters. Do not invent text.
+"""
+
+
+def _edsl_imports() -> tuple[Any, Any, Any, Any]:
+    try:
+        from edsl import Jobs, Scenario, ScenarioList
+        from edsl.questions import QuestionDict
+    except ImportError as exc:
+        raise KatzError(
+            "EDSL is required to create or ingest .ep objects",
+            "dependency_error",
+            {"install": "python -m pip install edsl"},
+        ) from exc
+    return Jobs, Scenario, ScenarioList, QuestionDict
+
+
+@spotter_app.command("jobs")
+def spotter_jobs(
+    output: Path = typer.Option(Path("jobs.ep"), "--output", "-o"),
+    section: Optional[str] = typer.Option(None, "--section"),
+    spotters: Optional[str] = typer.Option(None, "--spotters", help="Comma-separated enabled spotter names"),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Build an EDSL Jobs package from enabled spotters and manuscript content."""
+    try:
+        if output.suffix != ".ep":
+            raise KatzError("--output must use the .ep extension", "validation_error", {"output": str(output)})
+        if output.exists():
+            raise KatzError(f"{output} already exists", "validation_error", {"output": str(output)})
+
+        Jobs, Scenario, ScenarioList, QuestionDict = _edsl_imports()
+        resolved, dest, _, pmap, canonical = load_version(commit)
+        content = canonical.read_text(encoding="utf-8")
+        enabled_dir = dest / "spotters"
+        requested = {name.strip() for name in spotters.split(",") if name.strip()} if spotters else None
+
+        definitions: list[dict[str, Any]] = []
+        for path in sorted(enabled_dir.glob("*.md")) if enabled_dir.is_dir() else []:
+            if requested is not None and path.stem not in requested:
+                continue
+            parsed = _parse_spotter(path.read_text(encoding="utf-8"))
+            definitions.append({"name": path.stem, "content": path.read_text(encoding="utf-8"), **parsed})
+        if requested is not None:
+            missing = sorted(requested - {item["name"] for item in definitions})
+            if missing:
+                raise KatzError("Some requested spotters are not enabled", "not_found", {"spotters": missing})
+        if not definitions:
+            raise KatzError("No enabled spotters found", "not_found", {"commit": resolved})
+
+        selected_sections = pmap.sections
+        if section is not None:
+            selected_sections = [item for item in pmap.sections if item.get("id") == section]
+            if not selected_sections:
+                raise KatzError(f"Section '{section}' not found", "not_found", {"section": section})
+
+        scenarios: list[Any] = []
+        for definition in definitions:
+            if definition["scope"] == "section":
+                for item in selected_sections:
+                    byte_start = int(item["byte_start"])
+                    byte_end = int(item["byte_end"])
+                    scenarios.append(Scenario({
+                        "katz_commit": resolved,
+                        "spotter_name": definition["name"],
+                        "spotter_scope": "section",
+                        "section_id": item["id"],
+                        "section_title": item.get("title", item["id"]),
+                        "byte_start": byte_start,
+                        "byte_end": byte_end,
+                        "review_target": f'section "{item.get("title", item["id"])}"',
+                        "spotter_instructions": definition["content"],
+                        "manuscript_content": content.encode("utf-8")[byte_start:byte_end].decode("utf-8"),
+                    }))
+            else:
+                scenarios.append(Scenario({
+                    "katz_commit": resolved,
+                    "spotter_name": definition["name"],
+                    "spotter_scope": "holistic",
+                    "section_id": None,
+                    "section_title": "Complete manuscript",
+                    "byte_start": 0,
+                    "byte_end": len(content.encode("utf-8")),
+                    "review_target": "the complete manuscript",
+                    "spotter_instructions": definition["content"],
+                    "manuscript_content": content,
+                }))
+
+        question = QuestionDict(
+            question_name="spotter_result",
+            question_text=SPOTTER_QUESTION_TEXT,
+            answer_keys=["found", "title", "quoted_text", "description"],
+            value_types=["bool", "str", "str", "str"],
+            value_descriptions=[
+                "Whether a genuine issue was found",
+                "Short issue title; empty when found is false",
+                "Exact manuscript quotation; empty when found is false",
+                "Evidence-backed explanation; empty when found is false",
+            ],
+            include_comment=False,
+        )
+        job = Jobs(survey=question.to_survey()).by(ScenarioList(scenarios))
+        saved = job.git.save(output)
+        section_jobs = sum(1 for scenario in scenarios if scenario["spotter_scope"] == "section")
+        holistic_jobs = len(scenarios) - section_jobs
+        emit_json({
+            "object_type": "Jobs",
+            "output": str(output),
+            "commit": resolved,
+            "question": "spotter_result",
+            "spotters": [item["name"] for item in definitions],
+            "scenario_count": len(scenarios),
+            "section_scenarios": section_jobs,
+            "holistic_scenarios": holistic_jobs,
+            "saved": saved,
+            "next": f"ep run {output} --model <model-name> --output results.ep",
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+    except Exception as exc:
+        fail(str(exc), "edsl_error", {"output": str(output)})
+
+
+def _result_value(result: Any, group: str, key: str) -> Any:
+    try:
+        value = result[group]
+        if isinstance(value, dict):
+            return value.get(key)
+        return getattr(value, key, None)
+    except (KeyError, TypeError):
+        return None
+
+
+def _answer_is_found(value: Any) -> bool:
+    """Interpret structured EDSL booleans without treating the string 'false' as true."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return value == 1
+
+
+def _locate_quoted_text(region: str, quoted: str) -> tuple[int, int] | None:
+    """Locate an exact quote, allowing runs of whitespace to differ."""
+    direct = region.find(quoted)
+    if direct >= 0:
+        return direct, direct + len(quoted)
+
+    pattern = r"\s+".join(re.escape(part) for part in quoted.split())
+    if not pattern:
+        return None
+    match = re.search(pattern, region)
+    if match is None:
+        return None
+    return match.start(), match.end()
+
+
+@spotter_app.command("ingest")
+def spotter_ingest(
+    results_path: Path = typer.Argument(..., exists=True, readable=True),
+    state: str = typer.Option("draft", "--state"),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Parse an EDSL Results package and file manuscript-anchored Katz issues."""
+    try:
+        if state not in VALID_STATES:
+            raise KatzError("Invalid issue state", "validation_error", {"state": state, "valid": sorted(VALID_STATES)})
+        _edsl_imports()
+        from edsl import Results
+
+        resolved, dest, _, _, canonical = load_version(commit)
+        results = Results.git.load(results_path)
+        manuscript = canonical.read_text(encoding="utf-8")
+        existing_keys: set[str] = set()
+        issues_dir = dest / "issues"
+        if issues_dir.is_dir():
+            for issue_path in issues_dir.glob("*/issue.json"):
+                record = read_json(issue_path)
+                result_key = record.get("meta", {}).get("edsl_result_key")
+                if result_key:
+                    existing_keys.add(result_key)
+
+        found = filed = skipped = 0
+        issue_ids: list[str] = []
+        for result in results:
+            answer = _result_value(result, "answer", "spotter_result")
+            scenario = result["scenario"] if isinstance(result["scenario"], dict) else dict(result["scenario"])
+            if not isinstance(answer, dict) or not _answer_is_found(answer.get("found")):
+                continue
+            found += 1
+            if scenario.get("katz_commit") != resolved:
+                raise KatzError(
+                    "Results were generated for a different Katz version",
+                    "validation_error",
+                    {"expected": resolved, "actual": scenario.get("katz_commit")},
+                )
+            spotter_name = str(scenario.get("spotter_name", ""))
+            if not (dest / "spotters" / f"{spotter_name}.md").exists():
+                raise KatzError("Result references a spotter not enabled for this version", "not_found", {"spotter": spotter_name})
+            quoted = str(answer.get("quoted_text", "")).strip()
+            range_start = int(scenario.get("byte_start", 0))
+            range_end = int(scenario.get("byte_end", len(manuscript.encode("utf-8"))))
+            region = manuscript.encode("utf-8")[range_start:range_end].decode("utf-8")
+            located = _locate_quoted_text(region, quoted) if quoted else None
+            if located is None:
+                skipped += 1
+                continue
+            char_start, char_end = located
+            byte_start = range_start + len(region[:char_start].encode("utf-8"))
+            byte_end = range_start + len(region[:char_end].encode("utf-8"))
+            model = _result_value(result, "model", "model") or _result_value(result, "model", "_model_") or "unknown"
+            key_payload = json.dumps(
+                {"commit": resolved, "spotter": spotter_name, "model": str(model), "answer": answer, "scenario": scenario},
+                sort_keys=True,
+                default=str,
+            )
+            result_key = hashlib.sha256(key_payload.encode("utf-8")).hexdigest()
+            if result_key in existing_keys:
+                skipped += 1
+                continue
+
+            issue_id = uuid.uuid4().hex
+            timestamp = now_utc()
+            issue_dir = _issue_dir(dest, issue_id)
+            (issue_dir / "status").mkdir(parents=True, exist_ok=True)
+            (issue_dir / "investigations").mkdir(parents=True, exist_ok=True)
+            record = {
+                "schema_version": 2,
+                "id": issue_id,
+                "commit": resolved,
+                "title": str(answer.get("title", "Untitled issue")),
+                "body": str(answer.get("description", "")),
+                "spotter": spotter_name,
+                "artifacts": [],
+                "location": resolve_location(canonical, byte_start, byte_end),
+                "created_at": timestamp,
+                "meta": {
+                    "edsl_result_key": result_key,
+                    "edsl_model": str(model),
+                    "edsl_results_path": str(results_path),
+                },
+            }
+            write_json(issue_dir / "issue.json", record)
+            write_event_json(issue_dir / "status", {"state": state, "reason": "imported from EDSL Results", "timestamp": timestamp})
+            existing_keys.add(result_key)
+            issue_ids.append(issue_id)
+            filed += 1
+
+        emit_json({
+            "results": str(results_path),
+            "commit": resolved,
+            "result_count": len(results),
+            "issues_found": found,
+            "issues_filed": filed,
+            "skipped": skipped,
+            "issue_ids": issue_ids,
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+    except Exception as exc:
+        fail(str(exc), "edsl_error", {"results": str(results_path)})
+
+
 VALID_GRADES = {"A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"}
 
 
@@ -2284,7 +2690,7 @@ def guide_script(path: str) -> None:
 
     Path format: <skill-name>/scripts/<filename> or just <skill-name>/<filename>
     """
-    # Normalize: allow "edsl-find-issues/scripts/edsl_find_issues.py" or "edsl-find-issues/edsl_find_issues.py"
+    # Normalize either <skill>/scripts/<file> or <skill>/<file>.
     skills_root = SKILLS_DIR.resolve()
 
     def safe_skill_file(candidate: Path) -> Path | None:
@@ -2351,47 +2757,6 @@ def docs_search(query: str) -> None:
     _, _, search_docs = _load_docs_module()
     matches = search_docs(query)
     emit_json({"query": query, "matches": matches})
-
-
-# ---------------------------------------------------------------------------
-# Agent-start command
-# ---------------------------------------------------------------------------
-
-
-def _read_codegen_data(commit: str) -> tuple[list[dict], list[dict]]:
-    """Read sections and spotter content for script generation."""
-    try:
-        root = repo_root()
-        version_dir_path = root / KATZ_DIR / "versions" / commit
-        paper_map_path = version_dir_path / "paper_map.jsonl"
-        if not paper_map_path.exists():
-            return [], []
-        sections: list[dict[str, Any]] = []
-        for line in paper_map_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            rec = json.loads(line)
-            if rec.get("type") == "section":
-                sections.append({
-                    "id": rec.get("id", ""),
-                    "title": rec.get("title", ""),
-                    "line_start": rec.get("line_start", 0),
-                    "line_end": rec.get("line_end", 0),
-                })
-        spotters_dir = version_dir_path / "spotters"
-        spotters: list[dict[str, Any]] = []
-        if spotters_dir.is_dir():
-            for f in sorted(spotters_dir.glob("*.md")):
-                content = f.read_text(encoding="utf-8")
-                parsed = _parse_spotter(content)
-                spotters.append({
-                    "name": f.stem,
-                    "scope": parsed["scope"],
-                    "content": content,
-                })
-        return sections, spotters
-    except Exception:
-        return [], []
 
 
 if __name__ == "__main__":
