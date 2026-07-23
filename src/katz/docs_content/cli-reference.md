@@ -196,6 +196,20 @@ read-only. Unified ingestion currently applies spotter Results and parsed
 journal-review Results; Jobs, whole-paper reports, and Humanize Results return
 the appropriate inspection or judgment step instead.
 
+Authentication is delegated to EDSL:
+
+```bash
+ep auth login          # browser login; stores repository-local .env
+ep profiles current    # redacted active profile and file configuration
+ep profiles list       # available repository-local profiles
+ep profiles set NAME   # update EDSL's managed .env block
+ep check               # verify URL reachability and authentication
+```
+
+`katz agent bootstrap` consumes the redacted `ep profiles current` response.
+It never returns a key. When authentication is missing, the proposed action is
+`ep auth login`; before a paid run, the state machine proposes `ep check`.
+
 ---
 
 ## `katz report` — HTML Report

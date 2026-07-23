@@ -652,6 +652,17 @@ def write_event_json(directory: Path, data: dict[str, Any]) -> Path:
     return candidate
 
 
+def record_run(dest: Path, kind: str, status: str, **details: Any) -> Path:
+    """Append a first-class run lifecycle record to the active version."""
+    return write_event_json(dest / "runs", {
+        "schema_version": 1,
+        "kind": kind,
+        "status": status,
+        "timestamp": now_utc(),
+        **details,
+    })
+
+
 def parse_meta(meta: Optional[str]) -> dict[str, Any]:
     if meta is None:
         return {}
@@ -1210,6 +1221,49 @@ def _dotenv_has_key(path: Path, key: str) -> bool:
     return False
 
 
+def _ep_local_profile_state(root: Path) -> dict[str, Any]:
+    """Read EDSL's redacted repository-local auth/profile state without networking."""
+    if not _command_available("ep"):
+        return {
+            "available": False,
+            "active_profile": None,
+            "env_file": str(root / ".env"),
+            "env_file_exists": (root / ".env").is_file(),
+            "api_key_configured": False,
+            "source": "unavailable",
+        }
+    result = subprocess.run(
+        ["ep", "profiles", "current", "--env-file", ".env"],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        payload = {}
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    data = data if isinstance(data, dict) else {}
+    config = data.get("config") if isinstance(data.get("config"), dict) else {}
+    configured = bool(config.get("EXPECTED_PARROT_API_KEY"))
+    if not configured:
+        configured = bool(
+            __import__("os").environ.get("EXPECTED_PARROT_API_KEY")
+            or _dotenv_has_key(root / ".env", "EXPECTED_PARROT_API_KEY")
+        )
+    return {
+        "available": result.returncode == 0,
+        "active_profile": data.get("active_profile"),
+        "env_file": data.get("env_file", str(root / ".env")),
+        "env_file_exists": bool(data.get("env_file_exists", (root / ".env").is_file())),
+        "api_key_configured": configured,
+        "expected_parrot_url": config.get("EXPECTED_PARROT_URL"),
+        "source": "ep_profiles_current" if result.returncode == 0 else "environment_or_dotenv_fallback",
+    }
+
+
 def _manuscript_candidates(root: Path) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     ignored = {".git", ".katz", ".venv", "node_modules", "dist", "build"}
@@ -1291,16 +1345,20 @@ def _agent_state() -> dict[str, Any]:
         check=False,
     )
     initialized = (root / KATZ_DIR).is_dir()
+    ep_profile = _ep_local_profile_state(root)
     prerequisites = {
         "katz": {"available": True},
-        "ep": {"available": _command_available("ep")},
+        "ep": {
+            "available": _command_available("ep"),
+            "profile": ep_profile,
+        },
         "git": {"available": True},
         "expected_parrot_key": {
-            "configured": bool(
-                __import__("os").environ.get("EXPECTED_PARROT_API_KEY")
-                or _dotenv_has_key(root / ".env", "EXPECTED_PARROT_API_KEY")
-            ),
-            "source": "environment_or_dotenv",
+            "configured": ep_profile["api_key_configured"],
+            "source": ep_profile["source"],
+            "secret_returned": False,
+            "login_command": ["ep", "auth", "login"],
+            "check_command": ["ep", "check"],
         },
     }
     repository = {
@@ -1365,6 +1423,10 @@ def _agent_state() -> dict[str, Any]:
         for path in sorted((dest / "issues").glob("*/issue.json"))
     ] if (dest / "issues").is_dir() else []
     issue_counts = {state: sum(record.get("state") == state for record in issue_records) for state in sorted(VALID_STATES)}
+    run_records = [
+        read_json(path) for path in sorted((dest / "runs").glob("*.json"))
+    ] if (dest / "runs").is_dir() else []
+    latest_run = run_records[-1] if run_records else None
     review = {
         "initialized": True,
         "active_version": resolved,
@@ -1376,6 +1438,10 @@ def _agent_state() -> dict[str, Any]:
         "enabled_spotters": spotters,
         "human_reviews": len(reviews),
         "issues": issue_counts,
+        "runs": {
+            "count": len(run_records),
+            "latest": latest_run,
+        },
     }
     actions: list[dict[str, Any]] = []
     blockers: list[dict[str, str]] = []
@@ -1392,40 +1458,89 @@ def _agent_state() -> dict[str, Any]:
         actions.append(_agent_action(
             "next_issue", "Get the next complete investigation packet", ["katz", "issue", "next"], mutates_state=False
         ))
-    elif not spotters:
-        phase = "review_configuration"
-        actions.extend([
-            _agent_action("init_spotter_catalog", "Install reusable review procedures", ["katz", "spotter", "init-catalog"], mutates_state=True),
-            _agent_action("list_spotter_catalog", "Inspect available review procedures", ["katz", "spotter", "catalog"], mutates_state=False),
-        ])
     elif issue_counts.get("confirmed", 0) or issue_counts.get("open", 0):
         phase = "reporting"
         actions.extend([
             _agent_action("validate", "Validate anchors and ledger consistency", ["katz", "validate"], mutates_state=False),
             _agent_action("generate_report", "Generate a human-readable review report", ["katz", "report", "generate", "--output", "review.html"], mutates_state=True),
         ])
+    elif latest_run and latest_run.get("status") == "ingested":
+        phase = "reporting"
+        actions.extend([
+            _agent_action("validate", "Validate the completed review ledger", ["katz", "validate"], mutates_state=False),
+            _agent_action("generate_report", "Generate a report, including an explicit zero-issue result when applicable", ["katz", "report", "generate", "--output", "review.html"], mutates_state=True),
+        ])
+    elif not spotters:
+        phase = "review_configuration"
+        actions.extend([
+            _agent_action("init_spotter_catalog", "Install reusable review procedures", ["katz", "spotter", "init-catalog"], mutates_state=True),
+            _agent_action("list_spotter_catalog", "Inspect available review procedures", ["katz", "spotter", "catalog"], mutates_state=False),
+        ])
     else:
         phase = "automated_review"
-        actions.append(_agent_action(
-            "build_review_jobs", "Package enabled spotters and manuscript sections",
-            ["katz", "spotter", "jobs", "--output", "jobs.ep"], mutates_state=True,
-        ))
-        if not prerequisites["ep"]["available"]:
+        if latest_run and latest_run.get("status") == "packaged":
+            expected_results = Path(str(latest_run.get("expected_results_path", "")))
+            jobs_path = Path(str(latest_run.get("jobs_path", "jobs.ep")))
+            if expected_results.is_file():
+                actions.append(_agent_action(
+                    "preview_ingestion",
+                    "Detect and preview the completed EDSL Results before mutating the ledger",
+                    ["katz", "ingest", str(expected_results)],
+                    mutates_state=False,
+                ))
+            else:
+                actions.append(_agent_action(
+                    "inspect_jobs", "Inspect the packaged EDSL job before execution",
+                    ["ep", "inspect", str(jobs_path)],
+                    mutates_state=False,
+                ))
+        else:
+            actions.append(_agent_action(
+                "build_review_jobs", "Package enabled spotters and manuscript sections",
+                ["katz", "spotter", "jobs", "--output", "jobs.ep"], mutates_state=True,
+            ))
+
+        needs_remote_run = bool(
+            latest_run
+            and latest_run.get("status") == "packaged"
+            and not Path(str(latest_run.get("expected_results_path", ""))).is_file()
+        )
+        if needs_remote_run and not prerequisites["ep"]["available"]:
             blockers.append({"code": "edsl_cli_missing", "message": "Install EDSL so the `ep` command is available."})
             actions.append(_agent_action(
                 "install_edsl", "Install the EDSL command-line interface",
                 ["python", "-m", "pip", "install", "edsl"],
                 mutates_state=True, requires_network=True, requires_user_approval=True,
             ))
-        elif not prerequisites["expected_parrot_key"]["configured"]:
+        elif needs_remote_run and not prerequisites["expected_parrot_key"]["configured"]:
             blockers.append({"code": "expected_parrot_key_missing", "message": "Configure EXPECTED_PARROT_API_KEY before remote execution."})
-        else:
             actions.append(_agent_action(
+                "expected_parrot_login",
+                "Authenticate through EDSL and store repository-local configuration",
+                ["ep", "auth", "login"],
+                mutates_state=True,
+                requires_network=True,
+                requires_user_approval=True,
+                reason="This opens the Expected Parrot login flow and writes authentication configuration to .env.",
+            ))
+        elif needs_remote_run:
+            jobs_path = str(latest_run.get("jobs_path"))
+            results_path = str(latest_run.get("expected_results_path"))
+            actions.extend([
+                _agent_action(
+                    "check_expected_parrot",
+                    "Validate Expected Parrot URL reachability and authentication before a paid run",
+                    ["ep", "check"],
+                    mutates_state=False,
+                    requires_network=True,
+                ),
+                _agent_action(
                     "run_review_jobs", "Run the portable EDSL review package",
-                    ["ep", "run", "jobs.ep", "--model", "<model-name>", "--output", "results.ep"],
+                    ["ep", "run", jobs_path, "--model", "<model-name>", "--output", results_path],
                     mutates_state=True, requires_network=True, requires_user_approval=True,
                     reason="The model choice affects cost and review behavior.",
-                ))
+                ),
+            ])
     return {
         "schema_version": AGENT_API_VERSION,
         "phase": phase,
@@ -2758,6 +2873,13 @@ def _edsl_imports() -> tuple[Any, Any, Any, Any]:
     return Jobs, Scenario, ScenarioList, QuestionDict
 
 
+def _expected_results_path(output: Path) -> Path:
+    name = output.name
+    if name.endswith(".jobs.ep"):
+        return output.with_name(f"{name[:-8]}-results.ep")
+    return output.with_name("results.ep")
+
+
 @paper_app.command("review-jobs")
 def paper_review_jobs(
     output: Path = typer.Option(Path("jobs.ep"), "--output", "-o"),
@@ -2813,6 +2935,15 @@ def paper_review_jobs(
         )
         job = Jobs(survey=question.to_survey()).by(ScenarioList([Scenario(scenario_data)]))
         saved = job.git.save(output)
+        expected_results = _expected_results_path(output)
+        record_run(
+            dest, "whole_paper_review", "packaged",
+            jobs_path=str(output.resolve()),
+            expected_results_path=str(expected_results.resolve()),
+            question="economic_review",
+            scenario_count=1,
+            attachments=attachment_records,
+        )
         emit_json({
             "object_type": "Jobs",
             "output": str(output),
@@ -2821,7 +2952,7 @@ def paper_review_jobs(
             "scenario_count": 1,
             "attachments": attachment_records,
             "saved": saved,
-            "next": f"ep run {output} --model <frontier-model> --output review-results.ep",
+            "next": f"ep run {output} --model <frontier-model> --output {expected_results}",
         })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
@@ -2951,6 +3082,15 @@ def review_jobs(
         )
         job = Jobs(survey=question.to_survey()).by(ScenarioList([scenario]))
         saved = job.git.save(output)
+        expected_results = _expected_results_path(output)
+        record_run(
+            dest, "journal_review", "packaged",
+            jobs_path=str(output.resolve()),
+            expected_results_path=str(expected_results.resolve()),
+            question="journal_review_issues",
+            scenario_count=1,
+            review_id=review_id,
+        )
         emit_json({
             "object_type": "Jobs",
             "output": str(output),
@@ -2959,8 +3099,8 @@ def review_jobs(
             "question": "journal_review_issues",
             "attachments": [canonical.name, review_path.name],
             "saved": saved,
-            "next": f"ep run {output} --model <model-name> --output journal-review-results.ep",
-            "ingest_next": "katz review ingest journal-review-results.ep",
+            "next": f"ep run {output} --model <model-name> --output {expected_results}",
+            "ingest_next": f"katz ingest {expected_results}",
             "metadata": metadata,
         })
     except KatzError as exc:
@@ -3078,6 +3218,14 @@ def review_ingest(
                 existing_keys.add(result_key)
                 issue_ids.append(issue_id)
                 filed += 1
+        record_run(
+            dest, "journal_review", "ingested",
+            results_path=str(results_path.resolve()),
+            result_count=len(results),
+            candidates=candidates,
+            issues_filed=filed,
+            skipped=skipped,
+        )
         emit_json({
             "results": str(results_path),
             "commit": resolved,
@@ -3324,6 +3472,15 @@ def spotter_jobs(
         )
         job = Jobs(survey=question.to_survey()).by(ScenarioList(scenarios))
         saved = job.git.save(output)
+        expected_results = _expected_results_path(output)
+        record_run(
+            dest, "spotter", "packaged",
+            jobs_path=str(output.resolve()),
+            expected_results_path=str(expected_results.resolve()),
+            question="spotter_result",
+            scenario_count=len(scenarios),
+            spotters=[item["name"] for item in definitions],
+        )
         section_jobs = sum(1 for scenario in scenarios if scenario["spotter_scope"] == "section")
         holistic_jobs = len(scenarios) - section_jobs
         emit_json({
@@ -3336,7 +3493,7 @@ def spotter_jobs(
             "section_scenarios": section_jobs,
             "holistic_scenarios": holistic_jobs,
             "saved": saved,
-            "next": f"ep run {output} --model <model-name> --output results.ep",
+            "next": f"ep run {output} --model <model-name> --output {expected_results}",
         })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
@@ -3469,6 +3626,14 @@ def spotter_ingest(
             issue_ids.append(issue_id)
             filed += 1
 
+        record_run(
+            dest, "spotter", "ingested",
+            results_path=str(results_path.resolve()),
+            result_count=len(results),
+            issues_found=found,
+            issues_filed=filed,
+            skipped=skipped,
+        )
         emit_json({
             "results": str(results_path),
             "commit": resolved,

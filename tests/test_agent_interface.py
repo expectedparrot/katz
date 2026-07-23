@@ -128,6 +128,15 @@ def test_unified_ingest_detects_jobs_without_mutating(tmp_path: Path) -> None:
     assert preview["detection"]["recommended_command"][0:2] == ["ep", "run"]
     assert before == after == 0
 
+    status = katz(repo, "agent", "status")
+    assert status["review"]["runs"]["latest"]["status"] == "packaged"
+    action_ids = [action["id"] for action in status["next_actions"]]
+    assert action_ids[0] == "inspect_jobs"
+    assert "expected_parrot_login" in action_ids
+    profile = status["prerequisites"]["ep"]["profile"]
+    assert profile["source"] in {"ep_profiles_current", "environment_or_dotenv_fallback"}
+    assert profile["api_key_configured"] is False
+
 
 def test_capabilities_lists_versioned_schemas(tmp_path: Path) -> None:
     repo, _, _ = setup_repo(tmp_path)

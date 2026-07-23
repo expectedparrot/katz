@@ -29,16 +29,23 @@ python -m pip install -e '.[test]'
 pytest
 ```
 
-Install the EDSL CLI as well, and put a valid Expected Parrot key in the paper
-repository’s uncommitted `.env` file:
+Install the EDSL CLI as well. Let EDSL own Expected Parrot authentication and
+repository-local `.env` configuration:
 
 ```bash
 python -m pip install edsl
+ep auth login
+ep profiles current
+ep check
 ```
 
-```dotenv
-EXPECTED_PARROT_API_KEY=your-key-here
-```
+`ep auth login` opens the browser login flow and stores the resulting key in
+the current repository’s `.env`; `ep profiles current` reports redacted local
+configuration; and `ep check` verifies URL reachability and authentication.
+For multiple Expected Parrot environments, use `ep profiles create`, `list`,
+`set`, and `check`. Keep `.env` and `.edsl/profiles/` out of public commits.
+Katz bootstrap consumes only EDSL’s redacted profile state and never returns
+the key.
 
 ## Use Katz directly with Codex or Claude Code
 
@@ -55,7 +62,8 @@ katz agent next
 ```
 
 `bootstrap` is read-only. It reports Git state, Katz initialization, ranked
-manuscript candidates, EDSL and Expected Parrot prerequisites, blockers, and
+manuscript candidates, EDSL’s redacted active profile, authentication
+prerequisites, blockers, and
 complete command arrays for valid next actions. `agent next` returns only the
 highest-priority action plus alternatives. After executing an authorized action,
 the agent calls `agent next` again.
