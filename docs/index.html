@@ -445,10 +445,59 @@ Pay special attention to:
     "next": "ep run jobs.ep --model &lt;model-name&gt; --output results.ep"
   }
 }</code></pre>
-    <p>The survey inside the package uses EDSL’s structured dictionary question type. Every result has <code>found</code>, <code>title</code>, <code>quoted_text</code>, and <code>description</code> fields, avoiding an ad hoc JSON parser.</p>
+    <h3>What is actually inside <code>jobs.ep</code></h3>
+    <p>The package is a serialized EDSL <code>Jobs</code> object, not a Katz-specific script. It contains one survey crossed with eleven scenarios. It contains no agents and no models: the reviewing model is selected later by <code>ep run</code>.</p>
+    <table><thead><tr><th>Part</th><th>Contents</th><th>Purpose</th></tr></thead><tbody>
+      <tr><td>Survey</td><td>One structured <code>QuestionDict</code> named <code>spotter_result</code>.</td><td>Forces every model response into the same four-field answer schema.</td></tr>
+      <tr><td>Section scenarios</td><td>Ten combinations: five mapped sections × two section-scoped spotters.</td><td>Each model call receives one section and one review procedure.</td></tr>
+      <tr><td>Holistic scenario</td><td>One complete-manuscript scenario for <code>software_claim_support</code>.</td><td>Lets the model reconcile a claim with evidence elsewhere in the paper.</td></tr>
+      <tr><td>Provenance</td><td>Commit, spotter name and scope, section identity, and byte range.</td><td>Allows ingestion to verify that a returned quotation belongs to the registered version and scenario.</td></tr>
+      <tr><td>Execution configuration</td><td>No model and no agent.</td><td>Keeps review construction separate from model choice, credentials, and run-time execution.</td></tr>
+    </tbody></table>
+    <p>A representative section scenario has these fields. The two long Markdown values are shortened here only to make the structure readable:</p>
+    <pre class="wrap"><code>{
+  "katz_commit": "c658feac957d3052e30da8e0365e4d982d091d9a",
+  "spotter_name": "causal_language",
+  "spotter_scope": "section",
+  "section_id": "summary",
+  "section_title": "Summary",
+  "byte_start": 573,
+  "byte_end": 3763,
+  "review_target": "section \"Summary\"",
+  "spotter_instructions": "---\nscope: section\n---\n# Causal Language\n\nCheck whether causal language is appropriate…",
+  "manuscript_content": "# Summary\n\n`causal-curve` is a Python package…"
+}</code></pre>
+    <p><code>spotter_instructions</code> is the complete frozen spotter Markdown, including its investigation guidance. <code>manuscript_content</code> is the exact UTF-8 slice identified by the scenario’s half-open byte range. A holistic scenario uses the same field names, but sets <code>section_id</code> to <code>null</code>, labels the target <em>Complete manuscript</em>, uses bytes <code>0</code> through the manuscript length, and includes the entire canonical text.</p>
+    <p>Section scenarios do not currently receive an additional abstract, paper summary, or neighboring-section field. Their paper context is the section itself; use a holistic spotter when the first-pass judgment genuinely requires the whole paper. The later investigation workflow deliberately reads broader manuscript and repository context before confirming any candidate.</p>
+    <p>The survey prompt interpolates three scenario values:</p>
+    <pre><code>You are reviewing {{ review_target }} from an academic manuscript.
+
+Issue spotter:
+{{ spotter_instructions }}
+
+Manuscript content:
+{{ manuscript_content }}
+
+Apply the spotter carefully. Return found=false when there is no genuine,
+substantive issue. When found=true, quote the exact shortest passage that
+demonstrates the issue and explain why it matters. Do not invent text.</code></pre>
+    <p>The <code>QuestionDict</code> answer keys are <code>found</code> (boolean), <code>title</code>, <code>quoted_text</code>, and <code>description</code> (strings). This schema is why ingestion can distinguish null results, locate exact quotations, create issue titles and bodies, and avoid an ad hoc text parser.</p>
     <h3>Inspect and estimate before running</h3>
     <pre><code>ep inspect jobs.ep</code></pre>
-    <p>Loads the package without model calls and reports that it contains an EDSL <code>Jobs</code> object, including its survey, scenario, and model counts.</p>
+    <p>Loads the package without model calls and confirms the structure described above:</p>
+    <pre><code>{
+  "status": "ok",
+  "data": {
+    "object_type": "Jobs",
+    "length": 11,
+    "question_count": 1,
+    "question_names": ["spotter_result"],
+    "agent_count": 0,
+    "scenario_count": 11,
+    "model_count": 0
+  },
+  "warnings": []
+}</code></pre>
     <pre><code>ep jobs cost jobs.ep</code></pre>
     <p>Estimates the cost of the packaged job. Add <code>--iterations N</code> to estimate repeated runs.</p>
     <h3>Run with the EDSL CLI</h3>
