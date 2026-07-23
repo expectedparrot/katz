@@ -14,6 +14,62 @@ The workflow has four stages:
 
 The [full HTML tutorial on GitHub Pages](https://expectedparrot.github.io/katz/) follows a real JOSS paper through this process, including figures, model review, human triage, and report generation.
 
+## Copy this into your coding agent
+
+GitHub places a copy button in the upper-right corner of this prompt. Start
+Codex, Claude Code, or another coding agent in the repository containing the
+paper, then copy and send the complete block:
+
+```text
+Install Katz and EDSL directly from GitHub:
+
+python -m pip install "katz @ git+https://github.com/expectedparrot/katz.git"
+python -m pip install "edsl @ git+https://github.com/expectedparrot/edsl.git"
+
+Verify both CLIs:
+
+katz --help
+ep --help
+
+Use Katz to review the manuscript in this repository. Begin with:
+
+katz agent bootstrap
+
+Treat Katz's JSON envelopes as the source of truth. Execute an action only when
+its mutation, network, cost, and approval flags are consistent with my
+authorization. After every action, run `katz agent next` and continue following
+`data.next_actions` until no action remains or my approval is required.
+
+Rules:
+- Never display, copy, or commit API keys.
+- If authentication is missing, run `ep auth login`. If the existing `.env` or
+  EDSL profile is configured, do not log in again.
+- Run `ep check` before paid model execution.
+- Confirm an ambiguous manuscript choice before registration.
+- A PDF is not canonical review text. Follow Katz's `paper prepare` action,
+  inspect the extracted Markdown, figures, and tables, and commit the canonical
+  source before registration.
+- Inspect every generated `.jobs.ep` package and preserve both Jobs and Results
+  artifacts.
+- Ask me before choosing a paid model, launching a paid run, publishing a
+  report, or creating GitHub issues unless I already authorized that action.
+- Run the small compatibility pilot proposed by Katz before a large review.
+- Audit Results against their originating Jobs. A structured `found=false` is
+  a completed negative judgment; null, malformed, exceptional, missing, or
+  duplicate responses are failures and must never be reported as “no issues.”
+- Do not use `--allow-partial` unless I explicitly approve a partial recovery.
+- Treat detected findings as drafts. Check `katz issue clusters`, then use
+  `katz issue next` to investigate manuscript and repository context before
+  confirming, rejecting, or leaving an issue open.
+- Run `katz validate` before generating the final HTML report.
+- Never describe a zero-issue review as complete unless its audit reports 100%
+  valid coverage.
+
+Persist the repository-native instructions when Katz proposes it, or run:
+
+katz agent instructions --write
+```
+
 ## Installation
 
 Install from the repository with Python 3.11 or newer:
