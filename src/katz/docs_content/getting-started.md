@@ -1,0 +1,265 @@
+# Getting Started
+
+This guide walks through a complete paper review using katz — from initialization
+to a generated HTML report.
+
+**At each step, check whether it's already done before re-running it.**
+
+---
+
+## Step 0 — Bootstrap
+
+Run `katz status` first. It returns the current phase and recommended next steps.
+If the phase is `no_katz`, begin with Step 1. Otherwise skip ahead to the appropriate step.
+
+```bash
+katz status
+```
+
+The response includes `state.phase` (where you are) and `state.checklist` (what to do next).
+
+---
+
+## Step 1 — Initialize
+
+katz requires a git repository. Initialize `.katz/` at the repo root:
+
+```bash
+katz init
+```
+
+**Check:** `katz paper status` returns an error with code `invalid_commit` when no paper
+is registered yet — that's expected.
+
+---
+
+## Step 2 — Register the Paper
+
+The manuscript must be in ventilated prose (one sentence per line) for issue locations
+to be precise. Convert from PDF with a tool like `marker` or `nougat`, then reformat:
+
+```bash
+katz paper register \
+  --canonical paper/manuscript.md \
+  --source-format markdown \
+  --source-uri https://arxiv.org/abs/2401.00000
+```
+
+**Check:**
+```bash
+katz paper status
+# → {"commit": "abc...", "sections": 0, "sentences": 847, "valid": true}
+```
+
+If `warning` appears about non-ventilated prose, reformat the manuscript so each
+sentence is on its own line before proceeding.
+
+---
+
+## Step 3 — Detect Sections
+
+Auto-detect section boundaries from markdown headings:
+
+```bash
+katz paper auto-chunk
+# → {"added": 14, "total_sections": 14}
+```
+
+Verify:
+```bash
+katz paper sections
+# → [{id: "introduction", title: "Introduction", ...}, ...]
+```
+
+Spot-check a section:
+```bash
+katz paper section introduction
+katz paper resolve 0 200   # resolve byte range to text
+```
+
+---
+
+## Step 4 — Configure Spotters
+
+Initialize the built-in spotter catalog:
+
+```bash
+katz spotter init-catalog
+# → {"preset": "default", "added": [...], "skipped": []}
+```
+
+List what's available:
+```bash
+katz spotter catalog
+```
+
+Enable the spotters relevant to this paper:
+
+```bash
+katz spotter enable overclaiming
+katz spotter enable logical_gaps
+katz spotter enable causal_language
+katz spotter enable identification_threats
+katz spotter enable statistical_errors
+katz spotter enable methodology_concerns
+```
+
+Read a spotter before enabling to understand what it checks:
+```bash
+katz spotter catalog-show overclaiming
+```
+
+Verify what's enabled:
+```bash
+katz spotter list
+```
+
+---
+
+## Step 5 — Generate an EDSL Review Script
+
+This is the key step. Rather than running a pre-built script, **generate a Python script
+tailored to this paper** and show it to the user.
+
+**Read the codegen guide:**
+```bash
+katz docs show edsl-codegen
+```
+
+**The `agent-start` payload already includes a ready-to-run script** when the phase is
+`spotters_configured`. Look for the `codegen.script` field in the response:
+
+```bash
+katz status
+# → response includes codegen.script with populated sections and spotters
+```
+
+**Save and show the script to the user:**
+1. Extract `codegen.script` from the `agent-start` response
+2. Save it as `find_issues.py` (or a name specific to the paper)
+3. Show the script to the user and explain what it will do:
+   - How many sections and spotters are included
+   - Which models will be used (Claude Opus 4 + GPT-5.4 by default)
+   - How many total LLM calls will be made
+4. Ask the user to review it and run it when ready:
+
+```bash
+python find_issues.py --dry-run    # preview call count without running
+python find_issues.py              # run the full sweep
+```
+
+The script will file issues directly to katz via `katz issue write`.
+
+**Typical sweep:** A 30-page paper with 8 spotters × 12 sections × 2 models = 192 calls,
+taking 5–10 minutes via EDSL's remote runner.
+
+---
+
+## Step 6 — Investigate Issues
+
+After the sweep, issues are in `draft` state. The false-positive rate is high (~5–10%
+genuine). Work through them systematically.
+
+**List all drafts:**
+```bash
+katz issue list --state draft
+```
+
+**Read a full issue record:**
+```bash
+katz issue show abc123    # use first 6+ chars of the ID
+```
+
+The record includes `location.resolved_text` — the exact manuscript text the issue
+points to. Read it carefully before deciding.
+
+**Record your verdict:**
+```bash
+# Genuine issue
+katz issue investigate --id abc123 --verdict confirmed --notes "The paper claims X causes Y but the design only supports correlation."
+katz issue update --id abc123 --state confirmed
+
+# False positive
+katz issue investigate --id abc123 --verdict rejected --notes "Context in section 4 addresses this — not a real issue."
+katz issue update --id abc123 --state rejected
+```
+
+**Merge near-duplicates** (different models flagging the same thing):
+```bash
+katz issue list --state draft | python3 -c "
+import sys, json
+issues = json.load(sys.stdin)
+for i in issues: print(i['id'][:8], i['title'][:60])
+"
+katz issue merge --ids abc123,def456,ghi789 --title "Concise merged title"
+```
+
+---
+
+## Step 7 — Generate the Report
+
+Once investigation is complete:
+
+```bash
+katz issue list --state confirmed    # review what's confirmed
+
+katz report generate --output review.html
+# → {"generated": true, "path": "review.html", "issues": 12}
+```
+
+Open `review.html` in a browser to see the full structured report with issue cards,
+investigation verdicts, and manuscript quotes.
+
+In a research-agent task workflow, prefer a task-local explorer path instead of
+an ad hoc top-level file:
+
+```bash
+katz report generate --output writeup/artifacts/paper_explorer.html
+```
+
+Then use that HTML artifact as a linked companion from the task's
+`writeup/report.md`.
+
+---
+
+## Step 8 — (Optional) Evaluate the Paper
+
+For a broader quality assessment beyond issue-spotting, use eval criteria:
+
+```bash
+katz eval init-catalog
+katz eval list
+katz eval enable design_matches_claims
+katz eval enable findings_clearly_presented
+```
+
+Then for each criterion, write a narrative response:
+```bash
+katz eval respond --name design_matches_claims \
+  --text "The design matches the claims well. The IV strategy is convincing." \
+  --grade A-
+```
+
+---
+
+## Common Patterns
+
+**Checking current state at any point:**
+```bash
+katz paper status        # registration, sections, sentences
+katz spotter list        # enabled spotters
+katz issue list          # all issues (any state)
+```
+
+**Reading an issue with full context:**
+```bash
+katz issue show <id>
+# response includes location.resolved_text (the exact manuscript text)
+```
+
+**Filtering issues:**
+```bash
+katz issue list --state confirmed
+katz issue list --section introduction
+katz issue list --spotter overclaiming
+```
