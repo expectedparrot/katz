@@ -790,42 +790,43 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
   <section id="journal-review">
     <h2>Turn a journal referee report into grounded candidate issues</h2>
     <p>Katz can also start from a review written by a person: a journal referee report, an editor letter, or comments returned during a revise-and-resubmit. The original document is preserved beside the registered manuscript version. Katz then creates an EDSL job that gives a parsing model both files and asks it to extract only actionable comments that can be tied to exact manuscript text. The model is a parser here, not another referee: it must preserve the human reviewer’s meaning and add no criticisms of its own.</p>
+    <p>For the worked paper, we use its real <a href="https://github.com/openjournals/joss-reviews/issues/2523">public JOSS review thread</a>. The prepared input file <a href="https://github.com/expectedparrot/katz/blob/main/examples/causal-curve-review/joss-human-reviews.md"><code>joss-human-reviews.md</code></a> preserves the substantive comments from Tom Faulkenberry, Alex Jones, and Chelsea Parlett-Pelleriti while omitting bot messages and editorial logistics.</p>
 
     <h3>Preserve the original report and its provenance</h3>
-    <pre><code>katz review add reviews/reviewer-2.md \
-  --reviewer "Reviewer 2" \
-  --venue "Journal of Things" \
-  --round R1</code></pre>
+    <pre><code>katz review add joss-human-reviews.md \
+  --reviewer "JOSS reviewers" \
+  --venue "Journal of Open Source Software" \
+  --round "public review"</code></pre>
     <pre class="wrap"><code>{
   "ok": true,
-  "command": ["review", "add", "reviews/reviewer-2.md", "--reviewer", "Reviewer 2", "--venue", "Journal of Things", "--round", "R1"],
+  "command": ["review", "add", "joss-human-reviews.md", "--reviewer", "JOSS reviewers", "--venue", "Journal of Open Source Software", "--round", "public review"],
   "data": {
     "schema_version": 1,
-    "id": "review-6bb45db9da72",
-    "commit": "9ee12f3…",
-    "reviewer": "Reviewer 2",
-    "venue": "Journal of Things",
-    "round": "R1",
-    "source_name": "reviewer-2.md",
-    "preserved_path": ".katz/versions/9ee12f3…/reviews/review-6bb45db9da72/review.md",
-    "sha256": "sha256:6bb45db9da72…",
+    "id": "review-306af2ad4d9d",
+    "commit": "aab15fb…",
+    "reviewer": "JOSS reviewers",
+    "venue": "Journal of Open Source Software",
+    "round": "public review",
+    "source_name": "joss-human-reviews.md",
+    "preserved_path": ".katz/versions/aab15fb…/reviews/review-306af2ad4d9d/review.md",
+    "sha256": "sha256:306af2ad4d9d…",
     "already_registered": false,
-    "next": "katz review jobs review-6bb45db9da72 --output journal-review.jobs.ep"
+    "next": "katz review jobs review-306af2ad4d9d --output journal-review.jobs.ep"
   }
 }</code></pre>
     <p>The content hash makes registration idempotent: adding the same report again returns the existing record. Reviewer labels may be pseudonyms; do not place confidential identities or editor-only material in a repository that will be published.</p>
 
     <h3>Build and run the parsing job</h3>
-    <pre><code>katz review jobs review-6bb45db9da72 \
+    <pre><code>katz review jobs review-306af2ad4d9d \
   --output journal-review.jobs.ep</code></pre>
     <pre class="wrap"><code>{
   "ok": true,
-  "command": ["review", "jobs", "review-6bb45db9da72", "--output", "journal-review.jobs.ep"],
+  "command": ["review", "jobs", "review-306af2ad4d9d", "--output", "journal-review.jobs.ep"],
   "data": {
     "object_type": "Jobs",
     "output": "journal-review.jobs.ep",
-    "commit": "9ee12f3…",
-    "review_id": "review-6bb45db9da72",
+    "commit": "aab15fb…",
+    "review_id": "review-306af2ad4d9d",
     "question": "journal_review_issues",
     "attachments": ["manuscript.md", "review.md"],
     "next": "ep run journal-review.jobs.ep --model &lt;model-name&gt; --output journal-review-results.ep",
@@ -844,8 +845,31 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
       "input_mode": "path",
       "scenario_count": 1,
       "result_count": 1,
-      "saved": "journal-review-results.ep"
+    "saved": {
+      "path": "journal-review-results.ep",
+      "object_type": "Results"
     }
+    }
+  }
+}</code></pre>
+    <pre><code>ep results select \
+  --file journal-review-results.ep \
+  --column answer.journal_review_issues \
+| jq '.data.data[0]["answer.journal_review_issues"] |= fromjson'</code></pre>
+    <p>This reads the parser’s answer before allowing it to mutate the Katz ledger. <code>QuestionFreeText</code> stores the returned array as text, so <code>jq</code> decodes it for inspection. The complete response contains two objects; the first is:</p>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "data": {
+    "data": [{
+      "answer.journal_review_issues": [{
+        "title": "Expand the introduction for readers new to causal inference",
+        "body": "The reviewer suggests that the paper or accompanying documentation could do more to orient readers who are not already familiar with causal inference…",
+        "quoted_text": "\"Causal inference\" methods are a set of approaches that attempt to estimate causal effects from observational rather than experimental data",
+        "reviewer_comment": "Perhaps my only comment would be expansion of the software paper or documentation to make it a little more accessible…",
+        "severity": "minor",
+        "suggested_response": "Expand the software paper or documentation with a brief introduction to causal inference and why the package is useful."
+      }]
+    }]
   }
 }</code></pre>
 
@@ -856,15 +880,16 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
   "command": ["review", "ingest", "journal-review-results.ep"],
   "data": {
     "results": "journal-review-results.ep",
-    "commit": "9ee12f3…",
+    "commit": "aab15fb…",
     "result_count": 1,
-    "candidates": 4,
-    "issues_filed": 3,
-    "skipped": 1,
-    "issue_ids": ["7c02d31…", "77e64ac…", "d79bbca…"]
+    "candidates": 2,
+    "issues_filed": 2,
+    "skipped": 0,
+    "issue_ids": ["4af1d72…", "8985ba4…"]
   }
 }</code></pre>
-    <p>Ingestion verifies the embedded commit and review ID, locates every proposed quotation in the canonical manuscript, and skips comments it cannot ground instead of guessing a location. Each filed issue retains the human report ID, severity, exact reviewer language, parsing Results path, and an idempotency hash. The issues begin in <code>draft</code> state because an agent should still check that the parser split and interpreted the human comment correctly.</p>
+    <p>The real run filed two minor draft issues: expand the introduction for readers new to causal inference, and link to resources explaining the model mathematics. The parser did not convert the XGBoost/OpenMP installation problem, notebook axis-label error, mediation-documentation typo, or runtime bug into manuscript issues. Those comments concern repository artifacts rather than exact text in the registered paper; they remain preserved in the human review and can be investigated through the repository-review workflow.</p>
+    <p>Ingestion verifies the embedded commit and review ID and locates every proposed quotation in the canonical manuscript instead of guessing a location. Each filed issue retains the human report ID, severity, exact reviewer language, parsing Results path, and an idempotency hash. The issues begin in <code>draft</code> state because an agent should still check that the parser split and interpreted the human comment correctly.</p>
   </section>
 
   <section id="issues">
