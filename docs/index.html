@@ -982,22 +982,24 @@ After checking the paper and relevant artifacts, how should this candidate be cl
   --survey triage-survey.ep \
   --scenario_list triage-scenarios.ep \
   --scenario_method ordered \
-  --name "causal-curve issue triage"</code></pre>
+  --name "Katz tutorial: causal-curve issue triage"</code></pre>
     <pre><code>{
   "status": "ok",
   "data": {
-    "name": "causal-curve issue triage",
-    "uuid": "HUMAN_SURVEY_UUID",
-    "admin_url": "https://www.expectedparrot.com/home/human-surveys/HUMAN_SURVEY_UUID",
-    "respondent_url": "https://www.expectedparrot.com/respond/human-surveys/HUMAN_SURVEY_UUID",
+    "name": "Katz tutorial: causal-curve issue triage",
+    "uuid": "a9d3a6b4-7d1c-4d06-bc90-2221b814b8a1",
+    "admin_url": "https://chick.expectedparrot.com/home/human-surveys/a9d3a6b4-7d1c-4d06-bc90-2221b814b8a1",
+    "respondent_url": "https://chick.expectedparrot.com/respond/human-surveys/a9d3a6b4-7d1c-4d06-bc90-2221b814b8a1",
+    "preview_url": "https://chick.expectedparrot.com/respond/human-surveys/a9d3a6b4-7d1c-4d06-bc90-2221b814b8a1?save_response=false",
     "n_responses": 0,
-    "survey_uuid": "SURVEY_UUID",
+    "survey_uuid": "215b8f4f-2120-4b9f-a2e9-53e8fa1151ca",
     "agent_list_uuid": null,
-    "scenario_list_uuid": "SCENARIO_LIST_UUID"
+    "scenario_list_uuid": "6e051328-3426-40bf-bded-7bb9868e499d"
   },
   "warnings": []
 }</code></pre>
-    <p>This command creates a remote survey, so inspect the local objects first and share the respondent URL only with authorized reviewers. Use <code>randomize</code> instead when independently sampling issues across many reviewers. Use <code>loop</code> when one respondent must answer the whole question set for every issue; that produces a longer survey with scenario-indexed answer columns. The Expected Parrot API key configured at the start of the tutorial authenticates creation and response retrieval.</p>
+    <p><a href="https://chick.expectedparrot.com/respond/human-surveys/a9d3a6b4-7d1c-4d06-bc90-2221b814b8a1?save_response=false" target="_blank" rel="noopener noreferrer">Open the live Katz triage survey preview in a new tab.</a> The preview uses <code>save_response=false</code>, so tutorial visits do not enter the response dataset.</p>
+    <p>This command creates a remote survey, so inspect the local objects first and share the response-saving respondent URL only with authorized reviewers. Use <code>randomize</code> instead when independently sampling issues across many reviewers. Use <code>loop</code> when one respondent must answer the whole question set for every issue; that produces a longer survey with scenario-indexed answer columns. The Expected Parrot API key configured at the start of the tutorial authenticates creation and response retrieval.</p>
 
     <h3>Retrieve and apply human decisions</h3>
     <pre><code>ep humanize responses HUMAN_SURVEY_UUID \
