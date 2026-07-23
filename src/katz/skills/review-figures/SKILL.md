@@ -29,7 +29,7 @@ Sends each figure from the paper to vision-capable models via EDSL for feedback 
 Run `katz paper status` to confirm registration. Check that images exist:
 
 ```bash
-ls .katz/versions/$(katz paper status | python3 -c "import sys,json; print(json.load(sys.stdin)['commit'])")/paper/*.png
+ls .katz/versions/$(katz paper status | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['commit'])")/paper/*.png
 ```
 
 ### 2. Run the figure review

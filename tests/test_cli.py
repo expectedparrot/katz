@@ -249,6 +249,21 @@ def test_guide_skill_rejects_path_traversal(tmp_path: Path) -> None:
     assert err["code"] == "not_found"
 
 
+def test_guide_content_uses_json_envelopes(tmp_path: Path) -> None:
+    repo, canonical, commit = setup_repo(tmp_path)
+
+    overview = katz(repo, "guide", "overview")
+    assert "# katz" in overview["markdown"]
+
+    skill = katz(repo, "guide", "skill", "investigate-issues")
+    assert skill["name"] == "investigate-issues"
+    assert "# Investigate Issues" in skill["markdown"]
+
+    script = katz(repo, "guide", "script", "find-issues/generate_review_report.py")
+    assert script["path"] == "find-issues/generate_review_report.py"
+    assert "def main" in script["source"]
+
+
 def test_unicode_byte_offsets_round_trip(tmp_path: Path) -> None:
     repo, canonical, commit = setup_repo(tmp_path)
     text = "# Café\nRésumé sentence with naïve wording.\n## Methods\nEmoji 😀 sentence.\n"

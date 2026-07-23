@@ -2640,7 +2640,7 @@ def guide_overview() -> None:
     overview = Path(__file__).parent / "OVERVIEW.md"
     if not overview.exists():
         fail("Overview file not found", "not_found")
-    typer.echo(overview.read_text(encoding="utf-8"))
+    emit_json({"markdown": overview.read_text(encoding="utf-8")})
 
 
 @guide_app.command("skills")
@@ -2682,7 +2682,7 @@ def guide_skill(name: str) -> None:
     skill_file = SKILLS_DIR / name / "SKILL.md"
     if not skill_file.exists():
         fail(f"Skill '{name}' not found", "not_found", {"name": name, "available": available_skills()})
-    typer.echo(skill_file.read_text(encoding="utf-8"))
+    emit_json({"name": name, "markdown": skill_file.read_text(encoding="utf-8")})
 
 
 @guide_app.command("script")
@@ -2714,7 +2714,7 @@ def guide_script(path: str) -> None:
             full_path = safe_skill_file(SKILLS_DIR / parts[0] / "scripts" / Path(*parts[1:]))
     if full_path is None or not full_path.exists() or not full_path.is_file():
         fail(f"Script not found: {path}", "not_found", {"path": path})
-    typer.echo(full_path.read_text(encoding="utf-8"))
+    emit_json({"path": path, "source": full_path.read_text(encoding="utf-8")})
 
 
 # ---------------------------------------------------------------------------
