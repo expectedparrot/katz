@@ -38,6 +38,10 @@ The package contains a standard EDSL `Jobs` object with a structured
 ep run jobs.ep --model <model-name> --output results.ep
 ```
 
+For long-running remote interviews, add `--task-timeout 900`. This controls
+the worker deadline for each interview. The separate `--timeout` option only
+controls how long the CLI polls with `--background --wait`.
+
 Use `--local` to disable remote inference.
 For asynchronous remote inference, use `--background` and later retrieve the
 completed object:
@@ -50,6 +54,17 @@ ep jobs results <job-uuid> --output results.ep
 
 ```bash
 katz spotter ingest results.ep
+```
+
+Human-written journal reviews use the same separation between packaging,
+execution, and grounded ingestion:
+
+```bash
+katz review add review.md --reviewer "Reviewer 2" --round R1
+katz review jobs <review-id> --output journal-review.jobs.ep
+ep run journal-review.jobs.ep --model <model-name> --task-timeout 900 \
+  --output journal-review-results.ep
+katz review ingest journal-review-results.ep
 ```
 
 Katz loads the EDSL `Results` object, verifies its embedded manuscript commit

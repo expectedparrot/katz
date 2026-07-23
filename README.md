@@ -1,7 +1,18 @@
 # katz — version-aware paper-review ledger and issue tracker
 <!-- id: katz/katz -->
 
-katz manages structured reviews of manuscripts in a git-aware ledger: canonical paper versions, section boundaries, issue spotters, findings, evaluation criteria, responses, and review reports. The agent uses it to perform a disciplined paper review that anchors comments to a specific manuscript version and tracks issues from discovery through resolution.
+![An economist parrot reviewing a manuscript beside mathematical notation and books](docs/katz-economist-parrot.png)
+
+Katz is primarily an agent-facing tool for reviewing papers without losing the connection between a comment and the exact manuscript version that prompted it. It stores canonical paper versions, section boundaries, review instructions, model and human findings, investigations, suggested fixes, evaluations, and generated reports in a Git-aware ledger. CLI commands return structured JSON so agents can inspect state and decide explicitly what to do next.
+
+The workflow has four stages:
+
+1. Put the paper into a canonical, committed form and map its reviewable sections.
+2. Run broad or targeted review passes—either section by section or as a one-shot whole-paper review—and preserve the complete EDSL Jobs and Results objects.
+3. Let an agent or human investigate proposed findings, reject false positives, merge duplicates, and suggest concrete responses.
+4. Promote confirmed findings into reports or GitHub issues, then track how a later manuscript revision addresses them.
+
+The [full HTML tutorial on GitHub Pages](https://expectedparrot.github.io/katz/) follows a real JOSS paper through this process, including figures, model review, human triage, and report generation.
 
 ## Installation
 
@@ -131,10 +142,14 @@ Canonical sequence:
 4. `katz spotter jobs --output jobs.ep` — package spotters and manuscript content as EDSL Jobs.
 5. `ep run jobs.ep --model <model> --output results.ep` — execute with EDSL.
 6. `katz spotter ingest results.ep` — verify quotations and file anchored draft issues.
-7. Investigate imported candidates and file any additional issues manually.
-8. Add evaluation criteria or responses if the review includes scoring or revision tracking.
-9. `katz validate` — check consistency of paper versions, anchors, and issues.
-10. `katz report generate` — create the final review report.
+7. Optionally run `katz paper review-jobs --output one-shot-review.jobs.ep` to package the complete manuscript and figures for one frontier-model referee review.
+8. Investigate imported candidates and file any additional issues from the one-shot report or human review.
+   A journal report can be preserved with `katz review add`, converted into a
+   manuscript-grounded parsing job with `katz review jobs`, and filed as draft
+   candidates with `katz review ingest`.
+9. Add evaluation criteria or responses if the review includes scoring or revision tracking.
+10. `katz validate` — check consistency of paper versions, anchors, and issues.
+11. `katz report generate` — create the final review report.
 
 When the user asks for a standard paper-review task in research-agent, keep
 Katz as the primary review ledger but produce the shareable deliverable through
@@ -235,6 +250,7 @@ For full options, run `katz <subcommand> --help`.
 | `katz ventilate ...` | Write a conservative one-sentence-per-line Markdown copy. |
 | `katz paper ...` | Register papers, versions, and section maps. |
 | `katz spotter ...` | Manage spotters, build EDSL Jobs, and ingest Results. |
+| `katz review ...` | Preserve human journal reports, build parsing Jobs, and ingest grounded comments. |
 | `katz issue ...` | File, list, show, update, and close review issues. |
 | `katz eval ...` | Manage evaluation criteria and responses. |
 | `katz validate` | Check ledger consistency. |

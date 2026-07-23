@@ -204,6 +204,108 @@ def test_spotter_jobs_builds_edsl_package(tmp_path: Path) -> None:
     assert first["manuscript_content"]
 
 
+def test_paper_review_jobs_embeds_manuscript_and_figure_attachments(tmp_path: Path) -> None:
+    from edsl import FileStore, Jobs
+
+    repo, commit = setup_rich_repo(tmp_path)
+    figure = tmp_path / "results.png"
+    figure.write_bytes(b"\x89PNG\r\n\x1a\nexample")
+    # Re-register at a new commit so the newly added sibling asset is copied.
+    (repo / "README.md").write_text("# Paper\n\nFigure added.\n", encoding="utf-8")
+    git(repo, "add", "README.md")
+    git(repo, "commit", "-m", "Add figure")
+    commit = git(repo, "rev-parse", "HEAD")
+    katz(repo, "paper", "register", "--canonical", str(tmp_path / "manuscript.md"))
+
+    output = repo / "whole-paper.jobs.ep"
+    result = katz(repo, "paper", "review-jobs", "--output", str(output))
+
+    assert result["object_type"] == "Jobs"
+    assert result["commit"] == commit
+    assert result["question"] == "economic_review"
+    assert result["scenario_count"] == 1
+    assert [item["kind"] for item in result["attachments"]] == ["manuscript", "figure"]
+
+    jobs = Jobs.git.load(output)
+    scenario = jobs.scenarios[0]
+    assert isinstance(scenario["manuscript"], FileStore)
+    assert isinstance(scenario["figure_1"], FileStore)
+    question_text = jobs.survey.questions[0].question_text
+    assert "{{ manuscript }}" in question_text
+    assert "{{ figure_1 }}" in question_text
+    assert "economics referee" in question_text
+
+
+def test_human_journal_review_add_and_jobs(tmp_path: Path) -> None:
+    from edsl import FileStore, Jobs
+
+    repo, commit = setup_rich_repo(tmp_path)
+    review = tmp_path / "referee-report.md"
+    review.write_text(
+        "# Referee report\n\nPlease explain why the effect is so large.\n",
+        encoding="utf-8",
+    )
+
+    added = katz(
+        repo, "review", "add", str(review),
+        "--reviewer", "Reviewer 2", "--venue", "Journal of Things", "--round", "R1",
+    )
+    review_id = added["id"]
+    assert added["commit"] == commit
+    assert added["reviewer"] == "Reviewer 2"
+    assert katz(repo, "review", "list")[0]["id"] == review_id
+
+    output = repo / "journal-review.jobs.ep"
+    built = katz(repo, "review", "jobs", review_id, "--output", str(output))
+    assert built["review_id"] == review_id
+    assert built["question"] == "journal_review_issues"
+    jobs = Jobs.git.load(output)
+    scenario = jobs.scenarios[0]
+    assert isinstance(scenario["manuscript"], FileStore)
+    assert isinstance(scenario["journal_review"], FileStore)
+    assert jobs.survey.question_names == ["journal_review_issues"]
+
+
+def test_human_journal_review_ingest_is_grounded_and_idempotent(tmp_path: Path) -> None:
+    from edsl import Agent, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, commit = setup_rich_repo(tmp_path)
+    review = tmp_path / "review.txt"
+    review.write_text("The reported effect needs more explanation.", encoding="utf-8")
+    review_id = katz(repo, "review", "add", str(review))["id"]
+    quoted = "The effect is 0.5 standard deviations."
+    parsed = [{
+        "title": "Explain the effect magnitude",
+        "body": "The magnitude is difficult to interpret without context.",
+        "quoted_text": quoted,
+        "reviewer_comment": "The reported effect needs more explanation.",
+        "severity": "major",
+        "suggested_response": "Add a substantive benchmark.",
+    }]
+    result = Result(
+        agent=Agent(),
+        scenario=Scenario({"katz_commit": commit, "review_id": review_id}),
+        model=Model("test"),
+        iteration=0,
+        answer={"journal_review_issues": json.dumps(parsed)},
+    )
+    results_path = repo / "journal-review-results.ep"
+    Results(survey=Survey([]), data=[result]).git.save(results_path)
+
+    first = katz(repo, "review", "ingest", str(results_path))
+    second = katz(repo, "review", "ingest", str(results_path))
+    assert first["candidates"] == 1
+    assert first["issues_filed"] == 1
+    assert second["issues_filed"] == 0
+    assert second["skipped"] == 1
+    issue = katz(repo, "issue", "show", first["issue_ids"][0])
+    assert issue["location"]["resolved_text"] == quoted
+    assert issue["meta"]["source"] == "human_journal_review"
+    assert issue["meta"]["review_id"] == review_id
+    assert "Reviewer comment:" in issue["body"]
+
+
 def test_spotter_jobs_can_filter_section_and_spotter(tmp_path: Path) -> None:
     repo, _ = setup_rich_repo(tmp_path)
     katz(repo, "paper", "auto-chunk")

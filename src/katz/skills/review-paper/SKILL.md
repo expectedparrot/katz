@@ -70,10 +70,69 @@ ep run jobs.ep --model <model-name> --output results.ep
 katz spotter ingest results.ep
 ```
 
-By default, uses 2 models (Claude Opus + GPT-5.4) and katz-enabled spotters.
-- Pass `--models 3` to add Gemini.
-- Pass `--builtin-spotters` to use the 5 built-in spotters instead of katz-enabled ones.
-- The script automatically deduplicates near-identical issues after filing.
+`katz spotter jobs` does not choose a model or run a script. It serializes the
+enabled spotters, paper sections, manuscript context, and Katz provenance into
+a standard EDSL `Jobs` object. `ep run` executes that object; Katz then verifies
+the returned quotations before filing draft issues.
+
+For an unusually long remote interview, set the interview deadline explicitly:
+
+```bash
+ep run jobs.ep \
+  --model <model-name> \
+  --task-timeout 900 \
+  --output results.ep
+```
+
+`--task-timeout` is the maximum runtime for each remotely executed interview.
+It is different from `--timeout`, which only limits local status polling when
+`--background --wait` is used.
+
+### Optional: one whole-paper expert review
+
+Use a frontier model when the review requires reconciling claims across
+sections or inspecting figures with the complete manuscript in context:
+
+```bash
+katz paper review-jobs --output one-shot-review.jobs.ep
+ep run one-shot-review.jobs.ep \
+  --model_list frontier-max.json \
+  --task-timeout 900 \
+  --fresh \
+  --output one-shot-review-results.ep
+```
+
+The returned referee report is preserved in EDSL Results. An agent should
+ground each actionable concern with `katz paper find` and file it with
+`katz issue write`; the coherent report is not automatically treated as a list
+of verified issues.
+
+### Optional: ingest a human journal review
+
+When a referee report, editor letter, or revise-and-resubmit review already
+exists, preserve the original before parsing it:
+
+```bash
+katz review add reviews/reviewer-2.md \
+  --reviewer "Reviewer 2" \
+  --venue "Journal name" \
+  --round R1
+katz review jobs <review-id> --output journal-review.jobs.ep
+ep run journal-review.jobs.ep \
+  --model <model-name> \
+  --task-timeout 900 \
+  --output journal-review-results.ep
+katz review ingest journal-review-results.ep
+```
+
+The parsing job receives both the preserved review and canonical manuscript.
+It is instructed to preserve the human reviewer’s meaning, exclude praise and
+editorial logistics, and return exact quotations for actionable comments.
+Ingestion checks the commit, review ID, and manuscript quotation, skips
+ungrounded candidates, and files the rest as draft issues carrying the exact
+reviewer comment and source-review provenance. Inspect every parsed draft
+before confirming it. Avoid committing confidential reviewer identities or
+editor-only material to a repository that may become public.
 
 ### 6. Merge duplicate issues
 

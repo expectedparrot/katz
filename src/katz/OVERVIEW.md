@@ -31,6 +31,9 @@ Run `katz guide script <skill-name>/<path>` to read a script file.
 katz paper status                     # check registration
 katz paper section <id>               # get section details
 katz paper find <text>                # locate text by byte offset
+katz paper review-jobs --output one-shot-review.jobs.ep  # attach the whole paper and figures
+katz review add referee-report.md                        # preserve a human review
+katz review jobs <review-id> --output journal-review.jobs.ep
 katz spotter init-catalog             # populate spotter catalog
 katz spotter catalog                  # list available spotters
 katz spotter enable <name>            # enable for this review

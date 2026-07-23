@@ -29,9 +29,9 @@
   <div class="book">Version-aware manuscript review with Katz</div>
   <button class="nav-toggle" type="button" aria-expanded="false">Show tutorial contents</button>
   <div class="part">Foundations</div><a href="#orientation">1. What Katz does</a><a href="#install">2. Prepare the workspace</a><a href="#paper2md">3. Convert a PDF when needed</a><a href="#register">4. Save the exact paper version</a>
-  <div class="part">Review</div><a href="#structure">5. Divide the paper into sections</a><a href="#spotters">6. Choose what to look for</a><a href="#edsl-run">7. Run the automated first pass</a><a href="#issues">8. Read the proposed findings</a><a href="#investigate">9. Decide which findings are real</a><a href="#human-triage">10. Ask people to classify findings</a><a href="#github-issues">11. Turn findings into work items</a>
-  <div class="part">Assessment</div><a href="#evaluate">12. Record whole-paper judgments</a><a href="#validate">13. Check the review data</a><a href="#report">14. Build the review website</a><a href="#revision">15. Track fixes in a revision</a>
-  <div class="part">Reference</div><a href="#commands">16. Command reference</a><a href="#checklist">17. Files created</a>
+  <div class="part">Review</div><a href="#structure">5. Divide the paper into sections</a><a href="#spotters">6. Choose what to look for</a><a href="#edsl-run">7. Run the automated first pass</a><a href="#one-shot-review">8. Ask for one expert review</a><a href="#journal-review">Import a journal referee report</a><a href="#issues">9. Read the proposed findings</a><a href="#investigate">10. Decide which findings are real</a><a href="#human-triage">11. Ask people to classify findings</a><a href="#github-issues">12. Turn findings into work items</a>
+  <div class="part">Assessment</div><a href="#evaluate">13. Record whole-paper judgments</a><a href="#validate">14. Check the review data</a><a href="#report">15. Build the review website</a><a href="#revision">16. Track fixes in a revision</a>
+  <div class="part">Reference</div><a href="#commands">17. Command reference</a><a href="#checklist">18. Files created</a>
   <div class="small">A practical tutorial for Katz, the version-aware paper-review ledger.</div>
 </nav>
 <main><article>
@@ -63,6 +63,7 @@
       <li><a href="#structure">Divide the paper into sections</a></li>
       <li><a href="#spotters">Choose what the review should look for</a></li>
       <li><a href="#edsl-run">Run the automated first pass</a></li>
+      <li><a href="#one-shot-review">Ask a frontier model for one expert review</a></li>
       <li><a href="#issues">Read the proposed findings</a></li>
       <li><a href="#investigate">Decide which findings are real</a></li>
       <li><a href="#human-triage">Ask people to classify findings</a></li>
@@ -568,11 +569,306 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
     <p>The fixture uses readable issue labels because generated UUIDs vary from run to run. The counts and meanings are the fields an agent should inspect: eleven EDSL results, three positive findings, three filed issues, and no unlocatable quotations.</p>
     <p>Answers with <code>found: false</code> are retained in <code>results.ep</code> but do not become issues. Answers whose quotation cannot be found are skipped rather than assigned a guessed anchor. Re-ingesting the same results is idempotent.</p>
     <p>The manuscript commit, spotter, scope, section, and source range travel into each scenario. EDSL adds model and execution metadata; ingestion verifies the commit and quotation and stores a result hash to prevent duplicates. Keep <code>results.ep</code>: it is the full run record, including null answers that do not become issues.</p>
-    <p>Imported issues remain drafts because a locatable quotation proves provenance, not correctness. The next chapter checks one candidate in detail.</p>
+    <p>Imported issues remain drafts because a locatable quotation proves provenance, not correctness. After the optional one-shot review, the investigation chapters check candidates in detail.</p>
+  </section>
+
+  <section id="one-shot-review">
+    <h2><span class="chapter">08</span> Ask a frontier model for one expert review</h2>
+    <p>The section-by-section pass is useful for recall and parallelism, but it can miss relationships that only become visible when one reviewer holds the entire argument in context. Katz therefore also builds a one-scenario EDSL job containing the complete registered manuscript and every registered figure as <code>FileStore</code> attachments. We ask one frontier model to produce an economics-style referee report, preserve that report in a Results object, and then let an agent convert its actionable concerns into Katz issues.</p>
+    <p>This is complementary to the earlier map-reduce pass. It is more expensive and less systematic across categories, but it is better suited to contribution, identification, economic mechanism, cross-section consistency, and the relationship between prose and figures.</p>
+
+    <h3>Package the manuscript and figures as attachments</h3>
+    <pre><code>katz paper review-jobs \
+  --output one-shot-review.jobs.ep</code></pre>
+    <p><code>review-jobs</code> reads the active registered version, creates a <code>FileStore</code> for <code>paper/manuscript.md</code>, creates another for each copied image, and puts them in one EDSL scenario. It embeds no model, so the same package can be inspected and rerun with another frontier model.</p>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["paper", "review-jobs", "--output", "one-shot-review.jobs.ep"],
+  "data": {
+    "object_type": "Jobs",
+    "output": "one-shot-review.jobs.ep",
+    "commit": "$COMMIT",
+    "question": "economic_review",
+    "scenario_count": 1,
+    "attachments": [
+      {
+        "key": "manuscript",
+        "filename": "manuscript.md",
+        "kind": "manuscript"
+      },
+      {
+        "key": "figure_1",
+        "filename": "welcome_plot.png",
+        "kind": "figure"
+      }
+    ],
+    "next": "ep run one-shot-review.jobs.ep --model &lt;frontier-model&gt; --output review-results.ep"
+  }
+}</code></pre>
+    <p>The EDSL package stores the actual file bytes, not fragile paths to files that may later change. The question references every <code>FileStore</code> key, which causes EDSL to send the Markdown manuscript and PNG figure as model attachments.</p>
+    <pre><code>ep inspect one-shot-review.jobs.ep</code></pre>
+    <pre><code>{
+  "status": "ok",
+  "data": {
+    "object_type": "Jobs",
+    "length": 1,
+    "question_count": 1,
+    "question_names": ["economic_review"],
+    "agent_count": 0,
+    "scenario_count": 1,
+    "model_count": 0
+  },
+  "warnings": []
+}</code></pre>
+
+    <h3>What the expert reviewer is asked to do</h3>
+    <p>The prompt adapts economics referee standards to the actual paper type. It asks about contribution and literature, economic mechanism, identification, estimation and inference, measurement, results, robustness, welfare or policy claims, reproducibility, exposition, and visual evidence. It explicitly tells the reviewer not to pretend that a software or methods paper contains an empirical design.</p>
+    <p>The returned Markdown has a conventional referee-report structure. Each actionable concern must also use a small parsing contract:</p>
+    <pre class="wrap"><code>### [major] Short title
+- Evidence: an exact, shortest quotation or a figure filename
+- Location: manuscript section or figure filename
+- Reason: why it matters for the economic argument or evidence
+- Suggested response: a concrete way to address it</code></pre>
+    <p>This is deliberately not the same schema as a spotter result. The model first writes a coherent whole-paper review; afterward, the agent extracts only the concerns that can be grounded in the registered source.</p>
+
+    <h3>Give the frontier model enough room to finish</h3>
+    <p>A whole-paper review can spend thousands of tokens reasoning before it emits the report. Do not rely on a small default completion budget. Create an explicit model configuration with maximum practical reasoning and output allowances:</p>
+    <pre><code>ep models create \
+  --model gpt-5.4 \
+  --temperature 0.2 \
+  --max-tokens 100000 \
+  --parameter reasoning_effort='"xhigh"' \
+  --output frontier-max.json</code></pre>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "data": {
+    "object_type": "ModelList",
+    "model_count": 1,
+    "models": [
+      {
+        "model_name": "gpt-5.4",
+        "service_name": "openai",
+        "parameters": {
+          "temperature": 0.2,
+          "max_tokens": 100000,
+          "reasoning_effort": "xhigh"
+        }
+      }
+    ]
+  },
+  "warnings": []
+}</code></pre>
+    <p>The large ceiling is not a request to make the report long. It prevents reasoning tokens from exhausting the completion allowance before the model can return its answer. The model may stop much earlier when the review is complete. Because an <code>xhigh</code> whole-paper interview can run past the normal 300-second worker default, the run below grants that individual interview up to 900 seconds.</p>
+
+    <h3>Run the one-shot review and preserve everything</h3>
+    <pre><code>ep run one-shot-review.jobs.ep \
+  --model_list frontier-max.json \
+  --task-timeout 900 \
+  --fresh \
+  --remote_inference_description "Katz tutorial: one-shot economics review with manuscript and figure attachments" \
+  --output one-shot-review-results.ep</code></pre>
+    <table><thead><tr><th>Option</th><th>Why it is present</th></tr></thead><tbody>
+      <tr><td><code>--model_list frontier-max.json</code></td><td>Applies the explicit frontier-model reasoning and output budgets.</td></tr>
+      <tr><td><code>--task-timeout 900</code></td><td>Allows each remotely executed interview to run for as long as 900 seconds. This is distinct from <code>--timeout</code>, which only limits how long the CLI polls when <code>--background --wait</code> is used.</td></tr>
+      <tr><td><code>--fresh</code></td><td>Prevents a cached lower-budget response from being reused.</td></tr>
+      <tr><td><code>--remote_inference_description</code></td><td>Makes the run recognizable in the Expected Parrot job history.</td></tr>
+      <tr><td><code>--output</code></td><td>Saves the complete EDSL Results object, including the report, attachments’ scenario metadata, prompts, model parameters, token usage, and raw response.</td></tr>
+    </tbody></table>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "data": {
+    "results": [],
+    "meta": {
+      "input_mode": "path",
+      "model_count": 1,
+      "agent_count": 1,
+      "scenario_count": 1,
+      "result_count": 1,
+      "saved": {
+        "path": "one-shot-review-results.ep",
+        "format": "ep",
+        "object_type": "Results"
+      }
+    }
+  },
+  "warnings": [
+    {
+      "code": "SUPPRESSED_STDOUT",
+      "message": "File-upload progress and the remote Results URL were captured to keep stdout as one JSON envelope."
+    }
+  ]
+}</code></pre>
+    <p><code>results: []</code> means the CLI did not duplicate the full report inline because it was written to the requested Results package; <code>result_count: 1</code> confirms that the interview completed.</p>
+
+    <h3>Read the report the model returned</h3>
+    <pre><code>ep results select \
+  --file one-shot-review-results.ep \
+  --column answer.economic_review \
+  --column model.model \
+  --column raw_model_response.economic_review_output_tokens \
+  --column raw_model_response.economic_review_thinking_tokens</code></pre>
+    <p>The completed high-reasoning run recommends major revision and returns five major concerns, four minor concerns, five questions for the author, and comments on <code>welcome_plot.png</code>. It used 7,162 reasoning tokens and returned a 2,134-token report. One concern reads:</p>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "data": {
+    "data": [
+      {
+        "answer.economic_review": "### [major] The continuous-treatment TMLE procedure is insufficiently formalized\n- Evidence: “constructs the final curve through a series of binary treatment comparisons”\n- Location: Methods\n- Reason: This appears to be the manuscript’s most novel technical element, but the description is too thin for readers to evaluate it.…\n- Suggested response: Define the target estimand formally, describe the grid/binarization scheme and interpolation step, and explain how targeting and uncertainty calculations are performed.…",
+        "model.model": "gpt-5.4",
+        "raw_model_response.economic_review_output_tokens": 2134,
+        "raw_model_response.economic_review_thinking_tokens": 7162
+      }
+    ]
+  },
+  "warnings": []
+}</code></pre>
+
+    <h3>Let the agent turn grounded concerns into draft issues</h3>
+    <p>There is no automatic one-shot ingestion command. A broad referee report can contain synthesis, questions, praise, and recommendations that should not all become issues. The agent reads each <code>[major]</code> or <code>[minor]</code> block, searches for its quoted evidence in the registered canonical copy, checks ambiguous matches, and files only grounded, actionable concerns.</p>
+    <pre><code>katz paper find \
+  "series of binary treatment comparisons"</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["paper", "find", "series of binary treatment comparisons"],
+  "data": [
+    {
+      "byte_start": 5299,
+      "byte_end": 5337,
+      "line_start": 101,
+      "line_end": 101,
+      "resolved_text": "series of binary treatment comparisons",
+      "contains_math": false,
+      "section": "methods"
+    },
+    {
+      "byte_start": 6133,
+      "byte_end": 6171,
+      "line_start": 114,
+      "line_end": 114,
+      "resolved_text": "series of binary treatment comparisons",
+      "contains_math": false,
+      "section": "methods"
+    }
+  ]
+}</code></pre>
+    <p>The phrase occurs twice. Reading the surrounding Methods text shows that the first occurrence describes TMLE and the second mediation, so this issue anchors the first and records the implementation files the investigation should inspect:</p>
+    <pre><code>katz issue write \
+  --title "Continuous-treatment TMLE construction is underspecified" \
+  --byte-start 5299 \
+  --byte-end 5337 \
+  --body "The one-shot economics review identifies the binary-comparison construction as central to the method, but the manuscript does not define the estimand, grid, connection rule, boundary behavior, or confidence-interval construction. Investigate the implementation and cited method before confirming." \
+  --artifacts "causal_curve/tmle_core.py,causal_curve/tmle_regressor.py" \
+  --meta '{"severity":"major","source":"one-shot-economic-review","results_file":"one-shot-review-results.ep"}'</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["issue", "write", "..."],
+  "data": {
+    "id": "386d5be264a24160b399feef59e7e178",
+    "title": "Continuous-treatment TMLE construction is underspecified",
+    "artifacts": [
+      "causal_curve/tmle_core.py",
+      "causal_curve/tmle_regressor.py"
+    ],
+    "location": {
+      "byte_start": 5299,
+      "byte_end": 5337,
+      "line_start": 101,
+      "line_end": 101,
+      "resolved_text": "series of binary treatment comparisons"
+    },
+    "meta": {
+      "severity": "major",
+      "source": "one-shot-economic-review",
+      "results_file": "one-shot-review-results.ep"
+    },
+    "state": "draft"
+  }
+}</code></pre>
+    <p>The issue remains a draft. The frontier model has supplied a serious hypothesis and a useful investigation plan, not a final verdict. The same investigation workflow used for spotter findings now checks the cited methods, code, documentation, and literature before confirming or rejecting it.</p>
+  </section>
+
+  <section id="journal-review">
+    <h2>Turn a journal referee report into grounded candidate issues</h2>
+    <p>Katz can also start from a review written by a person: a journal referee report, an editor letter, or comments returned during a revise-and-resubmit. The original document is preserved beside the registered manuscript version. Katz then creates an EDSL job that gives a parsing model both files and asks it to extract only actionable comments that can be tied to exact manuscript text. The model is a parser here, not another referee: it must preserve the human reviewer’s meaning and add no criticisms of its own.</p>
+
+    <h3>Preserve the original report and its provenance</h3>
+    <pre><code>katz review add reviews/reviewer-2.md \
+  --reviewer "Reviewer 2" \
+  --venue "Journal of Things" \
+  --round R1</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["review", "add", "reviews/reviewer-2.md", "--reviewer", "Reviewer 2", "--venue", "Journal of Things", "--round", "R1"],
+  "data": {
+    "schema_version": 1,
+    "id": "review-6bb45db9da72",
+    "commit": "9ee12f3…",
+    "reviewer": "Reviewer 2",
+    "venue": "Journal of Things",
+    "round": "R1",
+    "source_name": "reviewer-2.md",
+    "preserved_path": ".katz/versions/9ee12f3…/reviews/review-6bb45db9da72/review.md",
+    "sha256": "sha256:6bb45db9da72…",
+    "already_registered": false,
+    "next": "katz review jobs review-6bb45db9da72 --output journal-review.jobs.ep"
+  }
+}</code></pre>
+    <p>The content hash makes registration idempotent: adding the same report again returns the existing record. Reviewer labels may be pseudonyms; do not place confidential identities or editor-only material in a repository that will be published.</p>
+
+    <h3>Build and run the parsing job</h3>
+    <pre><code>katz review jobs review-6bb45db9da72 \
+  --output journal-review.jobs.ep</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["review", "jobs", "review-6bb45db9da72", "--output", "journal-review.jobs.ep"],
+  "data": {
+    "object_type": "Jobs",
+    "output": "journal-review.jobs.ep",
+    "commit": "9ee12f3…",
+    "review_id": "review-6bb45db9da72",
+    "question": "journal_review_issues",
+    "attachments": ["manuscript.md", "review.md"],
+    "next": "ep run journal-review.jobs.ep --model &lt;model-name&gt; --output journal-review-results.ep",
+    "ingest_next": "katz review ingest journal-review-results.ep"
+  }
+}</code></pre>
+    <p>The single scenario contains the exact registered manuscript, the preserved human report, the Katz commit, and the review ID. The question asks for a JSON array containing a title, explanation, exact manuscript quotation, exact reviewer comment, severity, and requested response for each actionable concern. Praise, editorial logistics, general publication recommendations, and ungrounded comments stay in the source report but do not become issues.</p>
+    <pre><code>ep run journal-review.jobs.ep \
+  --model gpt-5.4 \
+  --task-timeout 900 \
+  --output journal-review-results.ep</code></pre>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "data": {
+    "meta": {
+      "input_mode": "path",
+      "scenario_count": 1,
+      "result_count": 1,
+      "saved": "journal-review-results.ep"
+    }
+  }
+}</code></pre>
+
+    <h3>File the grounded comments as drafts</h3>
+    <pre><code>katz review ingest journal-review-results.ep</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["review", "ingest", "journal-review-results.ep"],
+  "data": {
+    "results": "journal-review-results.ep",
+    "commit": "9ee12f3…",
+    "result_count": 1,
+    "candidates": 4,
+    "issues_filed": 3,
+    "skipped": 1,
+    "issue_ids": ["7c02d31…", "77e64ac…", "d79bbca…"]
+  }
+}</code></pre>
+    <p>Ingestion verifies the embedded commit and review ID, locates every proposed quotation in the canonical manuscript, and skips comments it cannot ground instead of guessing a location. Each filed issue retains the human report ID, severity, exact reviewer language, parsing Results path, and an idempotency hash. The issues begin in <code>draft</code> state because an agent should still check that the parser split and interpreted the human comment correctly.</p>
   </section>
 
   <section id="issues">
-    <h2><span class="chapter">08</span> Read the findings proposed by the models</h2>
+    <h2><span class="chapter">09</span> Read the findings proposed by the models</h2>
     <p><code>katz spotter ingest</code> files verified positive Results as candidates in <code>draft</code> state. A strong issue identifies evidence, explains why it matters, and points toward an actionable response. List candidates by spotter, inspect the cited text, and use <code>paper resolve</code> when checking an anchor.</p>
     <pre><code>katz issue list --state draft</code></pre>
     <p>Lists all draft candidates for the active version. <code>--state</code> accepts a lifecycle state such as <code>draft</code>, <code>confirmed</code>, or <code>rejected</code>.</p>
@@ -788,7 +1084,7 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
   </section>
 
   <section id="investigate">
-    <h2><span class="chapter">09</span> Decide which proposed findings are real</h2>
+    <h2><span class="chapter">10</span> Decide which proposed findings are real</h2>
     <p>Katz includes an agent-readable investigation workflow. <code>katz guide skill investigate-issues</code> prints the complete procedure: select drafts, read the full registered manuscript, inspect surrounding text and source artifacts, deduplicate related candidates, record a verdict, and update state. The guide is procedural Markdown rather than another model run.</p>
     <pre><code>katz guide skill investigate-issues</code></pre>
     <pre class="wrap"><code>{
@@ -960,7 +1256,7 @@ Would run 1 calls.</code></pre>
   </section>
 
   <section id="human-triage">
-    <h2><span class="chapter">10</span> Ask human reviewers to classify proposed findings</h2>
+    <h2><span class="chapter">11</span> Ask human reviewers to classify proposed findings</h2>
     <p>Agent investigation is the default workflow, but some decisions should be assigned to a human editor, domain expert, or paper author. EDSL Humanize can present Katz issues as a browser survey and return the responses as a standard <code>Results</code> object. The agent then applies those decisions to Katz explicitly.</p>
     <p>Do not humanize the original <code>jobs.ep</code>: that survey asks a reviewer to <em>find</em> issues in manuscript sections. Human triage starts after issues exist, so it needs a new survey whose scenarios are issue records and whose questions ask for verdicts, reasoning, severity, and an adequate response.</p>
 
@@ -1197,7 +1493,7 @@ After checking the paper and relevant artifacts, how should this candidate be cl
   </section>
 
   <section id="github-issues">
-    <h2><span class="chapter">11</span> Turn confirmed findings into GitHub work items</h2>
+    <h2><span class="chapter">12</span> Turn confirmed findings into GitHub work items</h2>
     <p>Once findings are investigated, Katz provides a second agent-readable workflow for turning them into actionable GitHub issues. This is deliberately not a <code>katz github</code> API: Katz supplies the structured review data and composition procedure, while the authenticated <code>gh</code> CLI performs the external write only after the user approves the proposed title and body.</p>
     <pre><code>katz guide skill create-github-issues</code></pre>
     <pre><code>---
@@ -1266,7 +1562,7 @@ or describe the example as an association.
   </section>
 
   <section id="evaluate">
-    <h2><span class="chapter">12</span> Record judgments about the paper as a whole</h2>
+    <h2><span class="chapter">13</span> Record judgments about the paper as a whole</h2>
     <p>Issues are tied to particular passages. An evaluation records a paper-level judgment that may depend on evidence spread across sections—for example, whether the design supports the paper’s claims. Evaluations are entered deliberately after reading; they are not additional spotter jobs.</p>
     <pre><code>katz eval init-catalog</code></pre>
     <p>As with spotters, this copies reusable definitions into the repository catalog. The response lists every added criterion; only the relevant entry is shown here:</p>
@@ -1380,7 +1676,7 @@ or describe the example as an association.
   </section>
 
   <section id="validate">
-    <h2><span class="chapter">13</span> Check that the review data is internally consistent</h2>
+    <h2><span class="chapter">14</span> Check that the review data is internally consistent</h2>
     <p>Validation checks the internal consistency of registered versions, source hashes, section bounds, issue anchors, and references. Run it before relying on a report and after any manual changes to review state.</p>
     <pre><code>katz validate</code></pre>
     <p>Checks the active version by default. Add <code>--commit SHA</code> to validate another registered version. The worked ledger passes:</p>
@@ -1398,7 +1694,7 @@ or describe the example as an association.
   </section>
 
   <section id="report">
-    <h2><span class="chapter">14</span> Build a website for reading the review</h2>
+    <h2><span class="chapter">15</span> Build a website for reading the review</h2>
     <p>Once material issues have been investigated and criteria answered, generate a navigable HTML report:</p>
     <pre><code>katz report generate --output review.html</code></pre>
     <p><code>--output</code> chooses the destination HTML file. Katz also writes the Expected Parrot logo beside it. The report reads the ledger; it does not rerun models or alter issue state.</p>
@@ -1435,7 +1731,7 @@ or describe the example as an association.
   </section>
 
   <section id="revision">
-    <h2><span class="chapter">15</span> Track what was fixed in a revised paper</h2>
+    <h2><span class="chapter">16</span> Track what was fixed in a revised paper</h2>
     <p>A revision receives a new Git commit and a new Katz version because its byte ranges no longer describe the old manuscript. Prior issues stay with the version where they were found; review them explicitly rather than moving their anchors onto changed prose.</p>
     <pre><code>git add paper/paper_ventilated.md</code></pre>
     <p>Stage the revised version of the same canonical file used in this tutorial.</p>
@@ -1463,7 +1759,7 @@ or describe the example as an association.
   </section>
 
   <section id="commands">
-    <h2><span class="chapter">16</span> Command reference</h2>
+    <h2><span class="chapter">17</span> Command reference</h2>
     <table><thead><tr><th>Command family</th><th>Purpose</th></tr></thead><tbody>
       <tr><td><code>katz init</code></td><td>Create repository-scoped review state.</td></tr>
       <tr><td><code>katz paper …</code></td><td>Register versions, map sections, inspect sentences, and resolve locations.</td></tr>
@@ -1512,12 +1808,13 @@ or describe the example as an association.
   </section>
 
   <section id="checklist">
-    <h2><span class="chapter">17</span> Files and records created by the workflow</h2>
+    <h2><span class="chapter">18</span> Files and records created by the workflow</h2>
     <p>The tutorial ends with four related artifacts. Keeping their roles distinct is the central Katz workflow:</p>
     <table><thead><tr><th>Artifact</th><th>What it contains</th><th>Why it remains separate</th></tr></thead><tbody>
       <tr><td><code>.katz/</code></td><td>Registered versions, maps, frozen spotters, issues, investigations, suggestions, and evaluations.</td><td>This is the version-aware review ledger and source of truth.</td></tr>
       <tr><td><code>jobs.ep</code></td><td>The EDSL survey, manuscript scenarios, spotter instructions, and run configuration inputs.</td><td>It can be inspected and costed before any model call.</td></tr>
       <tr><td><code>results.ep</code></td><td>Complete positive and null model results with scenario and model provenance.</td><td>It preserves more than the positive findings imported into Katz.</td></tr>
+      <tr><td><code>one-shot-review.jobs.ep</code>, <code>frontier-max.json</code>, and <code>one-shot-review-results.ep</code></td><td>The attached whole manuscript and figures, explicit frontier-model budget, and complete economics-style referee response.</td><td>They preserve the one-shot review separately from the section-level spotter pass and the issues an agent later extracts.</td></tr>
       <tr><td><code>triage-survey.ep</code>, <code>triage-scenarios.ep</code>, and <code>human-triage-results.ep</code></td><td>The human review instrument, issue payloads, and returned decisions.</td><td>They preserve the human judgment layer before an agent applies it to Katz.</td></tr>
       <tr><td><code>review.html</code>, <code>investigated-review.html</code>, and <code>logo.png</code></td><td>Human-readable views before and after investigation, with their source passages.</td><td>They are regenerated outputs, not the underlying review state.</td></tr>
       <tr><td><code>github-issue.md</code></td><td>An approved, traceable issue body assembled from confirmed findings.</td><td>It is reviewed before <code>gh</code> creates any external issue.</td></tr>

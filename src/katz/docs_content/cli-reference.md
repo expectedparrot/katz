@@ -42,6 +42,7 @@ katz paper section <id>               # show one section
 katz paper sentences [--section <id>] [--from-line N] [--to-line N]
 katz paper resolve <byte_start> <byte_end>  # resolve byte range to text
 katz paper find <text> [--mode exact] [--ignore-case] [--limit 20]
+katz paper review-jobs --output one-shot-review.jobs.ep  # whole paper + figures
 
 katz paper auto-chunk [--commit <sha>]     # auto-detect sections from headings
 katz paper add-sections --sections '[...]' # append sections manually
@@ -156,6 +157,22 @@ katz eval respond \
 
 katz eval results [--category <cat>]            # list all responses
 ```
+
+---
+
+## `katz review` — Human Journal Reviews
+
+```bash
+katz review add review.md \
+  [--reviewer "Reviewer 2"] [--venue "Journal"] [--round R1]
+katz review list
+katz review jobs <review-id> --output journal-review.jobs.ep
+katz review ingest journal-review-results.ep [--state draft]
+```
+
+`add` preserves the original human report with the active manuscript version.
+`jobs` attaches that report and the canonical manuscript to an EDSL parsing job.
+`ingest` files only comments whose proposed quotation resolves in the manuscript.
 
 ---
 
