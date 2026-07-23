@@ -28,10 +28,10 @@
   <a class="brand" href="https://www.expectedparrot.com/"><strong>Expected Parrot</strong><small>Open-source research tools</small></a>
   <div class="book">Version-aware manuscript review with Katz</div>
   <button class="nav-toggle" type="button" aria-expanded="false">Show tutorial contents</button>
-  <div class="part">Foundations</div><a href="#orientation">1. The paper and the method</a><a href="#install">2. Set up the worked example</a><a href="#paper2md">3. Starting from a PDF</a><a href="#register">4. Register the paper</a>
-  <div class="part">Review</div><a href="#structure">5. Map the paper</a><a href="#spotters">6. Add and enable spotters</a><a href="#edsl-run">7. Run spotters with EDSL</a><a href="#issues">8. Read the candidate issues</a><a href="#investigate">9. Investigate findings</a><a href="#human-triage">10. Human triage with EDSL</a><a href="#github-issues">11. Create GitHub issues</a>
-  <div class="part">Assessment</div><a href="#evaluate">12. Evaluate criteria</a><a href="#validate">13. Validate the ledger</a><a href="#report">14. Generate the report</a><a href="#revision">15. Review a revision</a>
-  <div class="part">Reference</div><a href="#commands">16. Command map</a><a href="#checklist">17. Artifacts produced</a>
+  <div class="part">Foundations</div><a href="#orientation">1. What Katz does</a><a href="#install">2. Prepare the workspace</a><a href="#paper2md">3. Convert a PDF when needed</a><a href="#register">4. Save the exact paper version</a>
+  <div class="part">Review</div><a href="#structure">5. Divide the paper into sections</a><a href="#spotters">6. Choose what to look for</a><a href="#edsl-run">7. Run the automated first pass</a><a href="#issues">8. Read the proposed findings</a><a href="#investigate">9. Decide which findings are real</a><a href="#human-triage">10. Ask people to classify findings</a><a href="#github-issues">11. Turn findings into work items</a>
+  <div class="part">Assessment</div><a href="#evaluate">12. Record whole-paper judgments</a><a href="#validate">13. Check the review data</a><a href="#report">14. Build the review website</a><a href="#revision">15. Track fixes in a revision</a>
+  <div class="part">Reference</div><a href="#commands">16. Command reference</a><a href="#checklist">17. Files created</a>
   <div class="small">A practical tutorial for Katz, the version-aware paper-review ledger.</div>
 </nav>
 <main><article>
@@ -56,28 +56,28 @@
   <section class="contents" aria-labelledby="contents-heading">
     <h2 id="contents-heading">Contents</h2>
     <ol>
-      <li><a href="#orientation">The paper and the method</a></li>
-      <li><a href="#install">Set up the worked example</a></li>
-      <li><a href="#paper2md">Starting from a PDF</a></li>
-      <li><a href="#register">Register the paper</a></li>
-      <li><a href="#structure">Map the paper</a></li>
-      <li><a href="#spotters">Add and enable spotters</a></li>
-      <li><a href="#edsl-run">Run spotters with EDSL</a></li>
-      <li><a href="#issues">Read candidate issues</a></li>
-      <li><a href="#investigate">Investigate findings</a></li>
-      <li><a href="#human-triage">Human triage with EDSL</a></li>
-      <li><a href="#github-issues">Create GitHub issues</a></li>
-      <li><a href="#evaluate">Evaluate criteria</a></li>
-      <li><a href="#validate">Validate the ledger</a></li>
-      <li><a href="#report">Generate the report</a></li>
-      <li><a href="#revision">Review a revision</a></li>
-      <li><a href="#commands">Command map</a></li>
-      <li><a href="#checklist">Artifacts produced</a></li>
+      <li><a href="#orientation">What Katz does</a></li>
+      <li><a href="#install">Prepare the workspace</a></li>
+      <li><a href="#paper2md">Convert a PDF when needed</a></li>
+      <li><a href="#register">Save the exact paper version</a></li>
+      <li><a href="#structure">Divide the paper into sections</a></li>
+      <li><a href="#spotters">Choose what the review should look for</a></li>
+      <li><a href="#edsl-run">Run the automated first pass</a></li>
+      <li><a href="#issues">Read the proposed findings</a></li>
+      <li><a href="#investigate">Decide which findings are real</a></li>
+      <li><a href="#human-triage">Ask people to classify findings</a></li>
+      <li><a href="#github-issues">Turn confirmed findings into work items</a></li>
+      <li><a href="#evaluate">Record whole-paper judgments</a></li>
+      <li><a href="#validate">Check the review data</a></li>
+      <li><a href="#report">Build the review website</a></li>
+      <li><a href="#revision">Track fixes in a revision</a></li>
+      <li><a href="#commands">Command reference</a></li>
+      <li><a href="#checklist">Files created</a></li>
     </ol>
   </section>
 
   <section id="orientation">
-    <h2><span class="chapter">01</span> The paper and the method</h2>
+    <h2><span class="chapter">01</span> What Katz does and what we will review</h2>
     <p>Katz stores a manuscript review as structured, repository-scoped data. A registered paper is tied to a Git commit; review instructions are stored as spotters; model findings become source-anchored issues; and the resulting ledger can be validated and rendered as HTML. This tutorial builds each of those artifacts in order so the relationship between them remains visible.</p>
     <p>The worked example is Roni W. Kobrosly’s short software paper <a href="https://joss.theoj.org/papers/10.21105/joss.02523"><em>causal-curve: A Python Causal Inference Package to Estimate Causal Dose-Response Curves</em></a>, published by the Journal of Open Source Software in 2020. Its Markdown source is public, and its <a href="https://github.com/openjournals/joss-reviews/issues/2523">completed public peer review</a> provides useful context when checking model-generated concerns.</p>
     <p><strong>This is a workflow demonstration, not a new assessment of the author or published article.</strong> We review the source to learn Katz. JOSS’s accepted version and public review remain the authoritative publication record.</p>
@@ -85,7 +85,7 @@
   </section>
 
   <section id="install">
-    <h2><span class="chapter">02</span> Set up the worked example</h2>
+    <h2><span class="chapter">02</span> Prepare the workspace and paper</h2>
     <p>We work inside the paper’s Git repository because the current commit is Katz’s version identifier. A separate tutorial branch keeps the generated manuscript derivative and review ledger away from the upstream project history.</p>
     <h3>Install Katz and EDSL</h3>
     <pre><code>python -m pip install \
@@ -141,7 +141,7 @@
   </section>
 
   <section id="paper2md">
-    <h2><span class="chapter">03</span> Starting from a PDF with paper2md</h2>
+    <h2><span class="chapter">03</span> If you only have a PDF, convert it first</h2>
     <p><strong>This is an optional input path.</strong> Our worked example already has author-provided Markdown, so continue to <a href="#register">Register a manuscript</a> if you are following it. When a PDF is the only source available, use <a href="https://github.com/expectedparrot/paper2md">paper2md</a> to produce the Markdown and image bundle that Katz needs for stable text anchors.</p>
     <pre><code>python -m pip install \
   "paper2md @ git+https://github.com/expectedparrot/paper2md.git"</code></pre>
@@ -202,7 +202,7 @@
   </section>
 
   <section id="register">
-    <h2><span class="chapter">04</span> Register a manuscript</h2>
+    <h2><span class="chapter">04</span> Save the exact paper version in Katz</h2>
     <p>Registration copies the committed <code>paper/paper_ventilated.md</code> into versioned Katz state, records its checksum, and indexes its prose into addressable sentences. The current <code>causal-curve</code> repository commit identifies the exact review version.</p>
     <pre><code>katz paper register \
   --canonical paper/paper_ventilated.md \
@@ -256,7 +256,7 @@
   </section>
 
   <section id="structure">
-    <h2><span class="chapter">05</span> Map the paper</h2>
+    <h2><span class="chapter">05</span> Divide the paper into reviewable sections</h2>
     <p>Sections give readers meaningful labels while byte offsets provide exact anchors. For Markdown and structurally regular sources, start with automatic chunking:</p>
     <pre><code>katz paper auto-chunk</code></pre>
     <p>On the registered ventilated <code>causal-curve</code> source, Katz finds five Markdown heading regions:</p>
@@ -338,10 +338,10 @@
   </section>
 
   <section id="spotters">
-    <h2><span class="chapter">06</span> Add and enable spotters</h2>
+    <h2><span class="chapter">06</span> Choose what kinds of problems to look for</h2>
     <p>A spotter is a Markdown instruction file: YAML frontmatter declares whether it applies to each section or the whole manuscript, the main body tells the reviewer or model what to look for, and an optional <code>## Investigation</code> block explains how to confirm or reject a candidate finding.</p>
     <p>We are going to apply enabled spotters to the registered manuscript. For a section-scoped spotter, Katz pairs the instructions with each mapped section; for a holistic spotter, it pairs them with the complete paper. The next chapter sends those combinations to reviewing models and turns returned candidates into manuscript-anchored issues.</p>
-    <h3>What a spotter looks like</h3>
+    <h3>The review instructions Katz calls “spotters”</h3>
     <p>A spotter is ordinary Markdown that an agent can read and edit. This is the complete built-in <code>causal_language.md</code> definition we will use:</p>
     <pre><code>---
 scope: section
@@ -374,21 +374,21 @@ Pay special attention to:
     </tbody></table>
     <p><strong>Spotters are review procedures, not keyword lists.</strong> A useful definition states the standard, identifies relevant evidence, and explains how to disconfirm a tempting false positive.</p>
     <p>The distinction between the catalog and the enabled set is important: the catalog contains reusable definitions, while enabling copies a definition into this manuscript version. A later edit to the catalog therefore cannot silently change the instructions associated with an existing run.</p>
-    <h3>Populate the repository catalog</h3>
+    <h3>Install the built-in review checks</h3>
     <pre><code>katz spotter init-catalog</code></pre>
     <p>Copies the built-in <code>default</code> collection into <code>.katz/spotters/</code>, skipping definitions already present. Use <code>--preset NAME</code> to select another installed collection.</p>
-    <h3>Inspect available definitions</h3>
+    <h3>See which checks are available</h3>
     <pre><code>katz spotter catalog</code></pre>
     <p>Lists spotters available in the repository catalog. Add <code>--scope section</code> or <code>--scope holistic</code> to filter by execution scope.</p>
-    <h3>Enable two lenses for this version</h3>
+    <h3>Choose two checks for this paper</h3>
     <pre><code>katz spotter enable causal_language</code></pre>
     <p>The positional name selects <code>.katz/spotters/causal_language.md</code>. Katz copies it into the active version, freezing the instructions used for this review. Optional <code>--commit SHA</code> targets another registered version.</p>
     <pre><code>katz spotter enable overclaiming</code></pre>
     <p>Enables the same way, but looks for conclusions whose strength exceeds the available evidence.</p>
-    <h3>Verify the enabled set</h3>
+    <h3>Confirm what this paper will use</h3>
     <pre><code>katz spotter list</code></pre>
     <p>Lists definitions enabled for the active version. <code>--scope</code> filters the list and <code>--commit</code> selects another version.</p>
-    <h3>Add a new spotter for this paper</h3>
+    <h3>Write a paper-specific review check</h3>
     <p>The <code>causal-curve</code> article is a software paper, so we add a lens that asks whether statements about implemented functionality are supported by evidence or a reproducible pointer. Because the claim may appear in one section while support appears elsewhere, this is a <em>holistic</em> spotter.</p>
     <pre><code>katz spotter add \
   --name software_claim_support \
@@ -410,10 +410,10 @@ Pay special attention to:
   </section>
 
   <section id="edsl-run">
-    <h2><span class="chapter">07</span> Build, run, and ingest EDSL jobs</h2>
+    <h2><span class="chapter">07</span> Run an automated first pass over the paper</h2>
     <p>Katz prepares the review but does not run models. It combines the active manuscript version, mapped sections, and enabled spotters into a standard EDSL <code>Jobs</code> object. The object is saved as <code>jobs.ep</code>, so it can be inspected, costed, run, shared, or archived with the normal <code>ep</code> CLI.</p>
     <p>This separation lets Katz own manuscript identity and anchoring while EDSL owns model selection and execution. The number of scenarios is <code>sections × section spotters + holistic spotters</code>, so scope choices made in the previous chapter directly determine the work and cost of the run.</p>
-    <h3>Build the Jobs object</h3>
+    <h3>Package the paper and review instructions</h3>
     <pre><code>katz spotter jobs --output jobs.ep</code></pre>
     <table><thead><tr><th>Option</th><th>Meaning</th></tr></thead><tbody>
       <tr><td><code>--output jobs.ep</code></td><td>Writes a real EDSL <code>Jobs</code> package. Katz refuses to overwrite an existing package.</td></tr>
@@ -446,7 +446,7 @@ Pay special attention to:
     "next": "ep run jobs.ep --model &lt;model-name&gt; --output results.ep"
   }
 }</code></pre>
-    <h3>What is actually inside <code>jobs.ep</code></h3>
+    <h3>What Katz puts in the review package</h3>
     <p>The package is a serialized EDSL <code>Jobs</code> object, not a Katz-specific script. It contains one survey crossed with eleven scenarios. It contains no agents and no models: the reviewing model is selected later by <code>ep run</code>.</p>
     <table><thead><tr><th>Part</th><th>Contents</th><th>Purpose</th></tr></thead><tbody>
       <tr><td>Survey</td><td>One structured <code>QuestionDict</code> named <code>spotter_result</code>.</td><td>Forces every model response into the same four-field answer schema.</td></tr>
@@ -483,7 +483,7 @@ Apply the spotter carefully. Return found=false when there is no genuine,
 substantive issue. When found=true, quote the exact shortest passage that
 demonstrates the issue and explain why it matters. Do not invent text.</code></pre>
     <p>The <code>QuestionDict</code> answer keys are <code>found</code> (boolean), <code>title</code>, <code>quoted_text</code>, and <code>description</code> (strings). This schema is why ingestion can distinguish null results, locate exact quotations, create issue titles and bodies, and avoid an ad hoc text parser.</p>
-    <h3>Inspect and estimate before running</h3>
+    <h3>Check the package and estimated cost</h3>
     <pre><code>ep inspect jobs.ep</code></pre>
     <p>Loads the package without model calls and confirms the structure described above:</p>
     <pre><code>{
@@ -501,7 +501,7 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
 }</code></pre>
     <pre><code>ep jobs cost jobs.ep</code></pre>
     <p>Estimates the cost of the packaged job. Add <code>--iterations N</code> to estimate repeated runs.</p>
-    <h3>Run with the EDSL CLI</h3>
+    <h3>Ask a model to review each package item</h3>
     <pre><code>ep run jobs.ep \
   --model gpt-4.1-mini \
   --output results.ep</code></pre>
@@ -511,7 +511,7 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
       <tr><td><code>--output results.ep</code></td><td>Preserves the complete EDSL <code>Results</code> object, including answers, scenarios, model metadata, and run provenance.</td></tr>
     </tbody></table>
     <p>Use <code>--local</code> to disable remote inference. For an asynchronous remote run, use <code>--background</code>, then retrieve the completed object with <code>ep jobs results JOB_UUID --output results.ep</code>.</p>
-    <h3>Import candidate issues into Katz</h3>
+    <h3>Bring the proposed findings back into Katz</h3>
     <pre><code>katz spotter ingest results.ep</code></pre>
     <p>The positional path must contain an EDSL <code>Results</code> object. Katz verifies the embedded manuscript commit and enabled spotter, locates the exact quoted text within the original scenario range, and files valid findings as draft issues. <code>--state STATE</code> changes the initial state; <code>--commit SHA</code> selects a registered version.</p>
     <p>Because model findings and UUIDs vary between runs, the tutorial uses a deterministic completed-run fixture with three positive findings. Ingestion returns:</p>
@@ -539,7 +539,7 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
   </section>
 
   <section id="issues">
-    <h2><span class="chapter">08</span> Read the candidate issues</h2>
+    <h2><span class="chapter">08</span> Read the findings proposed by the models</h2>
     <p><code>katz spotter ingest</code> files verified positive Results as candidates in <code>draft</code> state. A strong issue identifies evidence, explains why it matters, and points toward an actionable response. List candidates by spotter, inspect the cited text, and use <code>paper resolve</code> when checking an anchor.</p>
     <pre><code>katz issue list --state draft</code></pre>
     <p>Lists all draft candidates for the active version. <code>--state</code> accepts a lifecycle state such as <code>draft</code>, <code>confirmed</code>, or <code>rejected</code>.</p>
@@ -732,7 +732,7 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
   </section>
 
   <section id="investigate">
-    <h2><span class="chapter">09</span> Investigate, merge, and suggest</h2>
+    <h2><span class="chapter">09</span> Decide which proposed findings are real</h2>
     <p>Katz includes an agent-readable investigation workflow. <code>katz guide skill investigate-issues</code> prints the complete procedure: select drafts, read the full registered manuscript, inspect surrounding text and source artifacts, deduplicate related candidates, record a verdict, and update state. The guide is procedural Markdown rather than another model run.</p>
     <pre><code>katz guide skill investigate-issues</code></pre>
     <pre><code>---
@@ -823,11 +823,11 @@ and codebase, records investigation findings, and updates issue state.</code></p
   </section>
 
   <section id="human-triage">
-    <h2><span class="chapter">10</span> Send Katz issues to a human reviewer with EDSL</h2>
+    <h2><span class="chapter">10</span> Ask human reviewers to classify proposed findings</h2>
     <p>Agent investigation is the default workflow, but some decisions should be assigned to a human editor, domain expert, or paper author. EDSL Humanize can present Katz issues as a browser survey and return the responses as a standard <code>Results</code> object. The agent then applies those decisions to Katz explicitly.</p>
     <p>Do not humanize the original <code>jobs.ep</code>: that survey asks a reviewer to <em>find</em> issues in manuscript sections. Human triage starts after issues exist, so it needs a new survey whose scenarios are issue records and whose questions ask for verdicts, reasoning, severity, and an adequate response.</p>
 
-    <h3>Build one scenario per Katz issue</h3>
+    <h3>Prepare one survey item per proposed finding</h3>
     <p>Start with <code>katz issue list</code> and <code>katz issue show</code>. For each candidate, preserve the Katz ID, title, spotter, source location, exact quotation, and generated reason in a scenario. The complete three-item file for this example is <a href="https://github.com/expectedparrot/katz/blob/main/examples/causal-curve-review/human-triage-scenarios.json"><code>human-triage-scenarios.json</code></a>; one entry looks like this:</p>
     <pre class="wrap"><code>[
   {
@@ -865,7 +865,7 @@ and codebase, records investigation findings, and updates issue state.</code></p
   "warnings": []
 }</code></pre>
 
-    <h3>Build the human triage survey</h3>
+    <h3>Ask the human reviewer four questions</h3>
     <p>The first question renders scenario fields as Markdown and asks for the investigation verdict:</p>
     <pre class="wrap"><code>ep surveys create \
   --question-type multiple_choice \
@@ -982,7 +982,7 @@ After checking the paper and relevant artifacts, how should this candidate be cl
   "warnings": []
 }</code></pre>
 
-    <h3>Create the Humanize survey</h3>
+    <h3>Publish the browser survey</h3>
     <p>The <code>ordered</code> scenario method assigns the next issue to each new response. After three completed responses, every candidate in this example has been reviewed once and each Results row retains a single <code>scenario.issue_id</code>. Humanize does not use an EDSL model or agent here—the respondent is the human:</p>
     <pre><code>ep humanize create \
   --survey triage-survey.ep \
@@ -1060,7 +1060,7 @@ After checking the paper and relevant artifacts, how should this candidate be cl
   </section>
 
   <section id="github-issues">
-    <h2><span class="chapter">11</span> Create GitHub issues from confirmed findings</h2>
+    <h2><span class="chapter">11</span> Turn confirmed findings into GitHub work items</h2>
     <p>Once findings are investigated, Katz provides a second agent-readable workflow for turning them into actionable GitHub issues. This is deliberately not a <code>katz github</code> API: Katz supplies the structured review data and composition procedure, while the authenticated <code>gh</code> CLI performs the external write only after the user approves the proposed title and body.</p>
     <pre><code>katz guide skill create-github-issues</code></pre>
     <pre><code>---
@@ -1129,7 +1129,7 @@ or describe the example as an association.
   </section>
 
   <section id="evaluate">
-    <h2><span class="chapter">12</span> Evaluate review criteria</h2>
+    <h2><span class="chapter">12</span> Record judgments about the paper as a whole</h2>
     <p>Issues are tied to particular passages. An evaluation records a paper-level judgment that may depend on evidence spread across sections—for example, whether the design supports the paper’s claims. Evaluations are entered deliberately after reading; they are not additional spotter jobs.</p>
     <pre><code>katz eval init-catalog</code></pre>
     <p>As with spotters, this copies reusable definitions into the repository catalog. The response lists every added criterion; only the relevant entry is shown here:</p>
@@ -1179,7 +1179,7 @@ or describe the example as an association.
   </section>
 
   <section id="validate">
-    <h2><span class="chapter">13</span> Validate the ledger</h2>
+    <h2><span class="chapter">13</span> Check that the review data is internally consistent</h2>
     <p>Validation checks the internal consistency of registered versions, source hashes, section bounds, issue anchors, and references. Run it before relying on a report and after any manual changes to review state.</p>
     <pre><code>katz validate</code></pre>
     <p>Checks the active version by default. Add <code>--commit SHA</code> to validate another registered version. The worked ledger passes:</p>
@@ -1197,7 +1197,7 @@ or describe the example as an association.
   </section>
 
   <section id="report">
-    <h2><span class="chapter">14</span> Generate the review report</h2>
+    <h2><span class="chapter">14</span> Build a website for reading the review</h2>
     <p>Once material issues have been investigated and criteria answered, generate a navigable HTML report:</p>
     <pre><code>katz report generate --output review.html</code></pre>
     <p><code>--output</code> chooses the destination HTML file. Katz also writes the Expected Parrot logo beside it. The report reads the ledger; it does not rerun models or alter issue state.</p>
@@ -1218,7 +1218,7 @@ or describe the example as an association.
   </section>
 
   <section id="revision">
-    <h2><span class="chapter">15</span> Review a revision</h2>
+    <h2><span class="chapter">15</span> Track what was fixed in a revised paper</h2>
     <p>A revision receives a new Git commit and a new Katz version because its byte ranges no longer describe the old manuscript. Prior issues stay with the version where they were found; review them explicitly rather than moving their anchors onto changed prose.</p>
     <pre><code>git add paper/paper_ventilated.md</code></pre>
     <p>Stage the revised version of the same canonical file used in this tutorial.</p>
@@ -1246,7 +1246,7 @@ or describe the example as an association.
   </section>
 
   <section id="commands">
-    <h2><span class="chapter">16</span> Command map</h2>
+    <h2><span class="chapter">16</span> Command reference</h2>
     <table><thead><tr><th>Command family</th><th>Purpose</th></tr></thead><tbody>
       <tr><td><code>katz init</code></td><td>Create repository-scoped review state.</td></tr>
       <tr><td><code>katz paper …</code></td><td>Register versions, map sections, inspect sentences, and resolve locations.</td></tr>
@@ -1263,7 +1263,7 @@ or describe the example as an association.
   </section>
 
   <section id="checklist">
-    <h2><span class="chapter">17</span> Artifacts produced</h2>
+    <h2><span class="chapter">17</span> Files and records created by the workflow</h2>
     <p>The tutorial ends with four related artifacts. Keeping their roles distinct is the central Katz workflow:</p>
     <table><thead><tr><th>Artifact</th><th>What it contains</th><th>Why it remains separate</th></tr></thead><tbody>
       <tr><td><code>.katz/</code></td><td>Registered versions, maps, frozen spotters, issues, investigations, suggestions, and evaluations.</td><td>This is the version-aware review ledger and source of truth.</td></tr>
