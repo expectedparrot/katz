@@ -29,30 +29,28 @@
   <div class="part">Foundations</div><a href="#orientation">1. The paper and the method</a><a href="#install">2. Set up the worked example</a><a href="#paper2md">3. Starting from a PDF</a><a href="#register">4. Register the paper</a>
   <div class="part">Review</div><a href="#structure">5. Map the paper</a><a href="#spotters">6. Add and enable spotters</a><a href="#edsl-run">7. Run spotters with EDSL</a><a href="#issues">8. Read the candidate issues</a><a href="#investigate">9. Investigate and revise</a>
   <div class="part">Assessment</div><a href="#evaluate">10. Evaluate criteria</a><a href="#validate">11. Validate the ledger</a><a href="#report">12. Generate the report</a><a href="#revision">13. Review a revision</a>
-  <div class="part">Reference</div><a href="#commands">14. Command map</a><a href="#checklist">15. Review checklist</a>
+  <div class="part">Reference</div><a href="#commands">14. Command map</a><a href="#checklist">15. Artifacts produced</a>
   <div class="small">A practical tutorial for Katz, the version-aware paper-review ledger.</div>
 </nav>
 <main><article>
   <header>
     <div class="eyebrow">Expected Parrot · A practical, evidence-first tutorial</div>
-    <h1>Review manuscripts without losing the thread</h1>
+    <h1>A worked manuscript review with Katz</h1>
     <p class="dek">This tutorial explains how Katz works by walking through a complete manuscript review. Katz is a version-aware ledger for registering papers, running EDSL spotters, recording and investigating issues, and generating a review report.</p>
     <div class="meta"><span>Tool: <strong><a href="https://github.com/expectedparrot/katz">Katz</a></strong></span><span>License: <strong>MIT</strong></span><span>Runtime: <strong>Python 3.11+</strong></span></div>
   </header>
 
   <section id="orientation">
     <h2><span class="chapter">01</span> The paper and the method</h2>
-    <p>A serious manuscript review is more than a list of reactions. Claims move between drafts, page numbers drift, related concerns multiply, and a final report can become detached from the evidence that motivated it. Katz keeps a review as a repository-scoped ledger tied to a Git commit and a preserved copy of the manuscript.</p>
-    <p>This tutorial reviews a real, short software paper: Roni W. Kobrosly’s <a href="https://joss.theoj.org/papers/10.21105/joss.02523"><em>causal-curve: A Python Causal Inference Package to Estimate Causal Dose-Response Curves</em></a>, published in the Journal of Open Source Software in 2020. The paper is useful here because its Markdown source is public, the published article is licensed CC BY 4.0, and its <a href="https://github.com/openjournals/joss-reviews/issues/2523">completed public peer review</a> gives us an external record against which to compare our process.</p>
+    <p>Katz stores a manuscript review as structured, repository-scoped data. A registered paper is tied to a Git commit; review instructions are stored as spotters; model findings become source-anchored issues; and the resulting ledger can be validated and rendered as HTML. This tutorial builds each of those artifacts in order so the relationship between them remains visible.</p>
+    <p>The worked example is Roni W. Kobrosly’s short software paper <a href="https://joss.theoj.org/papers/10.21105/joss.02523"><em>causal-curve: A Python Causal Inference Package to Estimate Causal Dose-Response Curves</em></a>, published by the Journal of Open Source Software in 2020. Its Markdown source is public, and its <a href="https://github.com/openjournals/joss-reviews/issues/2523">completed public peer review</a> provides useful context when checking model-generated concerns.</p>
     <p><strong>This is a workflow demonstration, not a new assessment of the author or published article.</strong> We review the source to learn Katz. JOSS’s accepted version and public review remain the authoritative publication record.</p>
-    <p>Every registered manuscript is associated with a repository commit. Findings use byte ranges and section IDs, while spotters, issue states, investigation notes, and suggestions make the review comparable across revisions. The local <code>.katz/</code> directory preserves source copies, decisions, evaluations, and reports.</p>
-    <p>The working sequence is to register a version, map its sections, find and investigate issues, evaluate and validate the ledger, and generate a report.</p>
-    <p><strong>Katz does not review the paper for you.</strong> Spotters define useful questions and the ledger preserves conclusions, but a reviewer or agent must still read the manuscript, assess evidence, and file concrete findings.</p>
+    <p>Katz manages the review record; EDSL runs the model jobs. Neither replaces judgment. The model proposes candidates, while the reviewer checks the quoted passage, surrounding paper, code, documentation, and public review before deciding what belongs in the report.</p>
   </section>
 
   <section id="install">
     <h2><span class="chapter">02</span> Set up the worked example</h2>
-    <p>Install Katz and EDSL, then clone the paper’s repository. We create a branch only to keep the tutorial’s Katz state separate from the upstream project. Katz deliberately places <code>.katz/</code> at the repository root.</p>
+    <p>We work inside the paper’s Git repository because the current commit is Katz’s version identifier. A separate tutorial branch keeps the generated manuscript derivative and review ledger away from the upstream project history.</p>
     <h3>Install Katz and EDSL</h3>
     <pre><code>python -m pip install \
   git+https://github.com/expectedparrot/katz.git</code></pre>
@@ -63,16 +61,16 @@
     <p>EDSL reads this key when <code>ep run</code> executes the <code>jobs.ep</code> object later in the tutorial. Keep <code>.env</code> local: add it to <code>.gitignore</code> and never commit or paste the real key into a job, result, report, or issue record. If your selected model requires a separate provider key, add that provider’s environment variable to the same local file.</p>
     <h3>Clone the paper repository</h3>
     <pre><code>git clone https://github.com/ronikobrosly/causal-curve.git</code></pre>
-    <p><code>git clone</code> creates a local repository with the paper source and its version history.</p>
+    <p>Clone the source repository so Katz can associate the review with an exact version of the paper.</p>
     <pre><code>cd causal-curve</code></pre>
-    <p><code>cd</code> makes that repository the working directory for every subsequent Katz command.</p>
+    <p>Run the remaining commands from this repository root; this is where Katz will create <code>.katz/</code>.</p>
     <pre><code>git switch -c katz-tutorial</code></pre>
-    <p><code>switch -c</code> creates and checks out a new branch named <code>katz-tutorial</code>, keeping tutorial artifacts separate from the upstream branch.</p>
+    <p>The branch isolates tutorial artifacts without changing the commit history supplied by the paper’s authors.</p>
     <h3>Initialize Katz state</h3>
     <pre><code>katz init</code></pre>
-    <p><code>katz init</code> creates the local directory structure but no tracked file yet. The existing upstream commit is therefore the version identity used at registration; commit the generated review state afterward if you want it in the paper repository.</p>
+    <p><code>katz init</code> creates the repository-scoped ledger. It does not register a paper: that happens only after we prepare and commit the exact file we want Katz to preserve.</p>
     <p>The upstream source is <code>paper/paper.md</code>. Before continuing, open it and the <a href="https://joss.theoj.org/papers/10.21105/joss.02523">published paper page</a>. The source repository may evolve after publication, so your Git commit may differ from the accepted 2020 version.</p>
-    <p>Create a ventilated derivative before registration. The command leaves the upstream paper untouched and returns one JSON envelope:</p>
+    <p>Katz anchors findings to byte ranges, so prose is easier to inspect and revise when sentences occupy separate lines. Create that ventilated derivative now; the command changes line breaks, not wording, and leaves the upstream source untouched:</p>
     <pre><code>katz ventilate paper/paper.md \
   --output-path paper/paper_ventilated.md</code></pre>
     <table><thead><tr><th>Argument or option</th><th>Meaning</th></tr></thead><tbody>
@@ -99,17 +97,16 @@
 }</code></pre>
     <p>These are the real counts and checksum returned for the tutorial paper. The helper skips structural Markdown and splits only likely multi-sentence prose lines. Inspect and commit the derivative so it has a distinct Git identity:</p>
     <pre><code>git diff --no-index paper/paper.md paper/paper_ventilated.md</code></pre>
-    <p><code>--no-index</code> compares two paths directly, even before the generated file is tracked.</p>
+    <p>Compare the files before committing to verify that ventilation changed only whitespace and line breaks.</p>
     <pre><code>git add paper/paper_ventilated.md</code></pre>
-    <p><code>git add</code> stages only the inspected derivative.</p>
+    <p>Stage only the inspected derivative.</p>
     <pre><code>git commit -m "Add ventilated paper source for Katz review"</code></pre>
-    <p><code>-m</code> supplies the commit message. This commit becomes the Katz version identity.</p>
-    <p><strong>Git is part of the data model.</strong> Commit before registration. A meaningful commit gives the review a stable version identity and makes this tutorial’s result reproducible.</p>
+    <p>This commit becomes the version identity stored on sections, jobs, issues, and reports. Registering before committing would attach the review to the wrong repository state.</p>
   </section>
 
   <section id="paper2md">
     <h2><span class="chapter">03</span> Starting from a PDF with paper2md</h2>
-    <p>Our worked example begins with the author’s Markdown source, which is the best available input. When only a PDF is available, use <a href="https://github.com/expectedparrot/paper2md">paper2md</a> to create a reviewable bundle before invoking Katz.</p>
+    <p><strong>This is an optional input path.</strong> Our worked example already has author-provided Markdown, so continue to <a href="#register">Register a manuscript</a> if you are following it. When a PDF is the only source available, use <a href="https://github.com/expectedparrot/paper2md">paper2md</a> to produce the Markdown and image bundle that Katz needs for stable text anchors.</p>
     <pre><code>python -m pip install \
   "paper2md @ git+https://github.com/expectedparrot/paper2md.git"</code></pre>
     <p>This direct-reference requirement installs paper2md from its Expected Parrot Git repository.</p>
@@ -121,8 +118,7 @@
       <tr><td><code>--backend marker</code></td><td>Uses Marker for layout-aware Markdown, equations, captions, and tables.</td></tr>
       <tr><td><code>--output paper_md</code></td><td>Writes <code>paper.md</code> and extracted images into this directory.</td></tr>
     </tbody></table>
-    <p>The output directory contains <code>paper_md/paper.md</code> and normalized PNG assets such as <code>img_1.png</code>. Markdown image references are rewritten to those filenames. Images extracted from the PDF but not referenced by the converted text are appended under an <em>Extracted Figures</em> heading so they are not silently lost.</p>
-    <p>For figures, paper2md extracts embedded images, writes PNG files, and retains Markdown references. Captions depend on the conversion backend and source PDF. For tables, the Marker backend attempts to reconstruct them in Markdown. They remain blocks inside <code>paper.md</code> rather than separate table records or image assets.</p>
+    <p>The output directory contains <code>paper_md/paper.md</code> and normalized image assets. paper2md rewrites image references and attempts to reconstruct tables in Markdown. This matters because Katz anchors review findings to the converted text; a reading-order or table-conversion error can otherwise become a false manuscript issue.</p>
     <h3>Inspect the conversion</h3>
     <p>PDF conversion is lossy. Before registration, compare the bundle with the PDF and check the parts most likely to affect a review:</p>
     <pre><code>find paper_md -maxdepth 1 -type f -print</code></pre>
@@ -166,7 +162,7 @@
       <tr><td><code>--source-root paper.pdf</code></td><td>Points back to the original PDF in the repository.</td></tr>
     </tbody></table>
     <p><strong>Current Katz boundary.</strong> Registration copies sibling PNG/JPEG/GIF/SVG/WebP assets into the version bundle, but it does not parse Markdown image references into <code>figure</code> records. Tables remain manuscript text and have no first-class records. Preserve and inspect the paper2md bundle even though <code>katz paper status</code> currently reports <code>"figures": 0</code>.</p>
-    <p><strong>Prefer source when possible.</strong> If author-provided Markdown or LaTeX exists, use it instead of reverse-engineering the PDF. paper2md is the fallback for published papers whose structured source is unavailable.</p>
+    <p>If author-provided Markdown or LaTeX exists, use it. The PDF route is a fallback, and the conversion must be checked before any model reviews it.</p>
   </section>
 
   <section id="register">
@@ -341,14 +337,7 @@ Pay special attention to:
       <tr><td>Filename</td><td>Supplies the stable identifier <code>causal_language</code> used by enable, run, and issue commands.</td></tr>
     </tbody></table>
     <p><strong>Spotters are review procedures, not keyword lists.</strong> A useful definition states the standard, identifies relevant evidence, and explains how to disconfirm a tempting false positive.</p>
-    <h3>How Katz works with spotters</h3>
-    <ol>
-      <li><strong>Catalog:</strong> keep reusable Markdown definitions in <code>.katz/spotters/</code>.</li>
-      <li><strong>Enable:</strong> copy selected definitions into the active manuscript version, freezing the exact review instructions.</li>
-      <li><strong>Apply:</strong> combine enabled spotters with registered sections or the complete manuscript and run the resulting review jobs.</li>
-      <li><strong>Record:</strong> store each candidate as an issue with its spotter name, manuscript byte range, and model context.</li>
-      <li><strong>Investigate:</strong> confirm or reject the candidate using the spotter’s investigation procedure.</li>
-    </ol>
+    <p>The distinction between the catalog and the enabled set is important: the catalog contains reusable definitions, while enabling copies a definition into this manuscript version. A later edit to the catalog therefore cannot silently change the instructions associated with an existing run.</p>
     <h3>Populate the repository catalog</h3>
     <pre><code>katz spotter init-catalog</code></pre>
     <p>Copies the built-in <code>default</code> collection into <code>.katz/spotters/</code>, skipping definitions already present. Use <code>--preset NAME</code> to select another installed collection.</p>
@@ -381,14 +370,13 @@ Pay special attention to:
     <pre><code>katz spotter show software_claim_support</code></pre>
     <p>Shows the enabled version copy—the exact instructions that EDSL will use.</p>
     <p><code>spotter add</code> slugifies the name, writes <code>.katz/spotters/software_claim_support.md</code>, and auto-enables the same file for the active version. If there is no registered active version yet, it adds only the catalog copy; run <code>katz spotter enable software_claim_support</code> after registration.</p>
-    <p><strong>Choose scope deliberately.</strong> A section spotter produces one scenario per section. A holistic spotter sees the complete manuscript once per model. Use holistic scope when evidence must be reconciled across sections.</p>
-    <p>A focused set usually produces a better review than enabling every category. Software papers often need spotters for statement of need, state of the field, claim support, examples, tests, and documentation. Theory reviews need logical gaps, construct clarity, positioning, mechanisms, and boundary conditions. Editorial reviews emphasize contribution, narrative flow, tables and figures, limitations, and claim scope. Generated-report QA emphasizes evidence–claim alignment, missing artifacts, interpretation, and unsupported recommendations.</p>
+    <p>Scope controls both context and cost. Use section scope when the relevant evidence should be present locally; use holistic scope only when the model must reconcile a claim with support elsewhere in the paper. For this example, the two built-ins run by section, while software claim support runs once over the complete manuscript.</p>
   </section>
 
   <section id="edsl-run">
     <h2><span class="chapter">07</span> Build, run, and ingest EDSL jobs</h2>
     <p>Katz prepares the review but does not run models. It combines the active manuscript version, mapped sections, and enabled spotters into a standard EDSL <code>Jobs</code> object. The object is saved as <code>jobs.ep</code>, so it can be inspected, costed, run, shared, or archived with the normal <code>ep</code> CLI.</p>
-    <p>The scenario count is <code>sections × section spotters + holistic spotters</code>.</p>
+    <p>This separation lets Katz own manuscript identity and anchoring while EDSL owns model selection and execution. The number of scenarios is <code>sections × section spotters + holistic spotters</code>, so scope choices made in the previous chapter directly determine the work and cost of the run.</p>
     <h3>Build the Jobs object</h3>
     <pre><code>katz spotter jobs --output jobs.ep</code></pre>
     <table><thead><tr><th>Option</th><th>Meaning</th></tr></thead><tbody>
@@ -461,15 +449,8 @@ Pay special attention to:
 }</code></pre>
     <p>The fixture uses readable issue labels because generated UUIDs vary from run to run. The counts and meanings are the fields an agent should inspect: eleven EDSL results, three positive findings, three filed issues, and no unlocatable quotations.</p>
     <p>Answers with <code>found: false</code> are retained in <code>results.ep</code> but do not become issues. Answers whose quotation cannot be found are skipped rather than assigned a guessed anchor. Re-ingesting the same results is idempotent.</p>
-    <h3>How provenance survives the round trip</h3>
-    <ol>
-      <li>Katz embeds the manuscript commit, spotter name and scope, section ID, byte range, instructions, and manuscript text in each EDSL scenario.</li>
-      <li><code>ep run</code> retains that scenario and adds its model and execution metadata to the Results object.</li>
-      <li><code>katz spotter ingest</code> verifies the commit and quotation before creating an anchored issue.</li>
-      <li>The issue stores the spotter, model, Results path, and a stable result hash; the hash prevents duplicate imports.</li>
-      <li>The complete <code>results.ep</code> remains the durable record of positive and null results for the run.</li>
-    </ol>
-    <p>Model output is still triage, not a referee report. Read every imported draft against the paper and linked materials before confirming it.</p>
+    <p>The manuscript commit, spotter, scope, section, and source range travel into each scenario. EDSL adds model and execution metadata; ingestion verifies the commit and quotation and stores a result hash to prevent duplicates. Keep <code>results.ep</code>: it is the full run record, including null answers that do not become issues.</p>
+    <p>Imported issues remain drafts because a locatable quotation proves provenance, not correctness. The next chapter checks one candidate in detail.</p>
   </section>
 
   <section id="issues">
@@ -543,50 +524,7 @@ Pay special attention to:
     }
   }
 }</code></pre>
-    <p>In human terms, the fixture’s completed run found three candidates:</p>
-    <ol>
-      <li><strong>Summary, lines 39–40:</strong> the aerobic-exercise example says minutes of exercise “causes” positive health outcomes after controlling for confounding. The reviewer should check whether this wording overstates what adjustment alone establishes.</li>
-      <li><strong>Methods, line 98:</strong> the TMLE description says the targeting step estimates an “unbiased causal effect” without stating the assumptions under which that claim holds.</li>
-      <li><strong>Statement of Need, lines 122–124:</strong> the claim that no other Python package supports continuous treatments may be correct, but it needs a documented comparison or reproducible pointer before being treated as established.</li>
-    </ol>
-    <pre><code>katz issue list --state draft --spotter software_claim_support</code></pre>
-    <p>Adds a spotter filter so an agent can triage one review lens at a time.</p>
-    <pre><code>{
-  "ok": true,
-  "command": [
-    "issue", "list",
-    "--state", "draft",
-    "--spotter", "software_claim_support"
-  ],
-  "data": [
-    {
-      "id": "ISSUE_CLAIM_SUPPORT",
-      "state": "draft",
-      "title": "Python-package novelty claim needs a reproducible search basis",
-      "spotter": "software_claim_support",
-      "location": {
-        "line_start": 122,
-        "line_end": 124,
-        "section": "statement-of-need"
-      }
-    }
-  ]
-}</code></pre>
-    <pre><code>katz paper resolve 1397 1417</code></pre>
-    <p>The two positional integers are an inclusive start and exclusive end byte offset. Katz returns the corresponding UTF-8 text, lines, and section.</p>
-    <pre><code>{
-  "ok": true,
-  "command": ["paper", "resolve", "1397", "1417"],
-  "data": {
-    "byte_start": 1397,
-    "byte_end": 1417,
-    "line_start": 34,
-    "line_end": 34,
-    "resolved_text": "continuous treatment",
-    "contains_math": false,
-    "section": "summary"
-  }
-}</code></pre>
+    <p>This record contains what triage needs: the model’s reason, the exact text it relied on, and the source location. We will follow this one causal-language candidate through investigation rather than restating every item in the list.</p>
     <h3>Add an issue manually</h3>
     <p>You can also file a finding manually. First search the registered manuscript for the passage you want to anchor:</p>
     <pre><code>katz paper find "continuous treatment"</code></pre>
@@ -704,24 +642,36 @@ Pay special attention to:
 
   <section id="investigate">
     <h2><span class="chapter">09</span> Investigate, merge, and suggest</h2>
-    <p>Not every first-pass concern is ready for the final report. Record investigation notes, inspect related issues, merge duplicates, and attach a proposed fix only when it is supported.</p>
-    <pre><code>katz issue list --state open</code></pre>
-    <p><code>--state open</code> selects active findings that have moved beyond initial draft triage.</p>
-    <pre><code>katz issue show ISSUE_ID</code></pre>
-    <p>Read the complete issue and resolved source context before recording a judgment.</p>
+    <p>The causal-language candidate is anchored correctly, but its conclusion still needs human review. Read the surrounding summary, then compare the wording with the paper’s methods and stated identification assumptions. Here the passage makes a causal claim while mentioning adjustment for confounding, but it does not state what must be true for that adjustment to identify an effect. Record both that evidence and the decision:</p>
     <pre><code>katz issue investigate \
-  --id ISSUE_ID \
+  --id ISSUE_CAUSAL_LANGUAGE \
   --verdict confirmed \
-  --notes "Appendix Figure A3 shows pre-period estimates but the text never interprets their joint uncertainty."</code></pre>
-    <p><code>--id</code> selects the issue, <code>--verdict</code> records <code>confirmed</code>, <code>rejected</code>, or <code>uncertain</code>, and <code>--notes</code> stores the reasoning.</p>
+  --state confirmed \
+  --evidence "paper/paper_ventilated.md:39-40" \
+  --notes "The example makes an unqualified causal statement. The surrounding text does not state the assumptions required for covariate adjustment to identify an effect."</code></pre>
+    <p><code>--verdict</code> records the evidentiary judgment; <code>--state confirmed</code> advances the issue in the same operation; and the evidence and notes preserve why the reviewer reached that decision.</p>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["issue", "investigate", "..."],
+  "data": {
+    "verdict": "confirmed",
+    "evidence": "paper/paper_ventilated.md:39-40",
+    "notes": "The example makes an unqualified causal statement. The surrounding text does not state the assumptions required for covariate adjustment to identify an effect.",
+    "state_updated": "confirmed"
+  }
+}</code></pre>
+    <p>Only after confirming the concern should the review propose a response:</p>
     <pre><code>katz issue suggest \
-  --id ISSUE_ID \
-  --text "Move the diagnostic into the main text and report a joint pre-trend test."</code></pre>
-    <p><code>--id</code> selects the issue and <code>--text</code> appends an actionable proposed response.</p>
-    <pre><code>katz issue merge \
-  --ids ISSUE_ID_1,ISSUE_ID_2 \
-  --title "Pre-trend evidence is incomplete and overinterpreted"</code></pre>
-    <p><code>--ids</code> supplies a comma-separated set of duplicates to consolidate; <code>--title</code> names the merged issue.</p>
+  --id ISSUE_CAUSAL_LANGUAGE \
+  --text "State the identifying assumptions required for a causal interpretation, or describe the exercise example as an association."</code></pre>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["issue", "suggest", "..."],
+  "data": {
+    "text": "State the identifying assumptions required for a causal interpretation, or describe the exercise example as an association."
+  }
+}</code></pre>
+    <p>A suggestion is stored separately from the finding so the report can distinguish the problem from one possible remedy. If two candidates describe the same underlying problem, use <code>katz issue merge --ids ID_1,ID_2</code>; merging creates one parent issue and marks the duplicates <code>wontfix</code> with a pointer to that parent.</p>
     <table><thead><tr><th>State</th><th>Use it when</th></tr></thead><tbody>
       <tr><td><code>draft</code></td><td>The concern is plausible but still needs checking.</td></tr>
       <tr><td><code>confirmed</code></td><td>The evidence supports including the finding in the review.</td></tr>
@@ -733,73 +683,119 @@ Pay special attention to:
 
   <section id="evaluate">
     <h2><span class="chapter">10</span> Evaluate review criteria</h2>
-    <p>Issues capture localized findings. Evaluations capture broader judgments such as whether the question is clear, the empirical strategy matches the claims, or limitations are acknowledged honestly.</p>
+    <p>Issues are tied to particular passages. An evaluation records a paper-level judgment that may depend on evidence spread across sections—for example, whether the design supports the paper’s claims. Evaluations are entered deliberately after reading; they are not additional spotter jobs.</p>
     <pre><code>katz eval init-catalog</code></pre>
-    <p>Copies the default evaluation criteria into the repository catalog. <code>--preset NAME</code> selects another installed collection.</p>
-    <pre><code>katz eval catalog --category methods</code></pre>
-    <p>Lists available criteria; <code>--category methods</code> filters to methods-related judgments.</p>
+    <p>As with spotters, this copies reusable definitions into the repository catalog. The response lists every added criterion; only the relevant entry is shown here:</p>
+    <pre><code>{
+  "ok": true,
+  "command": ["eval", "init-catalog"],
+  "data": {
+    "preset": "default",
+    "added": [
+      {"name": "design_matches_claims", "category": "methods"},
+      "… additional default criteria …"
+    ],
+    "skipped": []
+  }
+}</code></pre>
     <pre><code>katz eval enable design_matches_claims</code></pre>
-    <p>Copies this named criterion into the active version.</p>
-    <pre><code>katz eval enable limitations_discussed_honestly</code></pre>
-    <p>Enables a second holistic criterion for the same version.</p>
+    <p>Enabling freezes this criterion in the active paper version, just as enabling a spotter freezes its instructions.</p>
+    <pre><code>{
+  "ok": true,
+  "command": ["eval", "enable", "design_matches_claims"],
+  "data": {"enabled": "design_matches_claims"}
+}</code></pre>
     <pre><code>katz eval respond \
   --name design_matches_claims \
-  --text "The design supports a narrower local claim than the abstract makes." \
+  --text "The software paper describes estimators rather than presenting a new empirical design. Its causal wording should therefore be read as describing method capabilities under assumptions, not evidence that adjustment alone identifies effects." \
   --grade B- \
-  --suggestion "Align the abstract and conclusion with the estimand."</code></pre>
+  --suggestion "State the identifying assumptions wherever the paper describes an estimate as causal or unbiased."</code></pre>
     <table><thead><tr><th>Argument or option</th><th>Meaning</th></tr></thead><tbody>
       <tr><td><code>--name</code></td><td>Enabled criterion receiving the response.</td></tr>
       <tr><td><code>--grade</code></td><td>Structured grade from Katz’s accepted scale.</td></tr>
       <tr><td><code>--text</code></td><td>Required evidence-backed rationale.</td></tr>
       <tr><td><code>--suggestion</code></td><td>Optional concrete improvement.</td></tr>
     </tbody></table>
+    <pre class="wrap"><code>{
+  "ok": true,
+  "command": ["eval", "respond", "..."],
+  "data": {
+    "criterion": "design_matches_claims",
+    "category": "methods",
+    "response": "The software paper describes estimators rather than presenting a new empirical design. Its causal wording should therefore be read as describing method capabilities under assumptions, not evidence that adjustment alone identifies effects.",
+    "grade": "B-",
+    "suggestion": "State the identifying assumptions wherever the paper describes an estimate as causal or unbiased."
+  }
+}</code></pre>
     <pre><code>katz eval results</code></pre>
-    <p>Lists completed evaluation responses; <code>--category</code> can filter them.</p>
-    <p><strong>Do not let a grade replace an argument.</strong> The response should state what the paper does, what standard is being applied, and what evidence justifies the assessment.</p>
+    <p>This returns the stored response above. <code>--category</code> can limit the list. The grade makes evaluations comparable, but the prose is the substantive record: it states the standard, evidence, and limits of the assessment.</p>
   </section>
 
   <section id="validate">
     <h2><span class="chapter">11</span> Validate the ledger</h2>
     <p>Validation checks the internal consistency of registered versions, source hashes, section bounds, issue anchors, and references. Run it before relying on a report and after any manual changes to review state.</p>
     <pre><code>katz validate</code></pre>
-    <p>Checks the active version by default. Add <code>--commit SHA</code> to validate another registered version.</p>
-    <p><strong>A valid ledger is not necessarily a good review.</strong> Validation can prove that an anchor exists and lies within the manuscript. It cannot prove that the interpretation is fair, the evidence is sufficient, or an important issue was noticed.</p>
+    <p>Checks the active version by default. Add <code>--commit SHA</code> to validate another registered version. The worked ledger passes:</p>
+    <pre><code>{
+  "ok": true,
+  "command": ["validate"],
+  "data": {
+    "valid": true,
+    "commit": "c658feac957d3052e30da8e0365e4d982d091d9a",
+    "errors": [],
+    "warnings": []
+  }
+}</code></pre>
+    <p>This proves that the stored source, ranges, and references agree. It cannot prove that an interpretation is fair or that the review noticed every important issue.</p>
   </section>
 
   <section id="report">
     <h2><span class="chapter">12</span> Generate the review report</h2>
     <p>Once material issues have been investigated and criteria answered, generate a navigable HTML report:</p>
     <pre><code>katz report generate --output review.html</code></pre>
-    <p><code>--output</code> chooses the destination HTML file. If omitted, Katz uses its default report path.</p>
+    <p><code>--output</code> chooses the destination HTML file. Katz also writes the Expected Parrot logo beside it. The report reads the ledger; it does not rerun models or alter issue state.</p>
+    <pre><code>{
+  "ok": true,
+  "command": ["report", "generate", "--output", "review.html"],
+  "data": {
+    "generated": true,
+    "path": "review.html",
+    "commit": "c658feac957d3052e30da8e0365e4d982d091d9a",
+    "issues": 3,
+    "sections": 5,
+    "evaluations": 1
+  }
+}</code></pre>
     <p><a href="review.html" target="_blank" rel="noopener noreferrer">Open the generated report for this worked example.</a> It opens in a new tab. The relative link works both locally and when the <code>docs/</code> directory is published from the repository.</p>
-    <p>The report is a view over the ledger, not a replacement for editorial judgment. Before delivery, read it as a document: consolidate overlapping findings, put claim-changing concerns first, distinguish required changes from optional improvements, and match the tone to the audience.</p>
-    <p>An internal coauthor review can use direct language, detailed fixes, implementation notes, and unresolved questions. An external referee report should explain its standards, separate major from minor concerns, and avoid prescribing one implementation when alternatives could work.</p>
+    <p>The left pane summarizes issues and evaluations; selecting an issue highlights its source passage in the manuscript pane. Review the rendered page before sharing it, especially the distinction between confirmed findings, rejected candidates, and optional suggestions.</p>
   </section>
 
   <section id="revision">
     <h2><span class="chapter">13</span> Review a revision</h2>
-    <p>Commit the revised manuscript, register it as a new version, and assess prior findings against the changed text. Never silently move old anchors onto new prose.</p>
-    <pre><code>git add paper/manuscript.md</code></pre>
-    <p>Stages the revised manuscript.</p>
+    <p>A revision receives a new Git commit and a new Katz version because its byte ranges no longer describe the old manuscript. Prior issues stay with the version where they were found; review them explicitly rather than moving their anchors onto changed prose.</p>
+    <pre><code>git add paper/paper_ventilated.md</code></pre>
+    <p>Stage the revised version of the same canonical file used in this tutorial.</p>
     <pre><code>git commit -m "Revise manuscript in response to review"</code></pre>
     <p>Creates the new Git version that subsequent Katz records will target.</p>
     <pre><code>katz paper register \
-  --canonical paper/manuscript.md \
+  --canonical paper/paper_ventilated.md \
   --source-format markdown \
   --source-method revision</code></pre>
-    <p><code>--canonical</code> selects the revision, while the format and method record its provenance. Registration uses the new <code>HEAD</code> commit.</p>
-    <pre><code>katz issue list --state open</code></pre>
-    <p>Lists findings that still require a revision decision.</p>
+    <p>Registration uses the new <code>HEAD</code> and makes it active. Run section mapping and any desired spotters again because this is a distinct manuscript version.</p>
+    <pre><code>katz issue show ISSUE_CAUSAL_LANGUAGE \
+  --commit OLD_COMMIT</code></pre>
+    <p><code>--commit</code> deliberately reads the finding from the earlier ledger while you compare it with the revised passage.</p>
     <pre><code>katz issue update \
-  --id ISSUE_ID \
+  --id ISSUE_CAUSAL_LANGUAGE \
   --state resolved \
-  --reason "Added event-study diagnostics and narrowed the abstract claim."</code></pre>
-    <p><code>--id</code> selects a finding, <code>--state resolved</code> closes it for this workflow, and <code>--reason</code> records the evidence for that transition.</p>
+  --reason "The revised example now states the assumptions required for a causal interpretation." \
+  --commit OLD_COMMIT</code></pre>
+    <p>The state change is written to the old issue’s history. The reason explains what changed; <code>resolved</code> does not imply that the old text was retroactively correct.</p>
     <pre><code>katz validate</code></pre>
     <p>Checks the revised ledger after all transitions.</p>
     <pre><code>katz report generate --output revision-review.html</code></pre>
     <p>Writes a separate revision report instead of overwriting the first review.</p>
-    <p>The old version remains part of the audit trail. This makes it possible to explain what changed, which concerns remain, and why a finding was closed rather than merely disappearing from the report.</p>
+    <p>Keeping separate versions makes the comparison explicit: the original report shows what was found, the status history records the disposition, and the revision report describes the newly registered manuscript.</p>
   </section>
 
   <section id="commands">
@@ -818,20 +814,15 @@ Pay special attention to:
   </section>
 
   <section id="checklist">
-    <h2><span class="chapter">15</span> Review checklist</h2>
-    <ol>
-      <li>Commit the repository state that contains the canonical manuscript.</li>
-      <li>Register the manuscript and verify its checksum and source metadata.</li>
-      <li>Generate or add section boundaries, then inspect them.</li>
-      <li>Choose spotters that match the paper, audience, and review scope.</li>
-      <li>Read the source and file evidence-backed, location-specific issues.</li>
-      <li>Investigate uncertain findings; merge duplicates and reject false alarms.</li>
-      <li>Record actionable suggestions without confusing preference with necessity.</li>
-      <li>Answer holistic evaluation criteria with written reasoning.</li>
-      <li>Validate the ledger and correct every structural error.</li>
-      <li>Generate and edit the final report for hierarchy, fairness, and tone.</li>
-    </ol>
-    <p><strong>The completion test.</strong> A review is ready when a reader can trace every material conclusion to a specific version and passage, understand why it matters, and see what response would adequately address it.</p>
+    <h2><span class="chapter">15</span> Artifacts produced</h2>
+    <p>The tutorial ends with four related artifacts. Keeping their roles distinct is the central Katz workflow:</p>
+    <table><thead><tr><th>Artifact</th><th>What it contains</th><th>Why it remains separate</th></tr></thead><tbody>
+      <tr><td><code>.katz/</code></td><td>Registered versions, maps, frozen spotters, issues, investigations, suggestions, and evaluations.</td><td>This is the version-aware review ledger and source of truth.</td></tr>
+      <tr><td><code>jobs.ep</code></td><td>The EDSL survey, manuscript scenarios, spotter instructions, and run configuration inputs.</td><td>It can be inspected and costed before any model call.</td></tr>
+      <tr><td><code>results.ep</code></td><td>Complete positive and null model results with scenario and model provenance.</td><td>It preserves more than the positive findings imported into Katz.</td></tr>
+      <tr><td><code>review.html</code> and <code>logo.png</code></td><td>A human-readable view of the current ledger and its source passages.</td><td>It is regenerated output, not the underlying review state.</td></tr>
+    </tbody></table>
+    <p>A reader should be able to move from a report finding to its issue, from the issue to an exact manuscript version and passage, and from a model-generated issue back to the EDSL result that proposed it.</p>
   </section>
 
   <footer>
