@@ -867,6 +867,10 @@ def test_report_generate_writes_html(tmp_path: Path) -> None:
     assert "Report issue" in html
     assert "Expected Parrot" in html
     assert "Paper explorer" in html
+    assert 'src="logo.png"' in html
+    assert (tmp_path / "logo.png").read_bytes() == (
+        Path(__file__).parents[1] / "src" / "katz" / "assets" / "logo.png"
+    ).read_bytes()
 
 
 # ---------------------------------------------------------------------------

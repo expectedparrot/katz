@@ -57,6 +57,10 @@
     <pre><code>python -m pip install \
   git+https://github.com/expectedparrot/katz.git</code></pre>
     <p><code>python -m pip</code> uses the selected Python interpreter’s installer. Katz installs the current EDSL Git dependency that provides <code>jobs.ep</code>, <code>results.ep</code>, and the <code>ep</code> CLI used later.</p>
+    <h3>Configure Expected Parrot</h3>
+    <p>The agent-run review step requires an <a href="https://www.expectedparrot.com/">Expected Parrot</a> account and a valid API key. Create a file named <code>.env</code> in the repository root containing:</p>
+    <pre><code>EXPECTED_PARROT_API_KEY=your-valid-key-here</code></pre>
+    <p>EDSL reads this key when <code>ep run</code> executes the <code>jobs.ep</code> object later in the tutorial. Keep <code>.env</code> local: add it to <code>.gitignore</code> and never commit or paste the real key into a job, result, report, or issue record. If your selected model requires a separate provider key, add that provider’s environment variable to the same local file.</p>
     <h3>Clone the paper repository</h3>
     <pre><code>git clone https://github.com/ronikobrosly/causal-curve.git</code></pre>
     <p><code>git clone</code> creates a local repository with the paper source and its version history.</p>

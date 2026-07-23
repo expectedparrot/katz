@@ -2608,6 +2608,7 @@ def report_generate(
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(html, encoding="utf-8")
+        report_module.write_report_assets(output)
         emit_json(
             {
                 "generated": True,
