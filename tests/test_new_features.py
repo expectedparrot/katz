@@ -726,6 +726,49 @@ def test_spotter_freetext_verdict_audits_and_ingests(tmp_path: Path) -> None:
     assert prose_audit["invalid_answers"] == 1
 
 
+def test_spotter_jobs_from_failures_repackages_only_failures(tmp_path: Path) -> None:
+    """KATZ-4: `spotter jobs --from-failures` builds a jobs package of exactly the
+    scenarios that lacked a valid answer, and refuses when nothing failed."""
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "j.jobs.ep"
+    katz(repo, "spotter", "jobs", "--output", str(jobs_path),
+         "--section", "abstract", "--spotters", "causal_language")
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+
+    # A null (failed) answer for the one scenario.
+    null_path = repo / "j-null.ep"
+    Results(survey=Survey([]), data=[Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": None},
+    )]).git.save(null_path)
+
+    rerun = repo / "rerun.jobs.ep"
+    result = katz(repo, "spotter", "jobs", "--from-failures", str(null_path),
+                  "--section", "abstract", "--spotters", "causal_language",
+                  "--output", str(rerun))
+    assert result["scenario_count"] == 1
+    rebuilt = dict(Jobs.git.load(rerun).scenarios[0])
+    assert rebuilt["spotter_name"] == "causal_language"
+    assert rebuilt["section_id"] == "abstract"
+
+    # When the results are already valid, there is nothing to re-run.
+    ok_path = repo / "j-ok.ep"
+    Results(survey=Survey([]), data=[Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": {"found": False, "title": "", "quoted_text": "", "description": ""}},
+    )]).git.save(ok_path)
+    err = katz_fail(repo, "spotter", "jobs", "--from-failures", str(ok_path),
+                    "--section", "abstract", "--spotters", "causal_language",
+                    "--output", str(repo / "rerun2.jobs.ep"))
+    assert err["code"] == "validation_error"
+
+
 def test_audit_accepts_multiple_models_per_scenario(tmp_path: Path) -> None:
     """KATZ-3: two models answering each scenario is complete cross-model coverage,
     not duplicate rows."""

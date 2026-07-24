@@ -4254,6 +4254,10 @@ def spotter_jobs(
     section: Optional[str] = typer.Option(None, "--section"),
     spotters: Optional[str] = typer.Option(None, "--spotters", help="Comma-separated enabled spotter names"),
     pilot: Optional[int] = typer.Option(None, "--pilot", min=1, help="Build a small deterministic compatibility pilot."),
+    from_failures: Optional[Path] = typer.Option(
+        None, "--from-failures", exists=True, readable=True,
+        help="Repackage only the scenarios that did not return a valid answer in this Results file.",
+    ),
     commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
     """Build an EDSL Jobs package from enabled spotters and manuscript content."""
@@ -4341,6 +4345,27 @@ def spotter_jobs(
                 }))
         if pilot is not None:
             scenarios = scenarios[:pilot]
+
+        if from_failures is not None:
+            # Keep only scenarios whose (spotter, section) did not already return a
+            # valid answer — i.e. null/invalid/truncated rows AND scenarios that
+            # never returned at all — so the re-run covers exactly the gap.
+            prior = _audit_spotter_results(from_failures)
+            valid_identities = {
+                (row["scenario"].get("spotter_name"), row["scenario"].get("section_id"))
+                for row in prior["_rows"] if row["valid"]
+            }
+            scenarios = [
+                scenario for scenario in scenarios
+                if (dict(scenario).get("spotter_name"), dict(scenario).get("section_id"))
+                not in valid_identities
+            ]
+            if not scenarios:
+                raise KatzError(
+                    "No failing scenarios to re-run; the Results file is already valid for these spotters/sections",
+                    "validation_error",
+                    {"from_failures": str(from_failures)},
+                )
 
         from edsl.questions import QuestionFreeText
 
