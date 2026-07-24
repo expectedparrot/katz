@@ -5,7 +5,9 @@ Use Katz as the version-aware source of truth for manuscript review.
 1. Run `katz agent bootstrap`, then follow only actions returned in
    `data.next_actions`.
 2. Confirm the canonical manuscript before registration when more than one
-   candidate exists.
+   candidate exists. Prepare PDF or LaTeX sources as Markdown first. For LaTeX,
+   verify expanded input/include dependencies and the structural table/media
+   audit; never pass `--allow-lossy` without user approval.
 3. Let EDSL own authentication. Use `ep auth login`, inspect redacted local
    state with `ep profiles current`, and run `ep check` before remote work.
    Never print or copy API-key values into prompts or Katz records.

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -135,6 +136,71 @@ def test_register_pdf_returns_prepare_action(tmp_path: Path) -> None:
 
     assert error["code"] == "binary_manuscript"
     assert error["details"]["next_action"][0:3] == ["katz", "paper", "prepare"]
+
+
+def test_register_latex_returns_prepare_action(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    latex = repo / "paper.tex"
+    latex.write_text("\\documentclass{article}\\begin{document}Paper\\end{document}")
+
+    error = katz_fail(repo, "paper", "register", "--canonical", str(latex))
+
+    assert error["code"] == "source_manuscript_requires_preparation"
+    assert error["details"]["next_action"][0:3] == ["katz", "paper", "prepare"]
+
+
+def test_latex_prepare_inlines_input_table_and_preserves_it(tmp_path: Path) -> None:
+    if shutil.which("pandoc") is None:
+        return
+    repo, _ = setup_rich_repo(tmp_path)
+    latex_dir = repo / "latex"
+    tables_dir = latex_dir / "tables"
+    tables_dir.mkdir(parents=True)
+    (tables_dir / "results.tex").write_text(
+        "\\begin{table}\n"
+        "\\caption{Main results}\n"
+        "\\begin{tabular}{lr}\n"
+        "Outcome & Estimate \\\\\n"
+        "Trust & 0.42 \\\\\n"
+        "\\end{tabular}\n"
+        "\\end{table}\n",
+        encoding="utf-8",
+    )
+    main = latex_dir / "main.tex"
+    main.write_text(
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "\\section{Results}\n"
+        "\\input{tables/results}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    output = repo / "paper" / "manuscript.md"
+
+    prepared = katz(repo, "paper", "prepare", str(main), "--output", str(output))
+
+    assert prepared["source_type"] == "latex"
+    assert prepared["dependency_count"] == 2
+    assert prepared["source_inventory"]["table_environments"] == 1
+    assert prepared["converted_table_artifacts"] >= 1
+    assert "Trust" in output.read_text(encoding="utf-8")
+
+
+def test_latex_prepare_fails_for_missing_input(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    main = repo / "main.tex"
+    main.write_text(
+        "\\documentclass{article}\n\\begin{document}\n"
+        "\\input{tables/missing}\n\\end{document}\n",
+        encoding="utf-8",
+    )
+
+    error = katz_fail(
+        repo, "paper", "prepare", str(main),
+        "--output", str(repo / "paper.md"),
+    )
+
+    assert error["code"] == "missing_source_dependency"
 
 
 def test_auto_chunk_rejects_if_sections_exist(tmp_path: Path) -> None:

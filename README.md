@@ -21,13 +21,19 @@ Codex, Claude Code, or another coding agent in the repository containing the
 paper, then copy and send the complete block:
 
 ```text
-Install Katz and EDSL directly from GitHub:
+Install the current Katz and EDSL `main` branches directly from GitHub. Upgrade
+any existing installations and bypass cached source archives:
 
-python -m pip install "katz @ git+https://github.com/expectedparrot/katz.git"
-python -m pip install "edsl @ git+https://github.com/expectedparrot/edsl.git"
+python -m pip install --upgrade --no-cache-dir \
+  "edsl @ git+https://github.com/expectedparrot/edsl.git@main" \
+  "katz @ git+https://github.com/expectedparrot/katz.git@main"
 
-Verify both CLIs:
+Verify the package version, import location, required capabilities, and both
+CLIs. Stop if Katz is older than 0.2.0 or the reported package path belongs to
+a different Python environment:
 
+katz version
+katz capabilities
 katz --help
 ep --help
 
@@ -46,9 +52,9 @@ Rules:
   EDSL profile is configured, do not log in again.
 - Run `ep check` before paid model execution.
 - Confirm an ambiguous manuscript choice before registration.
-- A PDF is not canonical review text. Follow Katz's `paper prepare` action,
-  inspect the extracted Markdown, figures, and tables, and commit the canonical
-  source before registration.
+- PDF and LaTeX sources must be prepared as canonical Markdown. Follow Katz's
+  `paper prepare` action, inspect the assembled text, figures, and tables, and
+  commit the canonical source before registration.
 - Inspect every generated `.jobs.ep` package and preserve both Jobs and Results
   artifacts.
 - Ask me before choosing a paid model, launching a paid run, publishing a
@@ -72,10 +78,14 @@ katz agent instructions --write
 
 ## Installation
 
-Install from the repository with Python 3.11 or newer:
+Install the current GitHub version with Python 3.11 or newer:
 
 ```bash
-python -m pip install .
+python -m pip install --upgrade --no-cache-dir \
+  "edsl @ git+https://github.com/expectedparrot/edsl.git@main" \
+  "katz @ git+https://github.com/expectedparrot/katz.git@main"
+katz version
+katz capabilities
 ```
 
 For development, install in editable mode with the test dependency and run the test suite:
@@ -85,11 +95,10 @@ python -m pip install -e '.[test]'
 pytest
 ```
 
-Install the EDSL CLI as well. Let EDSL own Expected Parrot authentication and
+Let the EDSL CLI installed above own Expected Parrot authentication and
 repository-local `.env` configuration:
 
 ```bash
-python -m pip install "edsl @ git+https://github.com/expectedparrot/edsl.git"
 ep auth login
 ep profiles current
 ep check

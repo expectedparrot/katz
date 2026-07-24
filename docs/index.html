@@ -205,7 +205,7 @@
     "target": "codex",
     "suggested_filename": "AGENTS.md",
     "written": "AGENTS.md",
-    "bytes": 1879
+    "bytes": 2075
   }
 }</code></pre>
     <pre><code>katz agent instructions claude \
@@ -219,7 +219,7 @@
     "target": "claude",
     "suggested_filename": "CLAUDE.md",
     "written": "CLAUDE.md",
-    "bytes": 1879
+    "bytes": 2075
   }
 }</code></pre>
     <p>Both commands refuse to overwrite an existing instruction file. The templates tell the agent to use the state machine, preserve Jobs and Results, preview ingestion, investigate drafts, and request authority before paid or external actions.</p>
@@ -229,9 +229,15 @@
     <h2><span class="chapter">02</span> Prepare the workspace and paper</h2>
     <p>We work inside the paper’s Git repository because the current commit is Katz’s version identifier. A separate tutorial branch keeps the generated manuscript derivative and review ledger away from the upstream project history.</p>
     <h3>Install Katz and EDSL</h3>
-    <pre><code>python -m pip install \
-  git+https://github.com/expectedparrot/katz.git</code></pre>
-    <p><code>python -m pip</code> uses the selected Python interpreter’s installer. Katz installs the current EDSL Git dependency that provides <code>jobs.ep</code>, <code>results.ep</code>, and the <code>ep</code> CLI used later.</p>
+    <pre><code>python -m pip install --upgrade --no-cache-dir \
+  "edsl @ git+https://github.com/expectedparrot/edsl.git@main" \
+  "katz @ git+https://github.com/expectedparrot/katz.git@main"</code></pre>
+    <p><code>python -m pip</code> uses the selected interpreter’s installer. <code>--upgrade</code> replaces an older build, <code>--no-cache-dir</code> prevents reuse of a stale source archive, and <code>@main</code> makes the requested Git ref explicit.</p>
+    <pre><code>katz version
+katz capabilities
+katz --help
+ep --help</code></pre>
+    <p><code>katz version</code> reports both the package version and the filesystem path supplying the CLI. Stop if the version is older than <code>0.2.0</code>, the path belongs to another Python environment, or <code>katz capabilities</code> does not list Results auditing and fail-closed ingestion.</p>
     <h3>Clone the paper repository</h3>
     <pre><code>git clone https://github.com/ronikobrosly/causal-curve.git</code></pre>
     <p>Clone the source repository so Katz can associate the review with an exact version of the paper.</p>
@@ -346,6 +352,11 @@
       <tr><td><code>--output paper_md/paper.md</code></td><td>Writes canonical Markdown at this path and copies extracted images beside it.</td></tr>
     </tbody></table>
     <p>Katz delegates extraction to paper2md, returns the generated Markdown and asset paths in its JSON envelope, and warns when the result has no Markdown headings. paper2md rewrites image references and attempts to reconstruct tables. This matters because Katz anchors review findings to converted text; a reading-order or table-conversion error can otherwise become a false manuscript issue. Katz refuses to register a PDF directly.</p>
+    <h3>Prepare a LaTeX manuscript without dropping included tables</h3>
+    <pre><code>katz paper prepare manuscript/main.tex \
+  --output paper_md/paper.md</code></pre>
+    <p>For LaTeX, Katz recursively expands braced <code>\input{…}</code> and <code>\include{…}</code> commands before invoking Pandoc. Missing dependencies, include cycles, and references outside the repository fail with structured errors. The response lists every source dependency and inventories table, figure, graphics, and equation environments.</p>
+    <p>Katz then compares source table counts with table artifacts in the converted Markdown. If tables or referenced media appear to have vanished, it refuses to publish the canonical file. <code>--allow-lossy</code> exists for an explicitly inspected exception; agents must not use it without authorization.</p>
     <h3>Inspect the conversion</h3>
     <p>PDF conversion is lossy. Before registration, compare the bundle with the PDF and check the parts most likely to affect a review:</p>
     <pre><code>find paper_md -maxdepth 1 -type f -print</code></pre>

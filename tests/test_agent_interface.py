@@ -176,3 +176,14 @@ def test_capabilities_lists_versioned_schemas(tmp_path: Path) -> None:
     schema = katz(repo, "agent", "schema", "action")
     assert schema["name"] == "action.schema.json"
     assert schema["schema"]["required"][0] == "id"
+
+
+def test_version_identifies_installed_build_and_required_capabilities(tmp_path: Path) -> None:
+    repo, _, _ = setup_repo(tmp_path)
+
+    result = katz(repo, "version")
+
+    assert result["version"] == "0.2.0"
+    assert result["package_path"].endswith("/src/katz")
+    assert "results_audit" in result["required_capabilities"]
+    assert "fail_closed_spotter_ingestion" in result["required_capabilities"]

@@ -17,6 +17,8 @@ from typing import Any, Optional
 
 import typer
 
+from katz import __version__
+
 
 app = typer.Typer(help="Version-aware ledger for paper review artifacts.")
 paper_app = typer.Typer(help="Register and query canonical manuscripts.")
@@ -715,6 +717,26 @@ def init() -> None:
         fail(exc.message, exc.code, exc.details)
 
 
+@app.command("version")
+def version_command() -> None:
+    """Report the installed Katz build and the source path supplying it."""
+    emit_json({
+        "version": __version__,
+        "package_path": str(Path(__file__).resolve().parent),
+        "agent_api_version": AGENT_API_VERSION,
+        "required_capabilities": [
+            "agent_next_actions",
+            "paper_prepare",
+            "latex_dependency_expansion",
+            "latex_structural_audit",
+            "results_audit",
+            "fail_closed_spotter_ingestion",
+            "issue_clusters",
+            "agent_instructions_write",
+        ],
+    })
+
+
 @app.command()
 def ventilate(
     input_path: Path = typer.Argument(..., exists=True, file_okay=True, dir_okay=False, readable=True),
@@ -794,6 +816,19 @@ def paper_register(
                         "katz", "paper", "prepare", str(canonical),
                         "--output", str(canonical.with_suffix(".md")),
                     ],
+                },
+            )
+        if canonical.suffix.lower() in {".tex", ".latex"}:
+            raise KatzError(
+                "LaTeX source must be assembled and structurally audited before registration",
+                "source_manuscript_requires_preparation",
+                {
+                    "canonical": str(canonical),
+                    "next_action": [
+                        "katz", "paper", "prepare", str(canonical),
+                        "--output", str(canonical.with_suffix(".md")),
+                    ],
+                    "reason": "Direct registration can omit content supplied through input/include files.",
                 },
             )
         ensure_initialized()
@@ -877,20 +912,271 @@ def paper_register(
         fail(exc.message, exc.code, exc.details)
 
 
+_LATEX_INCLUDE_RE = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
+_LATEX_GRAPHICS_RE = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\s*\{([^}]+)\}")
+
+
+def _tex_code_and_comment(line: str) -> tuple[str, str]:
+    """Split at the first unescaped TeX comment marker."""
+    for index, character in enumerate(line):
+        if character != "%":
+            continue
+        backslashes = 0
+        cursor = index - 1
+        while cursor >= 0 and line[cursor] == "\\":
+            backslashes += 1
+            cursor -= 1
+        if backslashes % 2 == 0:
+            return line[:index], line[index:]
+    return line, ""
+
+
+def _expand_latex_source(
+    path: Path,
+    allowed_root: Path,
+    stack: tuple[Path, ...] = (),
+) -> tuple[str, list[Path]]:
+    """Recursively inline braced input/include commands without crossing the repository."""
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(allowed_root)
+    except ValueError as exc:
+        raise KatzError(
+            "LaTeX include resolves outside the allowed source repository",
+            "unsafe_source_reference",
+            {"path": str(resolved), "allowed_root": str(allowed_root)},
+        ) from exc
+    if resolved in stack:
+        raise KatzError(
+            "Cyclic LaTeX include detected",
+            "conversion_error",
+            {"cycle": [str(item) for item in (*stack, resolved)]},
+        )
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise KatzError(
+            "Referenced LaTeX input is missing",
+            "missing_source_dependency",
+            {"path": str(resolved), "included_from": str(stack[-1]) if stack else None},
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise KatzError(
+            "LaTeX source dependency is not UTF-8",
+            "validation_error",
+            {"path": str(resolved), "start": exc.start},
+        ) from exc
+
+    dependencies = [resolved]
+    expanded_lines: list[str] = []
+    for line in text.splitlines(keepends=True):
+        code, comment = _tex_code_and_comment(line)
+
+        def replace_include(match: re.Match[str]) -> str:
+            raw_target = match.group(1).strip()
+            target = (resolved.parent / raw_target)
+            if target.suffix == "":
+                target = target.with_suffix(".tex")
+            nested, nested_dependencies = _expand_latex_source(
+                target,
+                allowed_root,
+                (*stack, resolved),
+            )
+            dependencies.extend(nested_dependencies)
+            return (
+                f"\n% katz: begin inlined {raw_target}\n"
+                f"{nested.rstrip()}\n"
+                f"% katz: end inlined {raw_target}\n"
+            )
+
+        code = _LATEX_INCLUDE_RE.sub(replace_include, code)
+
+        def rewrite_graphic(match: re.Match[str]) -> str:
+            raw_target = match.group(1).strip()
+            target = (resolved.parent / raw_target)
+            candidates = [target] if target.suffix else [
+                target.with_suffix(extension)
+                for extension in (".pdf", ".png", ".jpg", ".jpeg", ".svg", ".eps")
+            ]
+            graphic = next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
+            if graphic is None:
+                raise KatzError(
+                    "Referenced LaTeX graphic is missing",
+                    "missing_source_dependency",
+                    {"path": str(target), "included_from": str(resolved)},
+                )
+            try:
+                graphic.relative_to(allowed_root)
+            except ValueError as exc:
+                raise KatzError(
+                    "LaTeX graphic resolves outside the allowed source repository",
+                    "unsafe_source_reference",
+                    {"path": str(graphic), "allowed_root": str(allowed_root)},
+                ) from exc
+            dependencies.append(graphic)
+            return match.group(0).replace(match.group(1), graphic.as_posix())
+
+        expanded_lines.append(_LATEX_GRAPHICS_RE.sub(rewrite_graphic, code) + comment)
+    unique_dependencies = list(dict.fromkeys(dependencies))
+    return "".join(expanded_lines), unique_dependencies
+
+
+def _latex_source_inventory(text: str) -> dict[str, int]:
+    table_wrappers = len(re.findall(r"\\begin\{table\*?\}", text))
+    data_tables = len(re.findall(r"\\begin\{(?:longtable|tabular\*?)\}", text))
+    return {
+        "table_environments": max(table_wrappers, data_tables),
+        "figure_environments": len(re.findall(r"\\begin\{figure\*?\}", text)),
+        "graphics_references": len(_LATEX_GRAPHICS_RE.findall(text)),
+        "equation_environments": len(re.findall(r"\\begin\{(?:equation\*?|align\*?|gather\*?)\}", text)),
+    }
+
+
+def _markdown_table_count(text: str) -> int:
+    pipe_tables = len(re.findall(r"(?m)^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*$", text))
+    html_tables = len(re.findall(r"(?i)<table(?:\s|>)", text))
+    preserved_latex = len(re.findall(r"\\begin\{(?:table\*?|longtable|tabular\*?)\}", text))
+    return pipe_tables + html_tables + preserved_latex
+
+
+def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
+    executable = shutil.which("pandoc")
+    if executable is None:
+        raise KatzError(
+            "pandoc is required to prepare LaTeX manuscripts",
+            "dependency_error",
+            {"install": ["brew", "install", "pandoc"], "source": str(source)},
+        )
+    try:
+        repository = repo_root()
+        source.resolve().relative_to(repository)
+        allowed_root = repository
+    except (KatzError, ValueError):
+        allowed_root = source.resolve().parent
+
+    expanded, dependencies = _expand_latex_source(source, allowed_root.resolve())
+    unresolved = []
+    for line_number, line in enumerate(expanded.splitlines(), start=1):
+        code, _ = _tex_code_and_comment(line)
+        if _LATEX_INCLUDE_RE.search(code):
+            unresolved.append(line_number)
+    if unresolved:
+        raise KatzError(
+            "Some LaTeX include commands could not be expanded",
+            "conversion_error",
+            {"lines": unresolved[:20]},
+        )
+
+    inventory = _latex_source_inventory(expanded)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    media_name = f"{output.stem}_media"
+    destination_media = output.parent / media_name
+    if destination_media.exists():
+        raise KatzError(
+            "Refusing to overwrite an existing LaTeX media directory",
+            "validation_error",
+            {"media_directory": str(destination_media)},
+        )
+    with tempfile.TemporaryDirectory(prefix="katz-latex-") as temp_dir:
+        temp_root = Path(temp_dir)
+        temp_output = temp_root / output.name
+        temp_media = temp_root / media_name
+        completed = subprocess.run(
+            [
+                executable,
+                "--from", "latex",
+                "--to", "gfm",
+                "--wrap=none",
+                f"--extract-media={temp_media}",
+                "--output", str(temp_output),
+                "-",
+            ],
+            cwd=source.resolve().parent,
+            input=expanded,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if completed.returncode != 0 or not temp_output.is_file():
+            raise KatzError(
+                "Pandoc LaTeX conversion failed",
+                "conversion_error",
+                {"returncode": completed.returncode, "stderr": completed.stderr[-3000:]},
+            )
+        markdown = temp_output.read_text(encoding="utf-8")
+        markdown = markdown.replace(str(temp_media), media_name)
+        table_artifacts = _markdown_table_count(markdown)
+        warnings_list: list[str] = []
+        if inventory["table_environments"] and table_artifacts < inventory["table_environments"]:
+            warnings_list.append(
+                f"LaTeX contains {inventory['table_environments']} table environments, "
+                f"but only {table_artifacts} table artifacts were detected after conversion."
+            )
+        if inventory["graphics_references"] and not temp_media.exists():
+            warnings_list.append(
+                f"LaTeX references {inventory['graphics_references']} graphics, but Pandoc extracted no media."
+            )
+        if warnings_list and not allow_lossy:
+            raise KatzError(
+                "LaTeX structural audit detected possible conversion loss",
+                "lossy_conversion",
+                {
+                    "warnings": warnings_list,
+                    "source_inventory": inventory,
+                    "hint": "Repair the source/conversion or rerun with --allow-lossy after inspecting the discrepancy.",
+                },
+            )
+        output.write_text(markdown, encoding="utf-8")
+        assets: list[str] = []
+        if temp_media.is_dir():
+            shutil.copytree(temp_media, destination_media)
+            assets = [str(path) for path in destination_media.rglob("*") if path.is_file()]
+
+    headings = sum(bool(re.match(r"^#{1,6}\s+", line)) for line in markdown.splitlines())
+    emit_json({
+        "prepared": True,
+        "source_type": "latex",
+        "source": str(source),
+        "output": str(output),
+        "converter": "pandoc",
+        "dependencies": [str(path) for path in dependencies],
+        "dependency_count": len(dependencies),
+        "source_inventory": inventory,
+        "converted_table_artifacts": table_artifacts,
+        "assets": assets,
+        "headings": headings,
+        "warnings": warnings_list,
+        "lossy_conversion_allowed": allow_lossy,
+        "next_actions": [
+            ["katz", "ventilate", str(output), "--output-path", str(output.with_name(f"{output.stem}_ventilated.md"))],
+        ],
+    })
+
+
 @paper_app.command("prepare")
 def paper_prepare(
     source: Path = typer.Argument(..., exists=True, file_okay=True, dir_okay=False, readable=True),
     output: Path = typer.Option(..., "--output", "-o"),
     backend: str = typer.Option("auto", "--backend"),
+    allow_lossy: bool = typer.Option(False, "--allow-lossy", help="Keep a LaTeX conversion whose structural audit reports possible losses."),
 ) -> None:
-    """Extract a PDF into canonical Markdown plus sibling figure assets using paper2md."""
+    """Prepare PDF or LaTeX source as canonical Markdown plus figure assets."""
     try:
-        if source.suffix.lower() != ".pdf":
-            raise KatzError("paper prepare currently accepts PDF input", "validation_error", {"source": str(source)})
+        source_type = source.suffix.lower()
+        if source_type not in {".pdf", ".tex", ".latex"}:
+            raise KatzError(
+                "paper prepare accepts PDF or LaTeX input",
+                "validation_error",
+                {"source": str(source), "supported_extensions": [".pdf", ".tex", ".latex"]},
+            )
         if output.suffix.lower() not in {".md", ".markdown"}:
             raise KatzError("--output must be a Markdown path", "validation_error", {"output": str(output)})
         if output.exists():
             raise KatzError("Refusing to overwrite the output manuscript", "validation_error", {"output": str(output)})
+        if source_type in {".tex", ".latex"}:
+            _prepare_latex(source, output, allow_lossy=allow_lossy)
+            return
         executable = shutil.which("paper2md")
         if executable is None:
             raise KatzError(
@@ -1518,11 +1804,11 @@ def _agent_state() -> dict[str, Any]:
         actions = []
         if candidates and candidates[0]["confidence"] >= 25:
             candidate = candidates[0]
-            if candidate["format"] == "pdf":
+            if candidate["format"] in {"pdf", "tex", "latex"}:
                 output = str(Path(candidate["path"]).with_suffix(".md"))
                 actions.append(_agent_action(
                     "prepare_manuscript",
-                    "Extract the likely manuscript PDF into reviewable Markdown and figure assets",
+                    "Prepare the likely PDF or LaTeX manuscript as reviewable Markdown and figure assets",
                     ["katz", "paper", "prepare", candidate["path"], "--output", output],
                     mutates_state=True,
                     requires_user_approval=True,
@@ -1836,6 +2122,7 @@ def capabilities() -> None:
     """Describe Katz's agent API, schemas, integrations, and safety properties."""
     schema_names = sorted(path.name for path in SCHEMAS_DIR.glob("*.json")) if SCHEMAS_DIR.is_dir() else []
     emit_json({
+        "package_version": __version__,
         "schema_version": AGENT_API_VERSION,
         "agent_api": {
             "commands": [

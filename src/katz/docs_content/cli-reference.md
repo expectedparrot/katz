@@ -30,7 +30,7 @@ katz status [--no-guide]         # Bootstrap payload with phase + codegen script
 ```bash
 katz paper register \
   --canonical <file>          # path to markdown manuscript (required)
-  [--source-format markdown]  # markdown (default), tex, latex
+  [--source-format markdown]
   [--source-uri <url>]        # e.g. https://arxiv.org/abs/...
   [--source-root <name>]      # short name for the paper
   [--source-method <how>]     # how the PDF was converted
@@ -45,7 +45,10 @@ katz paper find <text> [--mode exact] [--ignore-case] [--limit 20]
 katz paper review-jobs --output one-shot-review.jobs.ep  # whole paper + figures
 
 katz paper auto-chunk [--commit <sha>]     # auto-detect sections from headings
-katz paper prepare paper.pdf --output paper.md  # paper2md text/figure extraction
+katz paper prepare paper.pdf --output paper.md
+katz paper prepare manuscript/main.tex --output paper.md
+# PDF uses paper2md; LaTeX expands input/include and uses Pandoc with a
+# structural table/figure audit. --allow-lossy requires deliberate acceptance.
 katz paper add-sections --sections '[...]' # append sections manually
 ```
 

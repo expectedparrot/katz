@@ -35,12 +35,14 @@ is registered yet — that's expected.
 
 ## Step 2 — Register the Paper
 
-The canonical manuscript must be UTF-8 text. When the source is a PDF, use
-Katz's `paper2md` wrapper to extract Markdown, figures, and tables, then inspect
-the conversion before registration:
+The canonical manuscript must be Markdown. For a PDF, Katz delegates extraction
+to `paper2md`. For LaTeX, it recursively expands `\input` and `\include`, runs
+Pandoc, inventories tables/figures/equations, and refuses a conversion that
+appears to lose tables or media:
 
 ```bash
 katz paper prepare paper.pdf --output paper/manuscript.md
+katz paper prepare manuscript/main.tex --output paper/manuscript.md
 ```
 
 Ventilated prose (one sentence per line) makes issue locations more precise:
