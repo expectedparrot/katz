@@ -935,7 +935,7 @@ def _expand_latex_source(
     path: Path,
     allowed_root: Path,
     stack: tuple[Path, ...] = (),
-) -> tuple[str, list[Path]]:
+) -> tuple[str, list[Path], list[dict[str, str]]]:
     """Recursively inline braced input/include commands without crossing the repository."""
     resolved = path.resolve()
     try:
@@ -968,6 +968,7 @@ def _expand_latex_source(
         ) from exc
 
     dependencies = [resolved]
+    asset_notes: list[dict[str, str]] = []
     expanded_lines: list[str] = []
     for line in text.splitlines(keepends=True):
         code, comment = _tex_code_and_comment(line)
@@ -977,12 +978,13 @@ def _expand_latex_source(
             target = (resolved.parent / raw_target)
             if target.suffix == "":
                 target = target.with_suffix(".tex")
-            nested, nested_dependencies = _expand_latex_source(
+            nested, nested_dependencies, nested_asset_notes = _expand_latex_source(
                 target,
                 allowed_root,
                 (*stack, resolved),
             )
             dependencies.extend(nested_dependencies)
+            asset_notes.extend(nested_asset_notes)
             return (
                 f"\n% katz: begin inlined {raw_target}\n"
                 f"{nested.rstrip()}\n"
@@ -1000,25 +1002,28 @@ def _expand_latex_source(
             ]
             graphic = next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
             if graphic is None:
-                raise KatzError(
-                    "Referenced LaTeX graphic is missing",
-                    "missing_source_dependency",
-                    {"path": str(target), "included_from": str(resolved)},
-                )
+                asset_notes.append({
+                    "code": "missing_graphic",
+                    "path": str(target),
+                    "included_from": str(resolved),
+                    "message": "Referenced graphic was not found; its caption and source path remain in the converted text.",
+                })
+                return match.group(0)
             try:
                 graphic.relative_to(allowed_root)
-            except ValueError as exc:
-                raise KatzError(
-                    "LaTeX graphic resolves outside the allowed source repository",
-                    "unsafe_source_reference",
-                    {"path": str(graphic), "allowed_root": str(allowed_root)},
-                ) from exc
+            except ValueError:
+                asset_notes.append({
+                    "code": "external_graphic",
+                    "path": str(graphic),
+                    "included_from": str(resolved),
+                    "message": "Graphic is outside the manuscript repository; Katz treated it as a binary asset, not source text.",
+                })
             dependencies.append(graphic)
             return match.group(0).replace(match.group(1), graphic.as_posix())
 
         expanded_lines.append(_LATEX_GRAPHICS_RE.sub(rewrite_graphic, code) + comment)
     unique_dependencies = list(dict.fromkeys(dependencies))
-    return "".join(expanded_lines), unique_dependencies
+    return "".join(expanded_lines), unique_dependencies, asset_notes
 
 
 def _latex_source_inventory(text: str) -> dict[str, int]:
@@ -1151,7 +1156,7 @@ def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
     except (KatzError, ValueError):
         allowed_root = source.resolve().parent
 
-    expanded, dependencies = _expand_latex_source(source, allowed_root.resolve())
+    expanded, dependencies, asset_notes = _expand_latex_source(source, allowed_root.resolve())
     unresolved = []
     for line_number, line in enumerate(expanded.splitlines(), start=1):
         code, _ = _tex_code_and_comment(line)
@@ -1208,22 +1213,31 @@ def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
         markdown = markdown.replace(str(temp_media), media_name)
         markdown, anchors_flattened = _flatten_html_anchors(markdown)
         table_artifacts = _markdown_table_count(markdown)
-        warnings_list: list[str] = []
+        warnings_list = [note["message"] for note in asset_notes]
+        blocking_warnings = [
+            note["message"] for note in asset_notes if note["code"] == "missing_graphic"
+        ]
         if inventory["table_environments"] and table_artifacts < inventory["table_environments"]:
-            warnings_list.append(
+            warning = (
                 f"LaTeX contains {inventory['table_environments']} table environments, "
                 f"but only {table_artifacts} table artifacts were detected after conversion."
             )
+            warnings_list.append(warning)
+            blocking_warnings.append(warning)
         if inventory["graphics_references"] and not temp_media.exists():
-            warnings_list.append(
+            warning = (
                 f"LaTeX references {inventory['graphics_references']} graphics, but Pandoc extracted no media."
             )
-        if warnings_list and not allow_lossy:
+            warnings_list.append(warning)
+            blocking_warnings.append(warning)
+        if blocking_warnings and not allow_lossy:
             raise KatzError(
                 "LaTeX structural audit detected possible conversion loss",
                 "lossy_conversion",
                 {
                     "warnings": warnings_list,
+                    "blocking_warnings": blocking_warnings,
+                    "external_assets": asset_notes,
                     "source_inventory": inventory,
                     "hint": "Repair the source/conversion or rerun with --allow-lossy after inspecting the discrepancy.",
                 },
@@ -1252,6 +1266,7 @@ def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
         },
         "converted_table_artifacts": table_artifacts,
         "assets": assets,
+        "external_assets": asset_notes,
         "headings": headings,
         "warnings": warnings_list,
         "lossy_conversion_allowed": allow_lossy,

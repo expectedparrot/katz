@@ -183,7 +183,7 @@ def test_version_identifies_installed_build_and_required_capabilities(tmp_path: 
 
     result = katz(repo, "version")
 
-    assert result["version"] == "0.2.1"
+    assert result["version"] == "0.2.2"
     assert result["package_path"].endswith("/src/katz")
     assert "results_audit" in result["required_capabilities"]
     assert "fail_closed_spotter_ingestion" in result["required_capabilities"]

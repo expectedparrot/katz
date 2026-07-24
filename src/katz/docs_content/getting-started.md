@@ -46,6 +46,11 @@ katz paper prepare paper.pdf --output paper/manuscript.md
 katz paper prepare manuscript/main.tex --output paper/manuscript.md
 ```
 
+Textual `\input`/`\include` dependencies must remain inside the repository.
+Graphics may live in a sibling output directory: Katz records them as external
+binary assets and lets Pandoc copy them into the prepared bundle. A missing
+graphic is reported as conversion loss and requires explicit `--allow-lossy`.
+
 Ventilated prose (one sentence per line) makes issue locations more precise:
 
 ```bash

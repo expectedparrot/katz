@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import base64
 from pathlib import Path
 
 
@@ -225,6 +226,70 @@ def test_latex_prepare_fails_for_missing_input(tmp_path: Path) -> None:
     )
 
     assert error["code"] == "missing_source_dependency"
+
+
+def test_latex_prepare_allows_existing_graphic_outside_repo(tmp_path: Path) -> None:
+    if shutil.which("pandoc") is None:
+        return
+    repo, _ = setup_rich_repo(tmp_path)
+    latex_dir = repo / "latex"
+    latex_dir.mkdir()
+    external_dir = tmp_path / "output" / "figures"
+    external_dir.mkdir(parents=True)
+    graphic = external_dir / "result.png"
+    graphic.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    ))
+    main = latex_dir / "main.tex"
+    main.write_text(
+        "\\documentclass{article}\n"
+        "\\usepackage{graphicx}\n"
+        "\\begin{document}\n"
+        "\\begin{figure}\n"
+        "\\includegraphics{../../output/figures/result.png}\n"
+        "\\caption{External result figure}\n"
+        "\\end{figure}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    output = repo / "paper" / "manuscript.md"
+
+    prepared = katz(repo, "paper", "prepare", str(main), "--output", str(output))
+
+    external = prepared["external_assets"]
+    assert external[0]["code"] == "external_graphic"
+    assert external[0]["path"] == str(graphic)
+    assert prepared["lossy_conversion_allowed"] is False
+    assert output.is_file()
+
+
+def test_latex_prepare_missing_graphic_requires_allow_lossy(tmp_path: Path) -> None:
+    if shutil.which("pandoc") is None:
+        return
+    repo, _ = setup_rich_repo(tmp_path)
+    main = repo / "main.tex"
+    main.write_text(
+        "\\documentclass{article}\n"
+        "\\usepackage{graphicx}\n"
+        "\\begin{document}\n"
+        "\\includegraphics{../output/figures/missing.png}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    output = repo / "paper.md"
+
+    error = katz_fail(repo, "paper", "prepare", str(main), "--output", str(output))
+
+    assert error["code"] == "lossy_conversion"
+    assert error["details"]["external_assets"][0]["code"] == "missing_graphic"
+    assert not output.exists()
+
+    prepared = katz(
+        repo, "paper", "prepare", str(main), "--output", str(output), "--allow-lossy",
+    )
+    assert prepared["external_assets"][0]["code"] == "missing_graphic"
+    assert prepared["lossy_conversion_allowed"] is True
 
 
 def test_auto_chunk_rejects_if_sections_exist(tmp_path: Path) -> None:
