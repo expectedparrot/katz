@@ -726,6 +726,41 @@ def test_spotter_freetext_verdict_audits_and_ingests(tmp_path: Path) -> None:
     assert prose_audit["invalid_answers"] == 1
 
 
+def test_audit_accepts_multiple_models_per_scenario(tmp_path: Path) -> None:
+    """KATZ-3: two models answering each scenario is complete cross-model coverage,
+    not duplicate rows."""
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "m.jobs.ep"
+    katz(repo, "spotter", "jobs", "--output", str(jobs_path),
+         "--section", "abstract", "--spotters", "causal_language")
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+
+    negative = {"found": False, "title": "", "quoted_text": "", "description": ""}
+    model_names = ("gpt-4o", "gpt-4o-mini")
+    data = [
+        Result(agent=Agent(), scenario=scenario, model=Model(name), iteration=0,
+               answer={"spotter_result": dict(negative)})
+        for name in model_names
+    ]
+    path = repo / "m-results.ep"
+    Results(survey=Survey([]), data=data).git.save(path)
+
+    audit = katz(repo, "results", "audit", str(path), "--jobs", str(jobs_path))
+    assert audit["duplicate_rows"] == 0
+    assert audit["expected_scenarios"] == 1
+    assert audit["expected_answers"] == 2  # 1 scenario x 2 models
+    assert audit["valid_answers"] == 2
+    assert audit["missing_answers"] == 0
+    assert audit["complete"] is True
+    assert audit["models"] == sorted(model_names)
+
+
 def test_results_failures_accepts_jobs_and_reports_missing(tmp_path: Path) -> None:
     """KATZ-5: `results failures` accepts --jobs (parity with `results audit`) and
     reports scenarios that never returned a row."""

@@ -4507,6 +4507,7 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
 
     rows: list[dict[str, Any]] = []
     returned_keys: list[str] = []
+    returned_pairs: list[tuple[str, str]] = []
     valid_positive = valid_negative = 0
     null_answers = invalid_answers = model_exceptions = 0
     failure_examples: list[dict[str, Any]] = []
@@ -4518,6 +4519,8 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
         answer = _result_value(result, "answer", "spotter_result")
         verdict = _coerce_spotter_answer(answer)
         model = _result_value(result, "model", "model") or _result_value(result, "model", "_model_")
+        model_str = str(model) if model else ""
+        returned_pairs.append((key, model_str))
         if model:
             models.add(str(model))
         exception = _result_value(result, "exceptions", "spotter_result")
@@ -4551,20 +4554,36 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
 
     expected_set = set(expected_keys)
     returned_set = set(returned_keys)
-    duplicate_rows = len(returned_keys) - len(returned_set)
+    # A duplicate is the SAME scenario answered twice by the SAME model; distinct
+    # models answering one scenario are separate observations, not duplicates.
+    returned_pair_set = set(returned_pairs)
+    duplicate_rows = len(returned_pairs) - len(returned_pair_set)
     missing_scenarios = len(expected_set - returned_set) if expected_keys else None
     unexpected_scenarios = len(returned_set - expected_set) if expected_keys else None
     expected_count = len(expected_keys) if expected_keys else None
+
+    # Coverage is model-aware: every jobs scenario must be answered by every model
+    # present in the Results. With one model this reduces to one answer/scenario.
+    model_names = models or {""}
+    if expected_keys:
+        expected_pairs = {(k, m) for k in expected_keys for m in model_names}
+        expected_answer_count: int | None = len(expected_pairs)
+        missing_answers: int | None = len(expected_pairs - returned_pair_set)
+    else:
+        expected_answer_count = None
+        missing_answers = None
+
     valid_count = valid_positive + valid_negative
-    denominator = expected_count if expected_count is not None else len(results)
+    denominator = expected_answer_count if expected_answer_count is not None else len(results)
     coverage = (valid_count / denominator) if denominator else 0.0
     complete = bool(
-        expected_count is not None
-        and expected_count > 0
-        and valid_count == expected_count
+        expected_answer_count is not None
+        and expected_answer_count > 0
+        and valid_count == expected_answer_count
         and not duplicate_rows
         and not missing_scenarios
         and not unexpected_scenarios
+        and not missing_answers
         and not null_answers
         and not invalid_answers
         and not model_exceptions
@@ -4574,6 +4593,7 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
         "results_path": str(results_path.resolve()),
         "jobs_path": str(jobs_path.resolve()) if jobs_path is not None else None,
         "expected_scenarios": expected_count,
+        "expected_answers": expected_answer_count,
         "returned_rows": len(results),
         "valid_answers": valid_count,
         "valid_positive_findings": valid_positive,
@@ -4582,6 +4602,7 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
         "invalid_answers": invalid_answers,
         "model_exceptions": model_exceptions,
         "missing_scenarios": missing_scenarios,
+        "missing_answers": missing_answers,
         "unexpected_scenarios": unexpected_scenarios,
         "duplicate_rows": duplicate_rows,
         "coverage": round(coverage, 6),
