@@ -726,6 +726,71 @@ def test_spotter_freetext_verdict_audits_and_ingests(tmp_path: Path) -> None:
     assert prose_audit["invalid_answers"] == 1
 
 
+def test_results_failures_accepts_jobs_and_reports_missing(tmp_path: Path) -> None:
+    """KATZ-5: `results failures` accepts --jobs (parity with `results audit`) and
+    reports scenarios that never returned a row."""
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "f.jobs.ep"
+    katz(repo, "spotter", "jobs", "--output", str(jobs_path),
+         "--section", "abstract", "--spotters", "causal_language")
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+
+    path = repo / "f-results.ep"
+    null_result = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": None},
+    )
+    Results(survey=Survey([]), data=[null_result]).git.save(path)
+
+    failures = katz(repo, "results", "failures", str(path), "--jobs", str(jobs_path))
+    assert failures["count"] == 1
+    assert failures["rows"][0]["error"] == "null_answer"
+    assert failures["missing_scenarios"] == 0
+    assert failures["jobs"] is not None
+
+
+def test_ingest_reports_skipped_unlocatable_positive(tmp_path: Path) -> None:
+    """KATZ-12: a positive finding whose quote cannot be located is surfaced in
+    skipped_details rather than vanishing silently."""
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "s.jobs.ep"
+    katz(repo, "spotter", "jobs", "--output", str(jobs_path),
+         "--section", "abstract", "--spotters", "causal_language")
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+
+    path = repo / "s-results.ep"
+    result = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": {
+            "found": True,
+            "title": "Phantom claim",
+            "quoted_text": "this exact text does not appear anywhere in the section",
+            "description": "…",
+        }},
+    )
+    Results(survey=Survey([]), data=[result]).git.save(path)
+
+    ingested = katz(repo, "spotter", "ingest", str(path), "--jobs", str(jobs_path))
+    assert ingested["issues_found"] == 1
+    assert ingested["issues_filed"] == 0
+    assert ingested["skipped"] == 1
+    assert ingested["skipped_details"][0]["reason"] == "quote_not_located"
+    assert ingested["skipped_details"][0]["spotter"] == "causal_language"
+    assert ingested["skipped_details"][0]["title"] == "Phantom claim"
+
+
 def test_locate_quoted_text_allows_line_break_normalization() -> None:
     from katz.cli import _locate_quoted_text
 

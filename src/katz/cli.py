@@ -4655,15 +4655,31 @@ def results_sample(
 def results_failures(
     results_path: Path = typer.Argument(..., exists=True, readable=True),
     limit: int = typer.Option(20, "--limit", min=1),
+    jobs: Optional[Path] = typer.Option(None, "--jobs", exists=True, readable=True),
+    commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
-    """Return compact null, schema-invalid, and model-exception rows."""
+    """Return compact null, schema-invalid, and model-exception rows.
+
+    Pass --jobs (as `results audit` accepts) to also report scenarios that never
+    returned any row, so the full set of things to re-run is visible at once.
+    """
     try:
-        audit = _audit_spotter_results(results_path)
+        _, dest, _, _, _ = load_version(commit)
+        resolved_jobs = _resolve_audit_jobs(dest, results_path, jobs)
+        audit = _audit_spotter_results(results_path, resolved_jobs)
         rows = [
             {key: value for key, value in row.items() if key != "answer"}
             for row in audit.pop("_rows") if not row["valid"]
         ][:limit]
-        emit_json({"results": str(results_path), "count": len(rows), "rows": rows})
+        emit_json({
+            "results": str(results_path),
+            "jobs": str(resolved_jobs) if resolved_jobs is not None else None,
+            "count": len(rows),
+            "rows": rows,
+            "missing_scenarios": audit.get("missing_scenarios"),
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
     except Exception as exc:
         fail(str(exc), "edsl_error", {"results": str(results_path)})
 
@@ -4733,6 +4749,7 @@ def spotter_ingest(
 
         found = filed = skipped = 0
         issue_ids: list[str] = []
+        skipped_details: list[dict[str, Any]] = []
         for result_index, result in enumerate(results):
             if result_index < len(audit_rows) and not audit_rows[result_index]["valid"]:
                 skipped += 1
@@ -4758,6 +4775,16 @@ def spotter_ingest(
             located = _locate_quoted_text(region, quoted) if quoted else None
             if located is None:
                 skipped += 1
+                # A positive finding whose quotation cannot be located in its
+                # section region is dropped rather than anchored to a guessed
+                # offset; surface it so the reviewer can recover it by hand.
+                skipped_details.append({
+                    "reason": "quote_not_located" if quoted else "missing_quote",
+                    "spotter": spotter_name,
+                    "section_id": scenario.get("section_id"),
+                    "title": str(answer.get("title", "")),
+                    "quoted_text": quoted[:200],
+                })
                 continue
             char_start, char_end = located
             byte_start = range_start + len(region[:char_start].encode("utf-8"))
@@ -4816,6 +4843,7 @@ def spotter_ingest(
             "issues_found": found,
             "issues_filed": filed,
             "skipped": skipped,
+            "skipped_details": skipped_details,
             "issue_ids": issue_ids,
             "audit": audit,
             "run_status": "partial" if not audit["complete"] else "ingested",
