@@ -74,6 +74,12 @@ katz ventilate paper.md --output-path paper_ventilated.md
 git diff --no-index paper.md paper_ventilated.md
 ```
 
+`katz agent next` prefers a filename containing `ventilated` over its source
+manuscript. If the derivative is untracked it proposes `git add`; if staged it
+proposes a commit; only the committed file is then proposed for registration.
+`katz paper register` rejects uncommitted repository files so their bytes cannot
+be incorrectly associated with an older Git SHA.
+
 ---
 
 ## Step 3 — Detect Sections

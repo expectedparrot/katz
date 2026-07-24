@@ -106,6 +106,31 @@ def test_agent_ignores_agent_files_and_prepares_pdf_candidate(tmp_path: Path) ->
     assert status["next_actions"][0]["command"][0:3] == ["katz", "paper", "prepare"]
 
 
+def test_agent_prioritizes_and_commits_ventilated_derivative(tmp_path: Path) -> None:
+    repo, manuscript, _ = setup_repo(tmp_path)
+    katz(repo, "init")
+    ventilated = repo / "paper_ventilated.md"
+    katz(
+        repo, "ventilate", str(manuscript),
+        "--output-path", str(ventilated),
+    )
+
+    status = katz(repo, "agent", "next")
+    assert status["action"]["id"] == "stage_canonical_manuscript"
+    assert status["action"]["command"] == ["git", "add", "--", "paper_ventilated.md"]
+    assert status["alternatives"] == []
+
+    git(repo, "add", "--", "paper_ventilated.md")
+    status = katz(repo, "agent", "next")
+    assert status["action"]["id"] == "commit_canonical_manuscript"
+
+    git(repo, "commit", "-m", "Add ventilated manuscript")
+    status = katz(repo, "agent", "next")
+    assert status["action"]["id"] == "register_manuscript"
+    command = status["action"]["command"]
+    assert command[command.index("--canonical") + 1] == "paper_ventilated.md"
+
+
 def test_issue_next_returns_context_and_allowed_mutation(tmp_path: Path) -> None:
     repo, manuscript, _ = setup_repo(tmp_path)
     katz(repo, "init")
@@ -183,7 +208,7 @@ def test_version_identifies_installed_build_and_required_capabilities(tmp_path: 
 
     result = katz(repo, "version")
 
-    assert result["version"] == "0.2.2"
+    assert result["version"] == "0.2.3"
     assert result["package_path"].endswith("/src/katz")
     assert "results_audit" in result["required_capabilities"]
     assert "fail_closed_spotter_ingestion" in result["required_capabilities"]

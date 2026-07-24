@@ -29,7 +29,7 @@ python -m pip install --upgrade --no-cache-dir \
   "katz @ git+https://github.com/expectedparrot/katz.git@main"
 
 Verify the package version, import location, required capabilities, and both
-CLIs. Stop if Katz is older than 0.2.2 or the reported package path belongs to
+CLIs. Stop if Katz is older than 0.2.3 or the reported package path belongs to
 a different Python environment:
 
 katz version

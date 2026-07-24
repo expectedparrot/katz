@@ -727,6 +727,8 @@ def version_command() -> None:
         "required_capabilities": [
             "agent_next_actions",
             "paper_prepare",
+            "ventilated_candidate_preference",
+            "committed_canonical_guard",
             "latex_dependency_expansion",
             "latex_structural_audit",
             "results_audit",
@@ -832,6 +834,40 @@ def paper_register(
                 },
             )
         ensure_initialized()
+        root = repo_root()
+        try:
+            relative_canonical = canonical.resolve().relative_to(root)
+        except ValueError:
+            relative_canonical = None
+        if relative_canonical is not None:
+            tracked = subprocess.run(
+                ["git", "ls-files", "--error-unmatch", "--", str(relative_canonical)],
+                cwd=root,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            status = subprocess.run(
+                ["git", "status", "--porcelain", "--", str(relative_canonical)],
+                cwd=root,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if tracked.returncode != 0 or status.stdout.strip():
+                raise KatzError(
+                    "Canonical manuscript must be committed before registration",
+                    "uncommitted_manuscript",
+                    {
+                        "canonical": str(relative_canonical),
+                        "git_status": status.stdout.strip() or "untracked",
+                        "next_actions": [
+                            ["git", "add", "--", str(relative_canonical)],
+                            ["git", "commit", "-m", "Add canonical manuscript for Katz review"],
+                        ],
+                    },
+                )
         commit = current_commit()
         checksum = sha256_file(canonical)
 
@@ -1805,6 +1841,8 @@ def _manuscript_candidates(root: Path) -> list[dict[str, Any]]:
         lowered_name = path.name.lower()
         if lowered_name.startswith(("paper.", "paper_", "manuscript.", "manuscript_", "article.", "article_")):
             score += 30
+        if "ventilated" in path.stem.lower():
+            score += 200
         if path.suffix.lower() in {".md", ".tex"}:
             score += 10
         try:
@@ -1831,12 +1869,38 @@ def _manuscript_candidates(root: Path) -> list[dict[str, Any]]:
             reasons.append(f"contains {academic_markers} academic section markers")
         if size > 2_000:
             reasons.append("substantial document length")
+        if "ventilated" in path.stem.lower():
+            reasons.append("prepared ventilated derivative")
+        git_status_probe = subprocess.run(
+            ["git", "status", "--porcelain", "--", str(relative)],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        git_status = git_status_probe.stdout[:2] if git_status_probe.returncode == 0 else ""
+        tracked_probe = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", str(relative)],
+            cwd=root,
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if not git_status and tracked_probe.returncode == 0:
+            version_state = "committed"
+        elif git_status == "??" or (len(git_status) > 1 and git_status[1] != " "):
+            version_state = "unstaged"
+        else:
+            version_state = "staged"
         candidates.append({
             "path": str(relative),
             "format": path.suffix.lower().lstrip("."),
             "bytes": size,
             "confidence": score,
             "confidence_reasons": reasons,
+            "version_state": version_state,
         })
     return sorted(candidates, key=lambda item: (-item["confidence"], item["path"]))[:20]
 
@@ -1934,7 +1998,24 @@ def _agent_state() -> dict[str, Any]:
                     ["katz", "paper", "prepare", candidate["path"], "--output", output],
                     mutates_state=True,
                     requires_user_approval=True,
-                    reason="Katz anchors findings to canonical UTF-8 text; PDFs must be extracted first.",
+                    reason="Katz anchors findings to canonical UTF-8 text; source documents must be prepared first.",
+                ))
+            elif candidate["version_state"] == "unstaged":
+                actions.append(_agent_action(
+                    "stage_canonical_manuscript",
+                    "Stage the prepared canonical manuscript before registration",
+                    ["git", "add", "--", candidate["path"]],
+                    mutates_state=True,
+                    reason="Katz versions are Git commits; registration must not attach uncommitted text to the current HEAD.",
+                ))
+            elif candidate["version_state"] == "staged":
+                actions.append(_agent_action(
+                    "commit_canonical_manuscript",
+                    "Commit the prepared canonical manuscript before registration",
+                    ["git", "commit", "-m", "Add canonical manuscript for Katz review"],
+                    mutates_state=True,
+                    requires_user_approval=True,
+                    reason="Registration anchors the canonical bytes to the resulting Git commit.",
                 ))
             else:
                 actions.append(_agent_action(

@@ -96,7 +96,6 @@ def test_init_register_and_status(tmp_path: Path) -> None:
     assert status["sentences"] == 1
     assert status["sections"] == 0  # no sections added yet
     assert status["valid"] is True
-
     # paper_map.jsonl exists and has correct structure
     jsonl_path = repo / ".katz" / "versions" / commit / "paper_map.jsonl"
     assert jsonl_path.exists()
@@ -160,6 +159,18 @@ def test_init_register_and_status(tmp_path: Path) -> None:
 
     # Validate after issue
     assert katz(repo, "validate")["valid"] is True
+
+
+def test_register_rejects_uncommitted_repository_manuscript(tmp_path: Path) -> None:
+    repo, _, _ = setup_repo(tmp_path)
+    canonical = repo / "paper_ventilated.md"
+    canonical.write_text("# Paper\n\nA sentence.\n", encoding="utf-8")
+    katz(repo, "init")
+
+    error = katz_fail(repo, "paper", "register", "--canonical", str(canonical))
+
+    assert error["code"] == "uncommitted_manuscript"
+    assert error["details"]["canonical"] == "paper_ventilated.md"
 
 
 def test_ventilate_markdown_preserves_structural_blocks(tmp_path: Path) -> None:

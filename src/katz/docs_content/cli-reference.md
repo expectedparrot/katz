@@ -52,6 +52,10 @@ katz paper prepare manuscript/main.tex --output paper.md
 katz paper add-sections --sections '[...]' # append sections manually
 ```
 
+Repository-local canonical files must be committed and clean. Prepared
+ventilated derivatives receive candidate priority; the agent state proposes
+stage, commit, and registration as separate transitions.
+
 LaTeX text dependencies cannot cross the repository boundary. Existing
 `\includegraphics` files may: they are recorded as external binary assets and
 copied into the prepared media bundle. Missing graphics are blocking conversion
