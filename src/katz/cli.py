@@ -13,7 +13,7 @@ import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import typer
 
@@ -2134,6 +2134,34 @@ def _agent_state() -> dict[str, Any]:
                         mutates_state=False,
                     ))
             else:
+                models_file = root / "models.ep"
+                if not models_file.exists():
+                    actions.append(_agent_action(
+                        "build_spotter_models",
+                        "Create a ModelList with an adequate token budget for free-text spotter runs",
+                        ["katz", "spotter", "models", "--model", "<model-name>",
+                         "--max-tokens", str(SPOTTER_RECOMMENDED_MAX_TOKENS), "--output", "models.ep"],
+                        mutates_state=True,
+                        reason=(
+                            "Free-text verdicts truncate under the provider default and `ep run` "
+                            f"has no --max-tokens flag, so set max_tokens >= {SPOTTER_RECOMMENDED_MAX_TOKENS} "
+                            "in a ModelList before running."
+                        ),
+                    ))
+                actions.append(_agent_action(
+                    "run_jobs",
+                    "Execute the packaged review with the prepared ModelList (paid, remote)",
+                    ["ep", "run", str(jobs_path), "--model_list", "models.ep",
+                     "--output", str(expected_results)],
+                    mutates_state=True,
+                    requires_network=True,
+                    requires_user_approval=True,
+                    reason=(
+                        "Runs every spotter scenario. Use the ModelList from "
+                        "`katz spotter models` so free-text answers are not truncated before "
+                        "their JSON verdict (which the audit reports as unparseable_answer)."
+                    ),
+                ))
                 actions.append(_agent_action(
                     "inspect_jobs", "Inspect the packaged EDSL job before execution",
                     ["ep", "inspect", str(jobs_path)],
@@ -3622,6 +3650,34 @@ missing, use the paper context to distinguish “missing from this section” fr
 “missing from the paper.” Do not invent text.
 """
 
+# Appended to the spotter prompt so the model reasons freely first and never has
+# its deliberation discarded by strict schema validation, then commits to a
+# machine-readable verdict Katz can parse. Free-text reasoning avoids the
+# false-negative failure mode where a forced JSON binary suppresses a genuine
+# concern the model was still weighing.
+SPOTTER_VERDICT_SUFFIX = """
+
+Work in two steps.
+First, reason in prose: enumerate candidate issues and, for each, decide whether
+it is genuine and substantive or whether it is addressed, acknowledged, or out of
+scope elsewhere in the paper.
+Then, on the final lines and with nothing after it, output your verdict as a
+single fenced JSON object:
+
+```json
+{"found": true, "title": "short title", "quoted_text": "exact manuscript quotation", "description": "evidence-backed explanation"}
+```
+
+Use found=false with empty strings for title, quoted_text, and description when
+there is no genuine, substantive issue. Emit exactly one such JSON object.
+"""
+
+# Free-text spotter answers reason in prose before the JSON verdict, so
+# issue-finding answers are long. Runs need enough output budget to reach the
+# verdict; the provider default (often ~1000) truncates them into
+# unparseable_answer rows. A ModelList is how EDSL sets this at run time.
+SPOTTER_RECOMMENDED_MAX_TOKENS = 4000
+
 ECONOMICS_REVIEW_QUESTION_TEXT = """\
 Act as a demanding but constructive economics referee. Read the complete manuscript
 attachment and inspect every attached figure before writing the report.
@@ -4209,6 +4265,10 @@ def spotter_jobs(
     section: Optional[str] = typer.Option(None, "--section"),
     spotters: Optional[str] = typer.Option(None, "--spotters", help="Comma-separated enabled spotter names"),
     pilot: Optional[int] = typer.Option(None, "--pilot", min=1, help="Build a small deterministic compatibility pilot."),
+    from_failures: Optional[Path] = typer.Option(
+        None, "--from-failures", exists=True, readable=True,
+        help="Repackage only the scenarios that did not return a valid answer in this Results file.",
+    ),
     commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
     """Build an EDSL Jobs package from enabled spotters and manuscript content."""
@@ -4297,18 +4357,32 @@ def spotter_jobs(
         if pilot is not None:
             scenarios = scenarios[:pilot]
 
-        question = QuestionDict(
+        if from_failures is not None:
+            # Keep only scenarios whose (spotter, section) did not already return a
+            # valid answer — i.e. null/invalid/truncated rows AND scenarios that
+            # never returned at all — so the re-run covers exactly the gap.
+            prior = _audit_spotter_results(from_failures)
+            valid_identities = {
+                (row["scenario"].get("spotter_name"), row["scenario"].get("section_id"))
+                for row in prior["_rows"] if row["valid"]
+            }
+            scenarios = [
+                scenario for scenario in scenarios
+                if (dict(scenario).get("spotter_name"), dict(scenario).get("section_id"))
+                not in valid_identities
+            ]
+            if not scenarios:
+                raise KatzError(
+                    "No failing scenarios to re-run; the Results file is already valid for these spotters/sections",
+                    "validation_error",
+                    {"from_failures": str(from_failures)},
+                )
+
+        from edsl.questions import QuestionFreeText
+
+        question = QuestionFreeText(
             question_name="spotter_result",
-            question_text=SPOTTER_QUESTION_TEXT,
-            answer_keys=["found", "title", "quoted_text", "description"],
-            value_types=["bool", "str", "str", "str"],
-            value_descriptions=[
-                "Whether a genuine issue was found",
-                "Short issue title; empty when found is false",
-                "Exact manuscript quotation; empty when found is false",
-                "Evidence-backed explanation; empty when found is false",
-            ],
-            include_comment=False,
+            question_text=SPOTTER_QUESTION_TEXT + SPOTTER_VERDICT_SUFFIX,
         )
         job = Jobs(survey=question.to_survey()).by(ScenarioList(scenarios))
         saved = job.git.save(output)
@@ -4341,12 +4415,24 @@ def spotter_jobs(
                 for scenario in scenarios
             ),
             "answer_contract": {
-                "question_type": "dict",
-                "required_keys": ["found", "title", "quoted_text", "description"],
+                "question_type": "free_text_with_json_verdict",
+                "verdict_keys": ["found", "title", "quoted_text", "description"],
+                "parser": "katz._coerce_spotter_answer",
+                "rationale": "Free-text reasoning followed by a fenced JSON verdict; avoids null answers and schema-forced false negatives on deliberation-heavy spotters.",
+                "recommended_max_tokens": SPOTTER_RECOMMENDED_MAX_TOKENS,
+                "token_budget_note": (
+                    f"Set max_tokens >= {SPOTTER_RECOMMENDED_MAX_TOKENS} via a ModelList; the "
+                    "provider default truncates long issue-finding answers before the JSON "
+                    "verdict, which the audit reports as unparseable_answer."
+                ),
                 "pilot_required_before_large_run": len(scenarios) > 20,
             },
             "saved": saved,
-            "next": f"ep run {output} --model <model-name> --output {expected_results}",
+            "next": (
+                f"katz spotter models --model <model-name> --max-tokens "
+                f"{SPOTTER_RECOMMENDED_MAX_TOKENS} --output models.ep && "
+                f"ep run {output} --model_list models.ep --output {expected_results}"
+            ),
         })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
@@ -4387,9 +4473,45 @@ def _scenario_key(value: Any) -> str:
     return json.dumps(identity, sort_keys=True, default=str)
 
 
+def _coerce_spotter_answer(answer: Any) -> dict[str, Any] | None:
+    """Normalise a spotter answer into a {found,title,quoted_text,description} dict.
+
+    Accepts either a structured dict (legacy QuestionDict path) or a free-text
+    string that reasons in prose and ends with a JSON verdict object (current
+    QuestionFreeText path). Returns None only when no verdict can be recovered,
+    so free-text reasoning is never silently scored as a negative finding.
+    """
+    if isinstance(answer, dict):
+        return answer if "found" in answer else None
+    if not isinstance(answer, str):
+        return None
+    text = answer.strip()
+    if not text:
+        return None
+    candidates: list[str] = []
+    candidates += re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    candidates += re.findall(r"(\{[^{}]*\"found\"[^{}]*\})", text, re.DOTALL)
+    greedy = re.search(r"\{.*\"found\".*\}", text, re.DOTALL)
+    if greedy:
+        candidates.append(greedy.group(0))
+    for candidate in reversed(candidates):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and "found" in parsed:
+            return parsed
+    return None
+
+
 def _spotter_answer_error(answer: Any) -> str | None:
     if answer is None:
         return "null_answer"
+    if isinstance(answer, str):
+        coerced = _coerce_spotter_answer(answer)
+        if coerced is None:
+            return "unparseable_answer" if answer.strip() else "null_answer"
+        answer = coerced
     if not isinstance(answer, dict):
         return "answer_not_object"
     found = answer.get("found")
@@ -4423,6 +4545,7 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
 
     rows: list[dict[str, Any]] = []
     returned_keys: list[str] = []
+    returned_pairs: list[tuple[str, str]] = []
     valid_positive = valid_negative = 0
     null_answers = invalid_answers = model_exceptions = 0
     failure_examples: list[dict[str, Any]] = []
@@ -4432,7 +4555,10 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
         key = _scenario_key(scenario)
         returned_keys.append(key)
         answer = _result_value(result, "answer", "spotter_result")
+        verdict = _coerce_spotter_answer(answer)
         model = _result_value(result, "model", "model") or _result_value(result, "model", "_model_")
+        model_str = str(model) if model else ""
+        returned_pairs.append((key, model_str))
         if model:
             models.add(str(model))
         exception = _result_value(result, "exceptions", "spotter_result")
@@ -4444,7 +4570,7 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
             null_answers += 1
         elif error:
             invalid_answers += 1
-        elif _answer_is_found(answer.get("found")):
+        elif verdict is not None and _answer_is_found(verdict.get("found")):
             valid_positive += 1
         else:
             valid_negative += 1
@@ -4456,9 +4582,9 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
                 "section_title": scenario.get("section_title"),
             },
             "valid": error is None,
-            "found": _answer_is_found(answer.get("found")) if isinstance(answer, dict) and error is None else None,
+            "found": _answer_is_found(verdict.get("found")) if verdict is not None and error is None else None,
             "error": error,
-            "answer": answer,
+            "answer": verdict if verdict is not None else answer,
         }
         rows.append(row)
         if error and len(failure_examples) < 10:
@@ -4466,20 +4592,36 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
 
     expected_set = set(expected_keys)
     returned_set = set(returned_keys)
-    duplicate_rows = len(returned_keys) - len(returned_set)
+    # A duplicate is the SAME scenario answered twice by the SAME model; distinct
+    # models answering one scenario are separate observations, not duplicates.
+    returned_pair_set = set(returned_pairs)
+    duplicate_rows = len(returned_pairs) - len(returned_pair_set)
     missing_scenarios = len(expected_set - returned_set) if expected_keys else None
     unexpected_scenarios = len(returned_set - expected_set) if expected_keys else None
     expected_count = len(expected_keys) if expected_keys else None
+
+    # Coverage is model-aware: every jobs scenario must be answered by every model
+    # present in the Results. With one model this reduces to one answer/scenario.
+    model_names = models or {""}
+    if expected_keys:
+        expected_pairs = {(k, m) for k in expected_keys for m in model_names}
+        expected_answer_count: int | None = len(expected_pairs)
+        missing_answers: int | None = len(expected_pairs - returned_pair_set)
+    else:
+        expected_answer_count = None
+        missing_answers = None
+
     valid_count = valid_positive + valid_negative
-    denominator = expected_count if expected_count is not None else len(results)
+    denominator = expected_answer_count if expected_answer_count is not None else len(results)
     coverage = (valid_count / denominator) if denominator else 0.0
     complete = bool(
-        expected_count is not None
-        and expected_count > 0
-        and valid_count == expected_count
+        expected_answer_count is not None
+        and expected_answer_count > 0
+        and valid_count == expected_answer_count
         and not duplicate_rows
         and not missing_scenarios
         and not unexpected_scenarios
+        and not missing_answers
         and not null_answers
         and not invalid_answers
         and not model_exceptions
@@ -4489,6 +4631,7 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
         "results_path": str(results_path.resolve()),
         "jobs_path": str(jobs_path.resolve()) if jobs_path is not None else None,
         "expected_scenarios": expected_count,
+        "expected_answers": expected_answer_count,
         "returned_rows": len(results),
         "valid_answers": valid_count,
         "valid_positive_findings": valid_positive,
@@ -4497,6 +4640,7 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
         "invalid_answers": invalid_answers,
         "model_exceptions": model_exceptions,
         "missing_scenarios": missing_scenarios,
+        "missing_answers": missing_answers,
         "unexpected_scenarios": unexpected_scenarios,
         "duplicate_rows": duplicate_rows,
         "coverage": round(coverage, 6),
@@ -4570,15 +4714,31 @@ def results_sample(
 def results_failures(
     results_path: Path = typer.Argument(..., exists=True, readable=True),
     limit: int = typer.Option(20, "--limit", min=1),
+    jobs: Optional[Path] = typer.Option(None, "--jobs", exists=True, readable=True),
+    commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
-    """Return compact null, schema-invalid, and model-exception rows."""
+    """Return compact null, schema-invalid, and model-exception rows.
+
+    Pass --jobs (as `results audit` accepts) to also report scenarios that never
+    returned any row, so the full set of things to re-run is visible at once.
+    """
     try:
-        audit = _audit_spotter_results(results_path)
+        _, dest, _, _, _ = load_version(commit)
+        resolved_jobs = _resolve_audit_jobs(dest, results_path, jobs)
+        audit = _audit_spotter_results(results_path, resolved_jobs)
         rows = [
             {key: value for key, value in row.items() if key != "answer"}
             for row in audit.pop("_rows") if not row["valid"]
         ][:limit]
-        emit_json({"results": str(results_path), "count": len(rows), "rows": rows})
+        emit_json({
+            "results": str(results_path),
+            "jobs": str(resolved_jobs) if resolved_jobs is not None else None,
+            "count": len(rows),
+            "rows": rows,
+            "missing_scenarios": audit.get("missing_scenarios"),
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
     except Exception as exc:
         fail(str(exc), "edsl_error", {"results": str(results_path)})
 
@@ -4596,6 +4756,52 @@ def _locate_quoted_text(region: str, quoted: str) -> tuple[int, int] | None:
     if match is None:
         return None
     return match.start(), match.end()
+
+
+@spotter_app.command("models")
+def spotter_models(
+    models: List[str] = typer.Option(..., "--model", help="Model name; repeat for multiple models."),
+    service: Optional[str] = typer.Option(None, "--service", help="Inference service for all models (e.g. anthropic, openai)."),
+    max_tokens: int = typer.Option(SPOTTER_RECOMMENDED_MAX_TOKENS, "--max-tokens", min=1),
+    reasoning_effort: Optional[str] = typer.Option(None, "--reasoning-effort"),
+    output: Path = typer.Option(Path("models.ep"), "--output", "-o"),
+) -> None:
+    """Write an EDSL ModelList package with an adequate max_tokens for free-text
+    spotter runs, so `ep run <jobs> --model_list <output>` is executable.
+
+    Free-text verdicts truncate under the provider default; `ep run` has no
+    --max-tokens flag, so the budget must travel in the ModelList.
+    """
+    try:
+        if output.suffix != ".ep":
+            raise KatzError("--output must use the .ep extension", "validation_error", {"output": str(output)})
+        if output.exists():
+            raise KatzError(f"{output} already exists", "validation_error", {"output": str(output)})
+        _edsl_imports()
+        from edsl import Model, ModelList
+
+        built = []
+        for name in models:
+            kwargs: dict[str, Any] = {"max_tokens": max_tokens}
+            if service:
+                kwargs["service_name"] = service
+            if reasoning_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
+            built.append(Model(name, **kwargs))
+        ModelList(built).git.save(output)
+        emit_json({
+            "object_type": "ModelList",
+            "output": str(output),
+            "models": list(models),
+            "max_tokens": max_tokens,
+            "service": service,
+            "reasoning_effort": reasoning_effort,
+            "next": f"ep run <jobs.ep> --model_list {output} --output <results.ep>",
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+    except Exception as exc:
+        fail(str(exc), "edsl_error", {"output": str(output)})
 
 
 @spotter_app.command("ingest")
@@ -4648,11 +4854,12 @@ def spotter_ingest(
 
         found = filed = skipped = 0
         issue_ids: list[str] = []
+        skipped_details: list[dict[str, Any]] = []
         for result_index, result in enumerate(results):
             if result_index < len(audit_rows) and not audit_rows[result_index]["valid"]:
                 skipped += 1
                 continue
-            answer = _result_value(result, "answer", "spotter_result")
+            answer = _coerce_spotter_answer(_result_value(result, "answer", "spotter_result"))
             scenario = result["scenario"] if isinstance(result["scenario"], dict) else dict(result["scenario"])
             if not isinstance(answer, dict) or not _answer_is_found(answer.get("found")):
                 continue
@@ -4673,6 +4880,16 @@ def spotter_ingest(
             located = _locate_quoted_text(region, quoted) if quoted else None
             if located is None:
                 skipped += 1
+                # A positive finding whose quotation cannot be located in its
+                # section region is dropped rather than anchored to a guessed
+                # offset; surface it so the reviewer can recover it by hand.
+                skipped_details.append({
+                    "reason": "quote_not_located" if quoted else "missing_quote",
+                    "spotter": spotter_name,
+                    "section_id": scenario.get("section_id"),
+                    "title": str(answer.get("title", "")),
+                    "quoted_text": quoted[:200],
+                })
                 continue
             char_start, char_end = located
             byte_start = range_start + len(region[:char_start].encode("utf-8"))
@@ -4731,6 +4948,7 @@ def spotter_ingest(
             "issues_found": found,
             "issues_filed": filed,
             "skipped": skipped,
+            "skipped_details": skipped_details,
             "issue_ids": issue_ids,
             "audit": audit,
             "run_status": "partial" if not audit["complete"] else "ingested",

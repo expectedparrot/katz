@@ -370,6 +370,58 @@ def test_spotter_jobs_builds_edsl_package(tmp_path: Path) -> None:
     assert first["manuscript_content"]
     assert "Section map:" in first["paper_context"]
     assert result["answer_contract"]["pilot_required_before_large_run"] is False
+    # KATZ-2: run guidance must carry an adequate output-token budget so free-text
+    # verdicts are not truncated into unparseable answers.
+    assert result["answer_contract"]["recommended_max_tokens"] >= 3000
+    assert "max_tokens" in result["answer_contract"]["token_budget_note"]
+    assert "model_list" in result["next"]
+
+
+def test_agent_next_drives_run_after_packaging(tmp_path: Path) -> None:
+    """KATZ-1/#15: once jobs are packaged, `agent next` must drive execution (build
+    a ModelList, then run) instead of looping on read-only inspect."""
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    katz(repo, "spotter", "jobs", "--output", str(repo / "jobs.ep"))
+
+    # No ModelList yet -> build it first; run and inspect are available too.
+    nxt = katz(repo, "agent", "next")
+    ids = [nxt["action"]["id"], *[a["id"] for a in nxt["alternatives"]]]
+    assert nxt["action"]["id"] == "build_spotter_models"
+    assert "run_jobs" in ids
+    assert "inspect_jobs" in ids
+
+    # With a ModelList present, the run leads.
+    katz(repo, "spotter", "models", "--model", "gpt-4o-mini",
+         "--output", str(repo / "models.ep"))
+    nxt2 = katz(repo, "agent", "next")
+    assert nxt2["action"]["id"] == "run_jobs"
+    assert nxt2["action"]["command"][0] == "ep"
+    assert "run" in nxt2["action"]["command"]
+    assert "--model_list" in nxt2["action"]["command"]
+    assert nxt2["action"]["requires_user_approval"] is True
+    assert nxt2["action"]["requires_network"] is True
+
+
+def test_spotter_models_writes_modellist_with_max_tokens(tmp_path: Path) -> None:
+    """#15: `spotter models` writes a loadable ModelList carrying the token budget."""
+    from edsl import ModelList
+
+    repo, _ = setup_rich_repo(tmp_path)
+    output = repo / "models.ep"
+    result = katz(repo, "spotter", "models",
+                  "--model", "gpt-4o", "--model", "gpt-4o-mini",
+                  "--max-tokens", "3500", "--output", str(output))
+    assert result["object_type"] == "ModelList"
+    assert result["models"] == ["gpt-4o", "gpt-4o-mini"]
+    assert result["max_tokens"] == 3500
+    loaded = list(ModelList.git.load(output))
+    assert len(loaded) == 2
+    first = loaded[0]
+    mt = getattr(first, "max_tokens", None) or first.parameters.get("max_tokens")
+    assert mt == 3500
 
 
 def test_paper_review_jobs_embeds_manuscript_and_figure_attachments(tmp_path: Path) -> None:
@@ -633,6 +685,217 @@ def test_spotter_audit_rejects_null_and_accepts_explicit_negative(tmp_path: Path
     )
     assert ingested["run_status"] == "ingested"
     assert ingested["issues_found"] == 0
+
+
+def test_spotter_freetext_verdict_audits_and_ingests(tmp_path: Path) -> None:
+    """A free-text answer that reasons then emits a fenced JSON verdict must audit
+    as a valid finding and ingest as an anchored issue — never drop to null."""
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, manuscript = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "ft.jobs.ep"
+    katz(
+        repo, "spotter", "jobs",
+        "--output", str(jobs_path),
+        "--section", "abstract",
+        "--spotters", "causal_language",
+    )
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+    # The scenario carries the exact section region; quote a verbatim sentence
+    # from it so the quotation locates cleanly.
+    quoted = "This paper studies something important."
+    assert quoted in scenario["manuscript_content"]
+
+    freetext = (
+        "# Causal Language Analysis\n\n"
+        "I weighed several candidate concerns about the wording in this section.\n"
+        "The strongest is an unhedged causal claim that the design does not support.\n\n"
+        "```json\n"
+        + json.dumps({
+            "found": True,
+            "title": "Unhedged causal claim",
+            "quoted_text": quoted,
+            "description": "Causal phrasing exceeds what the correlational design supports.",
+        })
+        + "\n```\n"
+    )
+    result = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": freetext},
+    )
+    path = repo / "ft-results.ep"
+    Results(survey=Survey([]), data=[result]).git.save(path)
+
+    audit = katz(repo, "results", "audit", str(path), "--jobs", str(jobs_path))
+    assert audit["complete"] is True
+    assert audit["valid_positive_findings"] == 1
+    assert audit["null_answers"] == 0
+
+    ingested = katz(repo, "spotter", "ingest", str(path), "--jobs", str(jobs_path))
+    assert ingested["run_status"] == "ingested"
+    assert ingested["issues_found"] == 1
+    assert ingested["issues_filed"] == 1
+    issue = katz(repo, "issue", "show", ingested["issue_ids"][0])
+    assert issue["title"] == "Unhedged causal claim"
+
+    # Pure prose with no verdict block must be flagged, never scored as negative.
+    prose = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": "This section reads fine; I see no problem."},
+    )
+    prose_path = repo / "prose-results.ep"
+    Results(survey=Survey([]), data=[prose]).git.save(prose_path)
+    prose_audit = katz(repo, "results", "audit", str(prose_path), "--jobs", str(jobs_path))
+    assert prose_audit["complete"] is False
+    assert prose_audit["valid_negative_findings"] == 0
+    assert prose_audit["invalid_answers"] == 1
+
+
+def test_spotter_jobs_from_failures_repackages_only_failures(tmp_path: Path) -> None:
+    """KATZ-4: `spotter jobs --from-failures` builds a jobs package of exactly the
+    scenarios that lacked a valid answer, and refuses when nothing failed."""
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "j.jobs.ep"
+    katz(repo, "spotter", "jobs", "--output", str(jobs_path),
+         "--section", "abstract", "--spotters", "causal_language")
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+
+    # A null (failed) answer for the one scenario.
+    null_path = repo / "j-null.ep"
+    Results(survey=Survey([]), data=[Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": None},
+    )]).git.save(null_path)
+
+    rerun = repo / "rerun.jobs.ep"
+    result = katz(repo, "spotter", "jobs", "--from-failures", str(null_path),
+                  "--section", "abstract", "--spotters", "causal_language",
+                  "--output", str(rerun))
+    assert result["scenario_count"] == 1
+    rebuilt = dict(Jobs.git.load(rerun).scenarios[0])
+    assert rebuilt["spotter_name"] == "causal_language"
+    assert rebuilt["section_id"] == "abstract"
+
+    # When the results are already valid, there is nothing to re-run.
+    ok_path = repo / "j-ok.ep"
+    Results(survey=Survey([]), data=[Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": {"found": False, "title": "", "quoted_text": "", "description": ""}},
+    )]).git.save(ok_path)
+    err = katz_fail(repo, "spotter", "jobs", "--from-failures", str(ok_path),
+                    "--section", "abstract", "--spotters", "causal_language",
+                    "--output", str(repo / "rerun2.jobs.ep"))
+    assert err["code"] == "validation_error"
+
+
+def test_audit_accepts_multiple_models_per_scenario(tmp_path: Path) -> None:
+    """KATZ-3: two models answering each scenario is complete cross-model coverage,
+    not duplicate rows."""
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "m.jobs.ep"
+    katz(repo, "spotter", "jobs", "--output", str(jobs_path),
+         "--section", "abstract", "--spotters", "causal_language")
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+
+    negative = {"found": False, "title": "", "quoted_text": "", "description": ""}
+    model_names = ("gpt-4o", "gpt-4o-mini")
+    data = [
+        Result(agent=Agent(), scenario=scenario, model=Model(name), iteration=0,
+               answer={"spotter_result": dict(negative)})
+        for name in model_names
+    ]
+    path = repo / "m-results.ep"
+    Results(survey=Survey([]), data=data).git.save(path)
+
+    audit = katz(repo, "results", "audit", str(path), "--jobs", str(jobs_path))
+    assert audit["duplicate_rows"] == 0
+    assert audit["expected_scenarios"] == 1
+    assert audit["expected_answers"] == 2  # 1 scenario x 2 models
+    assert audit["valid_answers"] == 2
+    assert audit["missing_answers"] == 0
+    assert audit["complete"] is True
+    assert audit["models"] == sorted(model_names)
+
+
+def test_results_failures_accepts_jobs_and_reports_missing(tmp_path: Path) -> None:
+    """KATZ-5: `results failures` accepts --jobs (parity with `results audit`) and
+    reports scenarios that never returned a row."""
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "f.jobs.ep"
+    katz(repo, "spotter", "jobs", "--output", str(jobs_path),
+         "--section", "abstract", "--spotters", "causal_language")
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+
+    path = repo / "f-results.ep"
+    null_result = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": None},
+    )
+    Results(survey=Survey([]), data=[null_result]).git.save(path)
+
+    failures = katz(repo, "results", "failures", str(path), "--jobs", str(jobs_path))
+    assert failures["count"] == 1
+    assert failures["rows"][0]["error"] == "null_answer"
+    assert failures["missing_scenarios"] == 0
+    assert failures["jobs"] is not None
+
+
+def test_ingest_reports_skipped_unlocatable_positive(tmp_path: Path) -> None:
+    """KATZ-12: a positive finding whose quote cannot be located is surfaced in
+    skipped_details rather than vanishing silently."""
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "s.jobs.ep"
+    katz(repo, "spotter", "jobs", "--output", str(jobs_path),
+         "--section", "abstract", "--spotters", "causal_language")
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+
+    path = repo / "s-results.ep"
+    result = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": {
+            "found": True,
+            "title": "Phantom claim",
+            "quoted_text": "this exact text does not appear anywhere in the section",
+            "description": "…",
+        }},
+    )
+    Results(survey=Survey([]), data=[result]).git.save(path)
+
+    ingested = katz(repo, "spotter", "ingest", str(path), "--jobs", str(jobs_path))
+    assert ingested["issues_found"] == 1
+    assert ingested["issues_filed"] == 0
+    assert ingested["skipped"] == 1
+    assert ingested["skipped_details"][0]["reason"] == "quote_not_located"
+    assert ingested["skipped_details"][0]["spotter"] == "causal_language"
+    assert ingested["skipped_details"][0]["title"] == "Phantom claim"
 
 
 def test_locate_quoted_text_allows_line_break_normalization() -> None:
