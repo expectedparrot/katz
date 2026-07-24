@@ -1,6 +1,6 @@
 [project]
 name = "katz"
-version = "0.2.0"
+version = "0.2.1"
 description = "Version-aware ledger for paper review artifacts"
 readme = "README.md"
 requires-python = ">=3.11"

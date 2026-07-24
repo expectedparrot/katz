@@ -1039,6 +1039,103 @@ def _markdown_table_count(text: str) -> int:
     return pipe_tables + html_tables + preserved_latex
 
 
+def _balanced_brace_group(text: str, start: int) -> tuple[str, int] | None:
+    cursor = start
+    while cursor < len(text) and text[cursor].isspace():
+        cursor += 1
+    if cursor >= len(text) or text[cursor] != "{":
+        return None
+    depth = 0
+    content_start = cursor + 1
+    for index in range(cursor, len(text)):
+        if text[index] == "{" and (index == 0 or text[index - 1] != "\\"):
+            depth += 1
+        elif text[index] == "}" and (index == 0 or text[index - 1] != "\\"):
+            depth -= 1
+            if depth == 0:
+                return text[content_start:index], index + 1
+    return None
+
+
+def _strip_resizebox_wrappers(text: str) -> tuple[str, int]:
+    """Replace resizebox(width, height, body) with body so Pandoc sees nested tables."""
+    stripped = 0
+    search_from = 0
+    while True:
+        match = re.search(r"\\resizebox\*?", text[search_from:])
+        if match is None:
+            break
+        command_start = search_from + match.start()
+        cursor = search_from + match.end()
+        groups: list[str] = []
+        end = cursor
+        for _ in range(3):
+            parsed = _balanced_brace_group(text, end)
+            if parsed is None:
+                break
+            value, end = parsed
+            groups.append(value)
+        if len(groups) != 3:
+            search_from = cursor
+            continue
+        text = text[:command_start] + groups[2] + text[end:]
+        stripped += 1
+        search_from = command_start + len(groups[2])
+    return text, stripped
+
+
+def _restore_latex_front_matter(text: str) -> tuple[str, dict[str, bool]]:
+    """Turn title/maketitle and abstract metadata into explicit document sections."""
+    title_match = re.search(r"\\title\s*", text)
+    title = None
+    if title_match is not None:
+        parsed = _balanced_brace_group(text, title_match.end())
+        if parsed is not None:
+            title, end = parsed
+            text = text[:title_match.start()] + text[end:]
+    title_restored = False
+    if title:
+        heading = f"\\section*{{{title}}}"
+        if re.search(r"\\maketitle\b", text):
+            text = re.sub(r"\\maketitle\b", lambda _: heading, text, count=1)
+        else:
+            text = re.sub(
+                r"(\\begin\{document\})",
+                lambda match: match.group(1) + "\n" + heading,
+                text,
+                count=1,
+            )
+        title_restored = True
+    abstract_pattern = re.compile(r"\\begin\{abstract\}(.*?)\\end\{abstract\}", re.DOTALL)
+    abstract_restored = bool(abstract_pattern.search(text))
+    text = abstract_pattern.sub(
+        lambda match: "\\section*{Abstract}\n" + match.group(1).strip() + "\n",
+        text,
+    )
+    return text, {
+        "title_restored": title_restored,
+        "abstract_restored": abstract_restored,
+    }
+
+
+def _flatten_html_anchors(markdown: str) -> tuple[str, int]:
+    """Keep visible cross-reference text while removing raw HTML anchor markup."""
+    count = 0
+
+    def paired(match: re.Match[str]) -> str:
+        nonlocal count
+        count += 1
+        return match.group(1)
+
+    markdown = re.sub(
+        r"<a\b[^>]*>(.*?)</a>",
+        paired,
+        markdown,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return markdown, count
+
+
 def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
     executable = shutil.which("pandoc")
     if executable is None:
@@ -1068,6 +1165,8 @@ def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
         )
 
     inventory = _latex_source_inventory(expanded)
+    expanded, resizebox_wrappers_stripped = _strip_resizebox_wrappers(expanded)
+    expanded, front_matter = _restore_latex_front_matter(expanded)
     output.parent.mkdir(parents=True, exist_ok=True)
     media_name = f"{output.stem}_media"
     destination_media = output.parent / media_name
@@ -1087,6 +1186,7 @@ def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
                 "--from", "latex",
                 "--to", "gfm",
                 "--wrap=none",
+                "--citeproc",
                 f"--extract-media={temp_media}",
                 "--output", str(temp_output),
                 "-",
@@ -1106,6 +1206,7 @@ def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
             )
         markdown = temp_output.read_text(encoding="utf-8")
         markdown = markdown.replace(str(temp_media), media_name)
+        markdown, anchors_flattened = _flatten_html_anchors(markdown)
         table_artifacts = _markdown_table_count(markdown)
         warnings_list: list[str] = []
         if inventory["table_environments"] and table_artifacts < inventory["table_environments"]:
@@ -1143,6 +1244,12 @@ def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
         "dependencies": [str(path) for path in dependencies],
         "dependency_count": len(dependencies),
         "source_inventory": inventory,
+        "normalization": {
+            "resizebox_wrappers_stripped": resizebox_wrappers_stripped,
+            "html_anchors_flattened": anchors_flattened,
+            **front_matter,
+            "citeproc": True,
+        },
         "converted_table_artifacts": table_artifacts,
         "assets": assets,
         "headings": headings,

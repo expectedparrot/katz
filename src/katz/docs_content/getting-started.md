@@ -37,8 +37,9 @@ is registered yet — that's expected.
 
 The canonical manuscript must be Markdown. For a PDF, Katz delegates extraction
 to `paper2md`. For LaTeX, it recursively expands `\input` and `\include`, runs
-Pandoc, inventories tables/figures/equations, and refuses a conversion that
-appears to lose tables or media:
+Pandoc with Citeproc, strips `\resizebox` around inlined tables, restores the
+title and abstract, flattens HTML anchors, inventories tables/figures/equations,
+and refuses a conversion that appears to lose tables or media:
 
 ```bash
 katz paper prepare paper.pdf --output paper/manuscript.md

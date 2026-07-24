@@ -166,12 +166,29 @@ def test_latex_prepare_inlines_input_table_and_preserves_it(tmp_path: Path) -> N
         "\\end{table}\n",
         encoding="utf-8",
     )
+    (latex_dir / "refs.bib").write_text(
+        "@article{doe2020,\n"
+        "  author = {Doe, Jane},\n"
+        "  title = {Prior Work},\n"
+        "  journal = {Journal of Tests},\n"
+        "  year = {2020}\n"
+        "}\n",
+        encoding="utf-8",
+    )
     main = latex_dir / "main.tex"
     main.write_text(
         "\\documentclass{article}\n"
+        "\\usepackage{graphicx}\n"
+        "\\usepackage{natbib}\n"
+        "\\title{Battery Evaluation}\n"
         "\\begin{document}\n"
+        "\\maketitle\n"
+        "\\begin{abstract}\n"
+        "We evaluate batteries following \\citep{doe2020}.\n"
+        "\\end{abstract}\n"
         "\\section{Results}\n"
-        "\\input{tables/results}\n"
+        "\\resizebox{\\textwidth}{!}{\\input{tables/results}}\n"
+        "\\bibliography{refs}\n"
         "\\end{document}\n",
         encoding="utf-8",
     )
@@ -183,7 +200,14 @@ def test_latex_prepare_inlines_input_table_and_preserves_it(tmp_path: Path) -> N
     assert prepared["dependency_count"] == 2
     assert prepared["source_inventory"]["table_environments"] == 1
     assert prepared["converted_table_artifacts"] >= 1
-    assert "Trust" in output.read_text(encoding="utf-8")
+    assert prepared["normalization"]["resizebox_wrappers_stripped"] == 1
+    assert prepared["normalization"]["title_restored"] is True
+    assert prepared["normalization"]["abstract_restored"] is True
+    markdown = output.read_text(encoding="utf-8")
+    assert "# Battery Evaluation" in markdown
+    assert "# Abstract" in markdown
+    assert "Doe" in markdown
+    assert "Trust" in markdown
 
 
 def test_latex_prepare_fails_for_missing_input(tmp_path: Path) -> None:

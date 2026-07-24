@@ -25,6 +25,10 @@ katz init
 
 **Goal:** Register the canonical markdown manuscript and build the sentence index.
 
+If the source is PDF or LaTeX, first run `katz paper prepare SOURCE --output
+paper/manuscript.md`, inspect the converted tables, figures, title, abstract,
+and citations, then commit that Markdown before registration.
+
 ```bash
 katz paper register \
   --canonical paper/manuscript.md \

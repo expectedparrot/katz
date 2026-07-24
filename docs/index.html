@@ -237,7 +237,7 @@
 katz capabilities
 katz --help
 ep --help</code></pre>
-    <p><code>katz version</code> reports both the package version and the filesystem path supplying the CLI. Stop if the version is older than <code>0.2.0</code>, the path belongs to another Python environment, or <code>katz capabilities</code> does not list Results auditing and fail-closed ingestion.</p>
+    <p><code>katz version</code> reports both the package version and the filesystem path supplying the CLI. Stop if the version is older than <code>0.2.1</code>, the path belongs to another Python environment, or <code>katz capabilities</code> does not list Results auditing and fail-closed ingestion.</p>
     <h3>Clone the paper repository</h3>
     <pre><code>git clone https://github.com/ronikobrosly/causal-curve.git</code></pre>
     <p>Clone the source repository so Katz can associate the review with an exact version of the paper.</p>
@@ -355,7 +355,7 @@ ep --help</code></pre>
     <h3>Prepare a LaTeX manuscript without dropping included tables</h3>
     <pre><code>katz paper prepare manuscript/main.tex \
   --output paper_md/paper.md</code></pre>
-    <p>For LaTeX, Katz recursively expands braced <code>\input{…}</code> and <code>\include{…}</code> commands before invoking Pandoc. Missing dependencies, include cycles, and references outside the repository fail with structured errors. The response lists every source dependency and inventories table, figure, graphics, and equation environments.</p>
+    <p>For LaTeX, Katz recursively expands braced <code>\input{…}</code> and <code>\include{…}</code> commands before invoking Pandoc. It strips enclosing <code>\resizebox</code> wrappers so an inlined <code>tabular</code> remains visible to Pandoc, runs Citeproc for author-year citations, restores title and abstract as explicit headings, and flattens raw HTML anchor tags while preserving their visible cross-reference text. Missing dependencies, include cycles, and references outside the repository fail with structured errors. The response lists every source dependency and inventories table, figure, graphics, and equation environments.</p>
     <p>Katz then compares source table counts with table artifacts in the converted Markdown. If tables or referenced media appear to have vanished, it refuses to publish the canonical file. <code>--allow-lossy</code> exists for an explicitly inspected exception; agents must not use it without authorization.</p>
     <h3>Inspect the conversion</h3>
     <p>PDF conversion is lossy. Before registration, compare the bundle with the PDF and check the parts most likely to affect a review:</p>
