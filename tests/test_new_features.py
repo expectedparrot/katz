@@ -377,22 +377,51 @@ def test_spotter_jobs_builds_edsl_package(tmp_path: Path) -> None:
     assert "model_list" in result["next"]
 
 
-def test_agent_next_offers_run_action_after_packaging(tmp_path: Path) -> None:
-    """KATZ-1: once jobs are packaged, `agent next` must surface a run action
-    (not loop on read-only inspect), with inspect available as an alternative."""
+def test_agent_next_drives_run_after_packaging(tmp_path: Path) -> None:
+    """KATZ-1/#15: once jobs are packaged, `agent next` must drive execution (build
+    a ModelList, then run) instead of looping on read-only inspect."""
     repo, _ = setup_rich_repo(tmp_path)
     katz(repo, "paper", "auto-chunk")
     katz(repo, "spotter", "init-catalog")
     katz(repo, "spotter", "enable", "causal_language")
     katz(repo, "spotter", "jobs", "--output", str(repo / "jobs.ep"))
 
+    # No ModelList yet -> build it first; run and inspect are available too.
     nxt = katz(repo, "agent", "next")
-    assert nxt["action"]["id"] == "run_jobs"
-    assert nxt["action"]["command"][0] == "ep"
-    assert "run" in nxt["action"]["command"]
-    assert nxt["action"]["requires_user_approval"] is True
-    assert nxt["action"]["requires_network"] is True
-    assert any(alt["id"] == "inspect_jobs" for alt in nxt["alternatives"])
+    ids = [nxt["action"]["id"], *[a["id"] for a in nxt["alternatives"]]]
+    assert nxt["action"]["id"] == "build_spotter_models"
+    assert "run_jobs" in ids
+    assert "inspect_jobs" in ids
+
+    # With a ModelList present, the run leads.
+    katz(repo, "spotter", "models", "--model", "gpt-4o-mini",
+         "--output", str(repo / "models.ep"))
+    nxt2 = katz(repo, "agent", "next")
+    assert nxt2["action"]["id"] == "run_jobs"
+    assert nxt2["action"]["command"][0] == "ep"
+    assert "run" in nxt2["action"]["command"]
+    assert "--model_list" in nxt2["action"]["command"]
+    assert nxt2["action"]["requires_user_approval"] is True
+    assert nxt2["action"]["requires_network"] is True
+
+
+def test_spotter_models_writes_modellist_with_max_tokens(tmp_path: Path) -> None:
+    """#15: `spotter models` writes a loadable ModelList carrying the token budget."""
+    from edsl import ModelList
+
+    repo, _ = setup_rich_repo(tmp_path)
+    output = repo / "models.ep"
+    result = katz(repo, "spotter", "models",
+                  "--model", "gpt-4o", "--model", "gpt-4o-mini",
+                  "--max-tokens", "3500", "--output", str(output))
+    assert result["object_type"] == "ModelList"
+    assert result["models"] == ["gpt-4o", "gpt-4o-mini"]
+    assert result["max_tokens"] == 3500
+    loaded = list(ModelList.git.load(output))
+    assert len(loaded) == 2
+    first = loaded[0]
+    mt = getattr(first, "max_tokens", None) or first.parameters.get("max_tokens")
+    assert mt == 3500
 
 
 def test_paper_review_jobs_embeds_manuscript_and_figure_attachments(tmp_path: Path) -> None:

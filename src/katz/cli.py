@@ -13,7 +13,7 @@ import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import typer
 
@@ -2134,20 +2134,32 @@ def _agent_state() -> dict[str, Any]:
                         mutates_state=False,
                     ))
             else:
+                models_file = root / "models.ep"
+                if not models_file.exists():
+                    actions.append(_agent_action(
+                        "build_spotter_models",
+                        "Create a ModelList with an adequate token budget for free-text spotter runs",
+                        ["katz", "spotter", "models", "--model", "<model-name>",
+                         "--max-tokens", str(SPOTTER_RECOMMENDED_MAX_TOKENS), "--output", "models.ep"],
+                        mutates_state=True,
+                        reason=(
+                            "Free-text verdicts truncate under the provider default and `ep run` "
+                            f"has no --max-tokens flag, so set max_tokens >= {SPOTTER_RECOMMENDED_MAX_TOKENS} "
+                            "in a ModelList before running."
+                        ),
+                    ))
                 actions.append(_agent_action(
                     "run_jobs",
-                    "Execute the packaged review with a chosen model (paid, remote)",
-                    ["ep", "run", str(jobs_path), "--model_list", str(SPOTTER_MODEL_LIST_HINT),
+                    "Execute the packaged review with the prepared ModelList (paid, remote)",
+                    ["ep", "run", str(jobs_path), "--model_list", "models.ep",
                      "--output", str(expected_results)],
                     mutates_state=True,
                     requires_network=True,
                     requires_user_approval=True,
                     reason=(
-                        "Spotter answers are free text that ends in a JSON verdict; long "
-                        f"issue-finding answers need output headroom, so run with max_tokens "
-                        f">= {SPOTTER_RECOMMENDED_MAX_TOKENS} (a ModelList sets this; plain "
-                        "`--model NAME` uses the provider default and can truncate before the "
-                        "verdict, producing unparseable_answer rows in the audit)."
+                        "Runs every spotter scenario. Use the ModelList from "
+                        "`katz spotter models` so free-text answers are not truncated before "
+                        "their JSON verdict (which the audit reports as unparseable_answer)."
                     ),
                 ))
                 actions.append(_agent_action(
@@ -3665,7 +3677,6 @@ there is no genuine, substantive issue. Emit exactly one such JSON object.
 # verdict; the provider default (often ~1000) truncates them into
 # unparseable_answer rows. A ModelList is how EDSL sets this at run time.
 SPOTTER_RECOMMENDED_MAX_TOKENS = 4000
-SPOTTER_MODEL_LIST_HINT = "<models.ep with max_tokens>=4000>"
 
 ECONOMICS_REVIEW_QUESTION_TEXT = """\
 Act as a demanding but constructive economics referee. Read the complete manuscript
@@ -4418,7 +4429,9 @@ def spotter_jobs(
             },
             "saved": saved,
             "next": (
-                f"ep run {output} --model_list {SPOTTER_MODEL_LIST_HINT} --output {expected_results}"
+                f"katz spotter models --model <model-name> --max-tokens "
+                f"{SPOTTER_RECOMMENDED_MAX_TOKENS} --output models.ep && "
+                f"ep run {output} --model_list models.ep --output {expected_results}"
             ),
         })
     except KatzError as exc:
@@ -4743,6 +4756,52 @@ def _locate_quoted_text(region: str, quoted: str) -> tuple[int, int] | None:
     if match is None:
         return None
     return match.start(), match.end()
+
+
+@spotter_app.command("models")
+def spotter_models(
+    models: List[str] = typer.Option(..., "--model", help="Model name; repeat for multiple models."),
+    service: Optional[str] = typer.Option(None, "--service", help="Inference service for all models (e.g. anthropic, openai)."),
+    max_tokens: int = typer.Option(SPOTTER_RECOMMENDED_MAX_TOKENS, "--max-tokens", min=1),
+    reasoning_effort: Optional[str] = typer.Option(None, "--reasoning-effort"),
+    output: Path = typer.Option(Path("models.ep"), "--output", "-o"),
+) -> None:
+    """Write an EDSL ModelList package with an adequate max_tokens for free-text
+    spotter runs, so `ep run <jobs> --model_list <output>` is executable.
+
+    Free-text verdicts truncate under the provider default; `ep run` has no
+    --max-tokens flag, so the budget must travel in the ModelList.
+    """
+    try:
+        if output.suffix != ".ep":
+            raise KatzError("--output must use the .ep extension", "validation_error", {"output": str(output)})
+        if output.exists():
+            raise KatzError(f"{output} already exists", "validation_error", {"output": str(output)})
+        _edsl_imports()
+        from edsl import Model, ModelList
+
+        built = []
+        for name in models:
+            kwargs: dict[str, Any] = {"max_tokens": max_tokens}
+            if service:
+                kwargs["service_name"] = service
+            if reasoning_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
+            built.append(Model(name, **kwargs))
+        ModelList(built).git.save(output)
+        emit_json({
+            "object_type": "ModelList",
+            "output": str(output),
+            "models": list(models),
+            "max_tokens": max_tokens,
+            "service": service,
+            "reasoning_effort": reasoning_effort,
+            "next": f"ep run <jobs.ep> --model_list {output} --output <results.ep>",
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+    except Exception as exc:
+        fail(str(exc), "edsl_error", {"output": str(output)})
 
 
 @spotter_app.command("ingest")
