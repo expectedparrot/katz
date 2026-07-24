@@ -370,6 +370,29 @@ def test_spotter_jobs_builds_edsl_package(tmp_path: Path) -> None:
     assert first["manuscript_content"]
     assert "Section map:" in first["paper_context"]
     assert result["answer_contract"]["pilot_required_before_large_run"] is False
+    # KATZ-2: run guidance must carry an adequate output-token budget so free-text
+    # verdicts are not truncated into unparseable answers.
+    assert result["answer_contract"]["recommended_max_tokens"] >= 3000
+    assert "max_tokens" in result["answer_contract"]["token_budget_note"]
+    assert "model_list" in result["next"]
+
+
+def test_agent_next_offers_run_action_after_packaging(tmp_path: Path) -> None:
+    """KATZ-1: once jobs are packaged, `agent next` must surface a run action
+    (not loop on read-only inspect), with inspect available as an alternative."""
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    katz(repo, "spotter", "jobs", "--output", str(repo / "jobs.ep"))
+
+    nxt = katz(repo, "agent", "next")
+    assert nxt["action"]["id"] == "run_jobs"
+    assert nxt["action"]["command"][0] == "ep"
+    assert "run" in nxt["action"]["command"]
+    assert nxt["action"]["requires_user_approval"] is True
+    assert nxt["action"]["requires_network"] is True
+    assert any(alt["id"] == "inspect_jobs" for alt in nxt["alternatives"])
 
 
 def test_paper_review_jobs_embeds_manuscript_and_figure_attachments(tmp_path: Path) -> None:

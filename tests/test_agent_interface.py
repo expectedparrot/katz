@@ -182,7 +182,10 @@ def test_unified_ingest_detects_jobs_without_mutating(tmp_path: Path) -> None:
     status = katz(repo, "agent", "status")
     assert status["review"]["runs"]["latest"]["status"] == "packaged"
     action_ids = [action["id"] for action in status["next_actions"]]
-    assert action_ids[0] == "inspect_jobs"
+    # KATZ-1: the run action leads so the next-action chain can drive execution;
+    # inspect remains available but must not be the only (looping) option.
+    assert action_ids[0] == "run_jobs"
+    assert "inspect_jobs" in action_ids
     profile = status["prerequisites"]["ep"]["profile"]
     assert profile["source"] in {"ep_profiles_current", "environment_or_dotenv_fallback"}
     if profile["api_key_configured"]:

@@ -2135,6 +2135,22 @@ def _agent_state() -> dict[str, Any]:
                     ))
             else:
                 actions.append(_agent_action(
+                    "run_jobs",
+                    "Execute the packaged review with a chosen model (paid, remote)",
+                    ["ep", "run", str(jobs_path), "--model_list", str(SPOTTER_MODEL_LIST_HINT),
+                     "--output", str(expected_results)],
+                    mutates_state=True,
+                    requires_network=True,
+                    requires_user_approval=True,
+                    reason=(
+                        "Spotter answers are free text that ends in a JSON verdict; long "
+                        f"issue-finding answers need output headroom, so run with max_tokens "
+                        f">= {SPOTTER_RECOMMENDED_MAX_TOKENS} (a ModelList sets this; plain "
+                        "`--model NAME` uses the provider default and can truncate before the "
+                        "verdict, producing unparseable_answer rows in the audit)."
+                    ),
+                ))
+                actions.append(_agent_action(
                     "inspect_jobs", "Inspect the packaged EDSL job before execution",
                     ["ep", "inspect", str(jobs_path)],
                     mutates_state=False,
@@ -3644,6 +3660,13 @@ Use found=false with empty strings for title, quoted_text, and description when
 there is no genuine, substantive issue. Emit exactly one such JSON object.
 """
 
+# Free-text spotter answers reason in prose before the JSON verdict, so
+# issue-finding answers are long. Runs need enough output budget to reach the
+# verdict; the provider default (often ~1000) truncates them into
+# unparseable_answer rows. A ModelList is how EDSL sets this at run time.
+SPOTTER_RECOMMENDED_MAX_TOKENS = 4000
+SPOTTER_MODEL_LIST_HINT = "<models.ep with max_tokens>=4000>"
+
 ECONOMICS_REVIEW_QUESTION_TEXT = """\
 Act as a demanding but constructive economics referee. Read the complete manuscript
 attachment and inspect every attached figure before writing the report.
@@ -4360,10 +4383,18 @@ def spotter_jobs(
                 "verdict_keys": ["found", "title", "quoted_text", "description"],
                 "parser": "katz._coerce_spotter_answer",
                 "rationale": "Free-text reasoning followed by a fenced JSON verdict; avoids null answers and schema-forced false negatives on deliberation-heavy spotters.",
+                "recommended_max_tokens": SPOTTER_RECOMMENDED_MAX_TOKENS,
+                "token_budget_note": (
+                    f"Set max_tokens >= {SPOTTER_RECOMMENDED_MAX_TOKENS} via a ModelList; the "
+                    "provider default truncates long issue-finding answers before the JSON "
+                    "verdict, which the audit reports as unparseable_answer."
+                ),
                 "pilot_required_before_large_run": len(scenarios) > 20,
             },
             "saved": saved,
-            "next": f"ep run {output} --model <model-name> --output {expected_results}",
+            "next": (
+                f"ep run {output} --model_list {SPOTTER_MODEL_LIST_HINT} --output {expected_results}"
+            ),
         })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
