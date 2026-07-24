@@ -3622,6 +3622,28 @@ missing, use the paper context to distinguish “missing from this section” fr
 “missing from the paper.” Do not invent text.
 """
 
+# Appended to the spotter prompt so the model reasons freely first and never has
+# its deliberation discarded by strict schema validation, then commits to a
+# machine-readable verdict Katz can parse. Free-text reasoning avoids the
+# false-negative failure mode where a forced JSON binary suppresses a genuine
+# concern the model was still weighing.
+SPOTTER_VERDICT_SUFFIX = """
+
+Work in two steps.
+First, reason in prose: enumerate candidate issues and, for each, decide whether
+it is genuine and substantive or whether it is addressed, acknowledged, or out of
+scope elsewhere in the paper.
+Then, on the final lines and with nothing after it, output your verdict as a
+single fenced JSON object:
+
+```json
+{"found": true, "title": "short title", "quoted_text": "exact manuscript quotation", "description": "evidence-backed explanation"}
+```
+
+Use found=false with empty strings for title, quoted_text, and description when
+there is no genuine, substantive issue. Emit exactly one such JSON object.
+"""
+
 ECONOMICS_REVIEW_QUESTION_TEXT = """\
 Act as a demanding but constructive economics referee. Read the complete manuscript
 attachment and inspect every attached figure before writing the report.
@@ -4297,18 +4319,11 @@ def spotter_jobs(
         if pilot is not None:
             scenarios = scenarios[:pilot]
 
-        question = QuestionDict(
+        from edsl.questions import QuestionFreeText
+
+        question = QuestionFreeText(
             question_name="spotter_result",
-            question_text=SPOTTER_QUESTION_TEXT,
-            answer_keys=["found", "title", "quoted_text", "description"],
-            value_types=["bool", "str", "str", "str"],
-            value_descriptions=[
-                "Whether a genuine issue was found",
-                "Short issue title; empty when found is false",
-                "Exact manuscript quotation; empty when found is false",
-                "Evidence-backed explanation; empty when found is false",
-            ],
-            include_comment=False,
+            question_text=SPOTTER_QUESTION_TEXT + SPOTTER_VERDICT_SUFFIX,
         )
         job = Jobs(survey=question.to_survey()).by(ScenarioList(scenarios))
         saved = job.git.save(output)
@@ -4341,8 +4356,10 @@ def spotter_jobs(
                 for scenario in scenarios
             ),
             "answer_contract": {
-                "question_type": "dict",
-                "required_keys": ["found", "title", "quoted_text", "description"],
+                "question_type": "free_text_with_json_verdict",
+                "verdict_keys": ["found", "title", "quoted_text", "description"],
+                "parser": "katz._coerce_spotter_answer",
+                "rationale": "Free-text reasoning followed by a fenced JSON verdict; avoids null answers and schema-forced false negatives on deliberation-heavy spotters.",
                 "pilot_required_before_large_run": len(scenarios) > 20,
             },
             "saved": saved,
@@ -4387,9 +4404,45 @@ def _scenario_key(value: Any) -> str:
     return json.dumps(identity, sort_keys=True, default=str)
 
 
+def _coerce_spotter_answer(answer: Any) -> dict[str, Any] | None:
+    """Normalise a spotter answer into a {found,title,quoted_text,description} dict.
+
+    Accepts either a structured dict (legacy QuestionDict path) or a free-text
+    string that reasons in prose and ends with a JSON verdict object (current
+    QuestionFreeText path). Returns None only when no verdict can be recovered,
+    so free-text reasoning is never silently scored as a negative finding.
+    """
+    if isinstance(answer, dict):
+        return answer if "found" in answer else None
+    if not isinstance(answer, str):
+        return None
+    text = answer.strip()
+    if not text:
+        return None
+    candidates: list[str] = []
+    candidates += re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    candidates += re.findall(r"(\{[^{}]*\"found\"[^{}]*\})", text, re.DOTALL)
+    greedy = re.search(r"\{.*\"found\".*\}", text, re.DOTALL)
+    if greedy:
+        candidates.append(greedy.group(0))
+    for candidate in reversed(candidates):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and "found" in parsed:
+            return parsed
+    return None
+
+
 def _spotter_answer_error(answer: Any) -> str | None:
     if answer is None:
         return "null_answer"
+    if isinstance(answer, str):
+        coerced = _coerce_spotter_answer(answer)
+        if coerced is None:
+            return "unparseable_answer" if answer.strip() else "null_answer"
+        answer = coerced
     if not isinstance(answer, dict):
         return "answer_not_object"
     found = answer.get("found")
@@ -4432,6 +4485,7 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
         key = _scenario_key(scenario)
         returned_keys.append(key)
         answer = _result_value(result, "answer", "spotter_result")
+        verdict = _coerce_spotter_answer(answer)
         model = _result_value(result, "model", "model") or _result_value(result, "model", "_model_")
         if model:
             models.add(str(model))
@@ -4444,7 +4498,7 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
             null_answers += 1
         elif error:
             invalid_answers += 1
-        elif _answer_is_found(answer.get("found")):
+        elif verdict is not None and _answer_is_found(verdict.get("found")):
             valid_positive += 1
         else:
             valid_negative += 1
@@ -4456,9 +4510,9 @@ def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) ->
                 "section_title": scenario.get("section_title"),
             },
             "valid": error is None,
-            "found": _answer_is_found(answer.get("found")) if isinstance(answer, dict) and error is None else None,
+            "found": _answer_is_found(verdict.get("found")) if verdict is not None and error is None else None,
             "error": error,
-            "answer": answer,
+            "answer": verdict if verdict is not None else answer,
         }
         rows.append(row)
         if error and len(failure_examples) < 10:
@@ -4652,7 +4706,7 @@ def spotter_ingest(
             if result_index < len(audit_rows) and not audit_rows[result_index]["valid"]:
                 skipped += 1
                 continue
-            answer = _result_value(result, "answer", "spotter_result")
+            answer = _coerce_spotter_answer(_result_value(result, "answer", "spotter_result"))
             scenario = result["scenario"] if isinstance(result["scenario"], dict) else dict(result["scenario"])
             if not isinstance(answer, dict) or not _answer_is_found(answer.get("found")):
                 continue

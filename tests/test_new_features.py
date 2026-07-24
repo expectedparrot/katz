@@ -635,6 +635,74 @@ def test_spotter_audit_rejects_null_and_accepts_explicit_negative(tmp_path: Path
     assert ingested["issues_found"] == 0
 
 
+def test_spotter_freetext_verdict_audits_and_ingests(tmp_path: Path) -> None:
+    """A free-text answer that reasons then emits a fenced JSON verdict must audit
+    as a valid finding and ingest as an anchored issue — never drop to null."""
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, manuscript = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "ft.jobs.ep"
+    katz(
+        repo, "spotter", "jobs",
+        "--output", str(jobs_path),
+        "--section", "abstract",
+        "--spotters", "causal_language",
+    )
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+    # The scenario carries the exact section region; quote a verbatim sentence
+    # from it so the quotation locates cleanly.
+    quoted = "This paper studies something important."
+    assert quoted in scenario["manuscript_content"]
+
+    freetext = (
+        "# Causal Language Analysis\n\n"
+        "I weighed several candidate concerns about the wording in this section.\n"
+        "The strongest is an unhedged causal claim that the design does not support.\n\n"
+        "```json\n"
+        + json.dumps({
+            "found": True,
+            "title": "Unhedged causal claim",
+            "quoted_text": quoted,
+            "description": "Causal phrasing exceeds what the correlational design supports.",
+        })
+        + "\n```\n"
+    )
+    result = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": freetext},
+    )
+    path = repo / "ft-results.ep"
+    Results(survey=Survey([]), data=[result]).git.save(path)
+
+    audit = katz(repo, "results", "audit", str(path), "--jobs", str(jobs_path))
+    assert audit["complete"] is True
+    assert audit["valid_positive_findings"] == 1
+    assert audit["null_answers"] == 0
+
+    ingested = katz(repo, "spotter", "ingest", str(path), "--jobs", str(jobs_path))
+    assert ingested["run_status"] == "ingested"
+    assert ingested["issues_found"] == 1
+    assert ingested["issues_filed"] == 1
+    issue = katz(repo, "issue", "show", ingested["issue_ids"][0])
+    assert issue["title"] == "Unhedged causal claim"
+
+    # Pure prose with no verdict block must be flagged, never scored as negative.
+    prose = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": "This section reads fine; I see no problem."},
+    )
+    prose_path = repo / "prose-results.ep"
+    Results(survey=Survey([]), data=[prose]).git.save(prose_path)
+    prose_audit = katz(repo, "results", "audit", str(prose_path), "--jobs", str(jobs_path))
+    assert prose_audit["complete"] is False
+    assert prose_audit["valid_negative_findings"] == 0
+    assert prose_audit["invalid_answers"] == 1
+
+
 def test_locate_quoted_text_allows_line_break_normalization() -> None:
     from katz.cli import _locate_quoted_text
 
