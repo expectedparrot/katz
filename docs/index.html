@@ -149,7 +149,9 @@ Command
 
   <section id="install">
     <h2><span class="chapter">02</span> Prepare the workspace and paper</h2>
-    <p>We work inside the paper’s Git repository because the current commit is Katz’s version identifier. A separate tutorial branch keeps the generated manuscript derivative and review ledger away from the upstream project history.</p>
+    <p>We use the open-source <code>causal-curve</code> paper because its manuscript and supporting code already live in a public Git repository. That makes the example easy to reproduce and lets us inspect both the paper and the implementation when investigating a finding. Katz uses the current Git commit as the manuscript version identifier, so the repository also gives this review an exact starting state.</p>
+    <p>An existing paper repository is convenient, not required. If all you have is a PDF or a LaTeX project, create or choose a Git workspace, put the source material there, and prepare the canonical Markdown and image bundle as shown in the next section. Inspect and commit that prepared representation before registering it with Katz. From that point onward, the review workflow is the same.</p>
+    <p>For this worked example, a separate tutorial branch keeps the generated manuscript derivative and review ledger away from the upstream project history.</p>
     <h3>Clone the paper repository</h3>
     <pre><code>git clone https://github.com/ronikobrosly/causal-curve.git</code></pre>
     <p>Clone the source repository so Katz can associate the review with an exact version of the paper.</p>
