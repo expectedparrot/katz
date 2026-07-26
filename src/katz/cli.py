@@ -38,6 +38,11 @@ report_app = typer.Typer(help="Generate review reports.")
 review_app = typer.Typer(help="Register and parse human-written peer reviews.")
 agent_app = typer.Typer(help="Discover state and next actions for coding agents.")
 results_app = typer.Typer(help="Audit and inspect EDSL review Results.")
+version_app = typer.Typer(
+    help="Inspect and switch registered manuscript versions.",
+    invoke_without_command=True,
+)
+workspace_app = typer.Typer(help="Create standalone review workspaces.")
 app.add_typer(paper_app, name="paper")
 app.add_typer(issue_app, name="issue")
 app.add_typer(spotter_app, name="spotter")
@@ -48,6 +53,8 @@ app.add_typer(report_app, name="report")
 app.add_typer(review_app, name="review")
 app.add_typer(agent_app, name="agent")
 app.add_typer(results_app, name="results")
+app.add_typer(version_app, name="version")
+app.add_typer(workspace_app, name="workspace")
 
 
 @app.callback()
@@ -702,9 +709,11 @@ def init() -> None:
         fail(exc.message, exc.code, exc.details)
 
 
-@app.command("version")
-def version_command() -> None:
-    """Report the installed Katz build and the source path supplying it."""
+@version_app.callback()
+def version_root(ctx: typer.Context) -> None:
+    """Report the installed Katz build, or manage registered versions via subcommands."""
+    if ctx.invoked_subcommand is not None:
+        return
     emit_json({
         "version": __version__,
         "package_path": str(Path(__file__).resolve().parent),
@@ -716,12 +725,148 @@ def version_command() -> None:
             "committed_canonical_guard",
             "latex_dependency_expansion",
             "latex_structural_audit",
+            "latex_section_provenance",
             "results_audit",
             "fail_closed_spotter_ingestion",
             "issue_clusters",
+            "issue_edit_events",
+            "issue_carry_forward",
             "agent_instructions_write",
+            "version_management",
+            "repair",
+            "workspace_new",
+            "multi_model_agreement",
         ],
     })
+
+
+def _issue_count(dest: Path) -> int:
+    issues_dir = dest / "issues"
+    if not issues_dir.is_dir():
+        return 0
+    return sum(1 for path in issues_dir.glob("*/issue.json"))
+
+
+@version_app.command("list")
+def version_list() -> None:
+    """List registered manuscript versions, oldest first."""
+    try:
+        ensure_initialized()
+        try:
+            active = active_commit()
+        except KatzError:
+            active = None
+        records: list[dict[str, Any]] = []
+        versions_dir = katz_root() / "versions"
+        for path in sorted(versions_dir.iterdir()) if versions_dir.is_dir() else []:
+            if not path.is_dir() or not (path / "version.json").exists():
+                continue
+            version = read_json(path / "version.json")
+            records.append({
+                "commit": path.name,
+                "registered_at": version.get("registered_at"),
+                "source_format": (version.get("source") or {}).get("format"),
+                "issue_count": _issue_count(path),
+                "current": path.name == active,
+            })
+        records.sort(key=lambda item: (item.get("registered_at") or "", item["commit"]))
+        emit_json(records)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@version_app.command("checkout")
+def version_checkout(sha: str = typer.Argument(..., help="Registered commit SHA or unambiguous prefix.")) -> None:
+    """Point ACTIVE_VERSION at another registered commit."""
+    try:
+        resolved = resolve_commit(sha)
+        try:
+            previous = active_commit()
+        except KatzError:
+            previous = None
+        active_version_path().write_text(resolved + "\n", encoding="utf-8")
+        emit_json({"checked_out": True, "commit": resolved, "previous": previous})
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@version_app.command("diff")
+def version_diff(
+    sha_a: str = typer.Argument(..., help="From version: commit SHA or unambiguous prefix."),
+    sha_b: str = typer.Argument(..., help="To version: commit SHA or unambiguous prefix."),
+    limit: int = typer.Option(200, "--limit", min=1, help="Maximum change records to return."),
+) -> None:
+    """Section-aware diff between two registered canonical manuscripts."""
+    import difflib
+
+    try:
+        from_commit, _, _, from_pmap, from_canonical = load_version(sha_a)
+        to_commit, _, _, to_pmap, to_canonical = load_version(sha_b)
+        from_lines = from_canonical.read_text(encoding="utf-8").splitlines()
+        to_lines = to_canonical.read_text(encoding="utf-8").splitlines()
+
+        def section_for_line(pmap: PaperMap, line_number: int) -> str | None:
+            for section in pmap.sections:
+                if not isinstance(section, dict):
+                    continue
+                if section.get("line_start", 0) <= line_number <= section.get("line_end", -1):
+                    return section.get("id")
+            return None
+
+        changes: list[dict[str, Any]] = []
+        total_changes = 0
+        modified_sections: set[str] = set()
+        matcher = difflib.SequenceMatcher(a=from_lines, b=to_lines, autojunk=False)
+        for tag, a_start, a_end, b_start, b_end in matcher.get_opcodes():
+            if tag == "equal":
+                continue
+            span = max(a_end - a_start, b_end - b_start)
+            for offset in range(span):
+                a_line = a_start + offset + 1 if a_start + offset < a_end else None
+                b_line = b_start + offset + 1 if b_start + offset < b_end else None
+                if a_line is not None and b_line is not None:
+                    change_type = "changed"
+                elif b_line is not None:
+                    change_type = "added"
+                else:
+                    change_type = "removed"
+                section = (
+                    section_for_line(to_pmap, b_line)
+                    if b_line is not None
+                    else section_for_line(from_pmap, a_line)
+                )
+                if section:
+                    modified_sections.add(section)
+                total_changes += 1
+                if len(changes) >= limit:
+                    continue
+                change: dict[str, Any] = {"type": change_type, "section": section}
+                if a_line is not None:
+                    change["from_line"] = a_line
+                    change["before"] = from_lines[a_line - 1]
+                if b_line is not None:
+                    change["to_line"] = b_line
+                    change["after"] = to_lines[b_line - 1]
+                changes.append(change)
+
+        to_section_ids = [
+            section.get("id") for section in to_pmap.sections
+            if isinstance(section, dict) and section.get("id")
+        ]
+        emit_json({
+            "from": from_commit,
+            "to": to_commit,
+            "identical": not total_changes,
+            "modified_sections": sorted(modified_sections),
+            "unchanged_sections": [
+                section_id for section_id in to_section_ids if section_id not in modified_sections
+            ],
+            "change_count": total_changes,
+            "truncated": total_changes > len(changes),
+            "changes": changes,
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
 
 
 @app.command()
@@ -757,6 +902,11 @@ def ventilate(
         ventilated, lines_changed = ventilate_markdown(text)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(ventilated, encoding="utf-8")
+        input_sidecar = _provenance_sidecar_path(input_path)
+        if input_sidecar.is_file():
+            # Keep conversion provenance travelling with the derivative so
+            # registration can pick it up without re-running `paper prepare`.
+            shutil.copyfile(input_sidecar, _provenance_sidecar_path(output_path))
         emit_json({
             "ventilated": True,
             "input_path": str(input_path),
@@ -818,119 +968,305 @@ def paper_register(
                     "reason": "Direct registration can omit content supplied through input/include files.",
                 },
             )
-        ensure_initialized()
-        root = repo_root()
-        try:
-            relative_canonical = canonical.resolve().relative_to(root)
-        except ValueError:
-            relative_canonical = None
-        if relative_canonical is not None:
-            tracked = subprocess.run(
-                ["git", "ls-files", "--error-unmatch", "--", str(relative_canonical)],
-                cwd=root,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
+        emit_json(_register_manuscript(
+            canonical,
+            source_root=source_root,
+            source_uri=source_uri,
+            source_format=source_format,
+            source_method=source_method,
+            source_meta=source_meta,
+        ))
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+def _provenance_sidecar_path(canonical: Path) -> Path:
+    return canonical.with_name(canonical.name + ".provenance.json")
+
+
+def _load_provenance_sidecar(canonical: Path) -> dict[str, Any] | None:
+    """Load `<canonical>.provenance.json` written by `paper prepare`, if present."""
+    sidecar = _provenance_sidecar_path(canonical)
+    if not sidecar.is_file():
+        return None
+    data = read_json(sidecar)
+    sections = data.get("sections")
+    files_collapsed = data.get("files_collapsed")
+    return {
+        "sections": [
+            {"title": item.get("title"), "file": item.get("file")}
+            for item in sections
+            if isinstance(item, dict) and item.get("title")
+        ] if isinstance(sections, list) else [],
+        "files_collapsed": [
+            str(item) for item in files_collapsed
+        ] if isinstance(files_collapsed, list) else [],
+    }
+
+
+@workspace_app.command("new")
+def workspace_new(
+    directory: Path = typer.Argument(..., help="Workspace directory to create (must not already exist)."),
+    canonical: Path = typer.Option(..., "--canonical", exists=True, file_okay=True, dir_okay=False, readable=True),
+    source: Optional[str] = typer.Option(
+        None,
+        "--source",
+        help="Original source file or URL, recorded as provenance. Local files are copied into the workspace.",
+    ),
+    source_format: str = typer.Option("markdown", "--source-format"),
+    source_method: str = typer.Option("workspace-new", "--source-method"),
+) -> None:
+    """Create a standalone review workspace around a prepared canonical manuscript.
+
+    Creates the directory, initializes git, copies the canonical Markdown (and a
+    local --source file when given), commits the bundle, initializes .katz, and
+    registers the commit as the first active version. Katz does not fetch, OCR,
+    or convert the source; prepare it first with `katz paper prepare`.
+    """
+    import os
+
+    try:
+        if canonical.suffix.lower() not in {".md", ".markdown"}:
+            raise KatzError(
+                "The canonical manuscript must be Markdown; prepare PDF or LaTeX sources first",
+                "validation_error",
+                {"canonical": str(canonical), "next_action": ["katz", "paper", "prepare", str(canonical)]},
             )
-            status = subprocess.run(
-                ["git", "status", "--porcelain", "--", str(relative_canonical)],
-                cwd=root,
+        if directory.exists():
+            raise KatzError(
+                "Workspace directory already exists",
+                "validation_error",
+                {"directory": str(directory)},
+            )
+        workspace = directory.resolve()
+        workspace.mkdir(parents=True)
+
+        def run_git(*args: str) -> None:
+            completed = subprocess.run(
+                ["git", *args],
+                cwd=workspace,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False,
             )
-            if tracked.returncode != 0 or status.stdout.strip():
+            if completed.returncode != 0:
                 raise KatzError(
-                    "Canonical manuscript must be committed before registration",
-                    "uncommitted_manuscript",
-                    {
-                        "canonical": str(relative_canonical),
-                        "git_status": status.stdout.strip() or "untracked",
-                        "next_actions": [
-                            ["git", "add", "--", str(relative_canonical)],
-                            ["git", "commit", "-m", "Add canonical manuscript for Katz review"],
-                        ],
-                    },
+                    "git command failed while creating the workspace",
+                    "git_error",
+                    {"command": ["git", *args], "stderr": completed.stderr.strip()[-1000:]},
                 )
-        commit = current_commit()
-        checksum = sha256_file(canonical)
 
-        text = canonical.read_text(encoding="utf-8")
-        sentence_records = segment_sentences(text, source_format=source_format)
-        non_ventilated = _count_non_ventilated_lines(text)
+        run_git("init")
+        identity_probe = subprocess.run(
+            ["git", "config", "user.email"],
+            cwd=workspace,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if identity_probe.returncode != 0 or not identity_probe.stdout.strip():
+            run_git("config", "user.name", "Katz Workspace")
+            run_git("config", "user.email", "katz-workspace@localhost")
 
-        # Build source metadata
-        source: dict[str, Any] = {
-            "format": source_format,
-            "root": source_root,
-            "uri": source_uri,
-            "method": source_method,
-            "files_collapsed": [],
-        }
-        if source_meta is not None:
-            extra = parse_meta(source_meta)
-            source.update(extra)
-
-        header: dict[str, Any] = {
-            "type": "header",
-            "schema_version": 1,
-            "commit": commit,
-            "checksum": checksum,
-            "canonical": "paper/manuscript.md",
-            "source": source,
-        }
-
-        records = [header] + sentence_records
-
-        dest = version_dir(commit)
-        paper_dest = dest / "paper"
-        for directory in [paper_dest, dest / "issues", dest / "chunks"]:
-            directory.mkdir(parents=True, exist_ok=True)
-
-        shutil.copyfile(canonical, paper_dest / "manuscript.md")
-
-        # Copy sibling image files referenced by the manuscript
+        paper_dir = workspace / "paper"
+        paper_dir.mkdir()
+        workspace_canonical = paper_dir / canonical.name
+        shutil.copyfile(canonical, workspace_canonical)
+        sidecar = _provenance_sidecar_path(canonical)
+        if sidecar.is_file():
+            shutil.copyfile(sidecar, _provenance_sidecar_path(workspace_canonical))
         image_exts = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
-        canonical_dir = canonical.parent
-        for img_file in canonical_dir.iterdir():
-            if img_file.suffix.lower() in image_exts and img_file.is_file():
-                shutil.copyfile(img_file, paper_dest / img_file.name)
-        write_jsonl(dest / "paper_map.jsonl", records)
+        for asset in canonical.parent.iterdir():
+            if asset.is_file() and asset.suffix.lower() in image_exts:
+                shutil.copyfile(asset, paper_dir / asset.name)
 
-        symbol_table = dest / "symbol_table.json"
-        if not symbol_table.exists():
-            symbol_table.write_text("[]\n", encoding="utf-8")
+        source_uri: Optional[str] = None
+        source_root: Optional[str] = None
+        if source is not None:
+            source_path = Path(source)
+            if source_path.is_file():
+                copied_source = workspace / "source" / source_path.name
+                copied_source.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source_path, copied_source)
+                source_root = str(copied_source.relative_to(workspace))
+            else:
+                source_uri = source
 
-        version = {
-            "schema_version": 1,
-            "commit": commit,
-            "registered_at": now_utc(),
-            "canonical": "paper/manuscript.md",
-            "paper_map": "paper_map.jsonl",
-            "checksum": checksum,
-            "source": source,
-            "parent_commit": None,
-        }
-        write_json(dest / "version.json", version)
-        active_version_path().write_text(commit + "\n", encoding="utf-8")
+        run_git("add", "-A")
+        run_git("commit", "-m", "Add canonical manuscript bundle for Katz review")
 
-        result: dict[str, Any] = {
-            "registered": True,
-            "commit": commit,
-            "version_dir": str(dest),
-            "checksum": checksum,
-            "sentences": len(sentence_records),
-        }
-        if non_ventilated > 0:
-            result["warning"] = (
-                f"{non_ventilated} line(s) appear to contain multiple sentences. "
-                "Katz works best with ventilated prose (one sentence per line). "
-                "Consider reformatting the manuscript so each sentence is on its own line."
+        previous_cwd = Path.cwd()
+        os.chdir(workspace)
+        try:
+            (workspace / KATZ_DIR / "versions").mkdir(parents=True, exist_ok=True)
+            registration = _register_manuscript(
+                workspace_canonical,
+                source_root=source_root,
+                source_uri=source_uri,
+                source_format=source_format,
+                source_method=source_method,
             )
-        emit_json(result)
+        finally:
+            os.chdir(previous_cwd)
+
+        emit_json({
+            "workspace": str(workspace),
+            "git_initialized": True,
+            "canonical": str(workspace_canonical.relative_to(workspace)),
+            "source": {"root": source_root, "uri": source_uri},
+            "registration": registration,
+            "next": f"cd {workspace} && katz next",
+        })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
+
+
+def _register_manuscript(
+    canonical: Path,
+    *,
+    source_root: Optional[str] = None,
+    source_uri: Optional[str] = None,
+    source_format: str = "unknown",
+    source_method: str = "unknown",
+    source_meta: Optional[str] = None,
+) -> dict[str, Any]:
+    """Register a committed canonical manuscript for the current repository HEAD.
+
+    Shared by `paper register` and `workspace new`; raises KatzError and returns
+    the registration result instead of emitting it.
+    """
+    ensure_initialized()
+    root = repo_root()
+    try:
+        relative_canonical = canonical.resolve().relative_to(root)
+    except ValueError:
+        relative_canonical = None
+    if relative_canonical is not None:
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", str(relative_canonical)],
+            cwd=root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--", str(relative_canonical)],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if tracked.returncode != 0 or status.stdout.strip():
+            raise KatzError(
+                "Canonical manuscript must be committed before registration",
+                "uncommitted_manuscript",
+                {
+                    "canonical": str(relative_canonical),
+                    "git_status": status.stdout.strip() or "untracked",
+                    "next_actions": [
+                        ["git", "add", "--", str(relative_canonical)],
+                        ["git", "commit", "-m", "Add canonical manuscript for Katz review"],
+                    ],
+                },
+            )
+    commit = current_commit()
+    checksum = sha256_file(canonical)
+
+    text = canonical.read_text(encoding="utf-8")
+    sentence_records = segment_sentences(text, source_format=source_format)
+    non_ventilated = _count_non_ventilated_lines(text)
+
+    # Build source metadata
+    source: dict[str, Any] = {
+        "format": source_format,
+        "root": source_root,
+        "uri": source_uri,
+        "method": source_method,
+        "files_collapsed": [],
+    }
+    if source_meta is not None:
+        extra = parse_meta(source_meta)
+        source.update(extra)
+    provenance = _load_provenance_sidecar(canonical)
+    if provenance is not None:
+        if provenance.get("files_collapsed") and not source.get("files_collapsed"):
+            source["files_collapsed"] = provenance["files_collapsed"]
+        if provenance.get("sections"):
+            source["section_provenance"] = provenance["sections"]
+
+    header: dict[str, Any] = {
+        "type": "header",
+        "schema_version": 1,
+        "commit": commit,
+        "checksum": checksum,
+        "canonical": "paper/manuscript.md",
+        "source": source,
+    }
+
+    records = [header] + sentence_records
+
+    dest = version_dir(commit)
+    paper_dest = dest / "paper"
+    for directory in [paper_dest, dest / "issues", dest / "chunks"]:
+        directory.mkdir(parents=True, exist_ok=True)
+
+    shutil.copyfile(canonical, paper_dest / "manuscript.md")
+
+    # Copy sibling image files referenced by the manuscript
+    image_exts = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
+    canonical_dir = canonical.parent
+    for img_file in canonical_dir.iterdir():
+        if img_file.suffix.lower() in image_exts and img_file.is_file():
+            shutil.copyfile(img_file, paper_dest / img_file.name)
+    write_jsonl(dest / "paper_map.jsonl", records)
+
+    symbol_table = dest / "symbol_table.json"
+    if not symbol_table.exists():
+        symbol_table.write_text("[]\n", encoding="utf-8")
+
+    parent_commit: Optional[str] = None
+    try:
+        existing_active = active_commit()
+        if existing_active != commit and version_dir(existing_active).is_dir():
+            parent_commit = existing_active
+    except KatzError:
+        parent_commit = None
+
+    version = {
+        "schema_version": 1,
+        "commit": commit,
+        "registered_at": now_utc(),
+        "canonical": "paper/manuscript.md",
+        "paper_map": "paper_map.jsonl",
+        "checksum": checksum,
+        "source": source,
+        "parent_commit": parent_commit,
+    }
+    write_json(dest / "version.json", version)
+    active_version_path().write_text(commit + "\n", encoding="utf-8")
+
+    result: dict[str, Any] = {
+        "registered": True,
+        "commit": commit,
+        "version_dir": str(dest),
+        "checksum": checksum,
+        "sentences": len(sentence_records),
+    }
+    if provenance is not None:
+        result["provenance"] = {
+            "sections": len(provenance.get("sections") or []),
+            "files_collapsed": len(provenance.get("files_collapsed") or []),
+        }
+    if non_ventilated > 0:
+        result["warning"] = (
+            f"{non_ventilated} line(s) appear to contain multiple sentences. "
+            "Katz works best with ventilated prose (one sentence per line). "
+            "Consider reformatting the manuscript so each sentence is on its own line."
+        )
+    return result
 
 
 _LATEX_INCLUDE_RE = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
@@ -1006,10 +1342,14 @@ def _expand_latex_source(
             )
             dependencies.extend(nested_dependencies)
             asset_notes.extend(nested_asset_notes)
+            try:
+                marker_target = target.resolve().relative_to(allowed_root).as_posix()
+            except ValueError:
+                marker_target = raw_target
             return (
-                f"\n% katz: begin inlined {raw_target}\n"
+                f"\n% katz: begin inlined {marker_target}\n"
                 f"{nested.rstrip()}\n"
-                f"% katz: end inlined {raw_target}\n"
+                f"% katz: end inlined {marker_target}\n"
             )
 
         code = _LATEX_INCLUDE_RE.sub(replace_include, code)
@@ -1144,6 +1484,36 @@ def _restore_latex_front_matter(text: str) -> tuple[str, dict[str, bool]]:
     }
 
 
+_LATEX_INLINE_MARKER_RE = re.compile(r"^%\s*katz:\s*(begin|end)\s+inlined\s+(.+?)\s*$")
+_LATEX_HEADING_RE = re.compile(
+    r"^\\((?:sub){0,2}section|chapter|part)\*?(?:\[[^\]]*\])?\{(.+?)\}"
+)
+
+
+def _section_provenance_from_expanded(expanded: str, root_label: str) -> list[dict[str, str]]:
+    """Map each sectioning command in the expanded LaTeX to its source file.
+
+    `_expand_latex_source` brackets every inlined file with
+    `% katz: begin inlined <path>` / `% katz: end inlined <path>` comments, so a
+    stack walk attributes each heading to the file that supplied it.
+    """
+    provenance: list[dict[str, str]] = []
+    file_stack: list[str] = [root_label]
+    for line in expanded.splitlines():
+        stripped = line.strip()
+        marker = _LATEX_INLINE_MARKER_RE.match(stripped)
+        if marker is not None:
+            if marker.group(1) == "begin":
+                file_stack.append(marker.group(2))
+            elif len(file_stack) > 1:
+                file_stack.pop()
+            continue
+        heading = _LATEX_HEADING_RE.match(stripped)
+        if heading is not None:
+            provenance.append({"title": heading.group(2).strip(), "file": file_stack[-1]})
+    return provenance
+
+
 def _flatten_html_anchors(markdown: str) -> tuple[str, int]:
     """Keep visible cross-reference text while removing raw HTML anchor markup."""
     count = 0
@@ -1193,6 +1563,7 @@ def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
     inventory = _latex_source_inventory(expanded)
     expanded, resizebox_wrappers_stripped = _strip_resizebox_wrappers(expanded)
     expanded, front_matter = _restore_latex_front_matter(expanded)
+    section_provenance = _section_provenance_from_expanded(expanded, source.name)
     output.parent.mkdir(parents=True, exist_ok=True)
     media_name = f"{output.stem}_media"
     destination_media = output.parent / media_name
@@ -1270,6 +1641,14 @@ def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
             assets = [str(path) for path in destination_media.rglob("*") if path.is_file()]
 
     headings = sum(bool(re.match(r"^#{1,6}\s+", line)) for line in markdown.splitlines())
+    sidecar = _provenance_sidecar_path(output)
+    write_json(sidecar, {
+        "schema_version": 1,
+        "source_root": str(source),
+        "method": "katz-paper-prepare",
+        "files_collapsed": [str(path) for path in dependencies],
+        "sections": section_provenance,
+    })
     emit_json({
         "prepared": True,
         "source_type": "latex",
@@ -1278,6 +1657,8 @@ def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
         "converter": "pandoc",
         "dependencies": [str(path) for path in dependencies],
         "dependency_count": len(dependencies),
+        "section_provenance": section_provenance,
+        "provenance_sidecar": str(sidecar),
         "source_inventory": inventory,
         "normalization": {
             "resizebox_wrappers_stripped": resizebox_wrappers_stripped,
@@ -1474,6 +1855,19 @@ def paper_auto_chunk(
                 "line_end": le,
             })
 
+        # Attach source-file provenance recorded by `paper prepare` when the
+        # section titles can be matched against the conversion's heading map.
+        section_provenance = (version.get("source") or {}).get("section_provenance")
+        if isinstance(section_provenance, list):
+            provenance_by_title: dict[str, str] = {}
+            for entry in section_provenance:
+                if isinstance(entry, dict) and entry.get("title") and entry.get("file"):
+                    provenance_by_title.setdefault(str(entry["title"]).strip().lower(), str(entry["file"]))
+            for section in sections:
+                source_file = provenance_by_title.get(section["title"].strip().lower())
+                if source_file:
+                    section["source_file"] = source_file
+
         # Append to paper_map.jsonl
         jsonl_path = dest / "paper_map.jsonl"
         if not jsonl_path.exists():
@@ -1609,6 +2003,7 @@ def paper_sections(
                 "byte_end": s.get("byte_end"),
                 "line_start": s.get("line_start"),
                 "line_end": s.get("line_end"),
+                **({"source_file": s["source_file"]} if s.get("source_file") else {}),
             }
             for s in pmap.sections
             if isinstance(s, dict)
@@ -2446,6 +2841,15 @@ def validate(commit: Optional[str] = typer.Option(None, "--commit")) -> None:
                         read_json(inv_file)
                     except KatzError as exc:
                         errors.append({"code": exc.code, "path": str(inv_file), "message": exc.message})
+                # Validate edit events
+                for edit_file in sorted((issue_dir / "edits").glob("*.json")) if (issue_dir / "edits").is_dir() else []:
+                    try:
+                        edit_rec = read_json(edit_file)
+                    except KatzError as exc:
+                        errors.append({"code": exc.code, "path": str(edit_file), "message": exc.message})
+                        continue
+                    if not isinstance(edit_rec.get("fields"), dict):
+                        errors.append({"code": "validation_error", "path": str(edit_file), "message": "edit event must contain a fields object"})
 
         for record_path in sorted((dest / "chunks").glob("*.json")) if (dest / "chunks").is_dir() else []:
             try:
@@ -2473,6 +2877,125 @@ def validate(commit: Optional[str] = typer.Option(None, "--commit")) -> None:
         emit_json({"valid": not errors, "commit": resolved, "errors": errors, "warnings": warnings})
         if errors:
             raise typer.Exit(1)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+_DERIVED_LOCATION_FIELDS = ("resolved_text", "line_start", "line_end", "contains_math")
+
+
+def _plan_location_repair(
+    canonical: Path,
+    record_path: Path,
+    location: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a repair plan for one location, or None when it is already hydrated.
+
+    Only derived fields are ever rewritten; byte ranges are never invented or
+    changed, and an invalid byte range is reported as unrepairable.
+    """
+    byte_start = location.get("byte_start")
+    byte_end = location.get("byte_end")
+    if not isinstance(byte_start, int) or not isinstance(byte_end, int):
+        return {
+            "path": str(record_path),
+            "repairable": False,
+            "reason": "location byte_start and byte_end must be integers",
+        }
+    try:
+        resolved = resolve_location(canonical, byte_start, byte_end)
+    except KatzError as exc:
+        return {
+            "path": str(record_path),
+            "repairable": False,
+            "reason": exc.message,
+            "code": exc.code,
+        }
+    stale = [
+        field_name for field_name in _DERIVED_LOCATION_FIELDS
+        if location.get(field_name) != resolved[field_name]
+    ]
+    if not stale:
+        return None
+    return {
+        "path": str(record_path),
+        "repairable": True,
+        "action": "hydrate_location",
+        "fields": stale,
+        "hydrated": {field_name: resolved[field_name] for field_name in stale},
+    }
+
+
+@app.command()
+def repair(
+    commit: Optional[str] = typer.Option(None, "--commit"),
+    check: bool = typer.Option(False, "--check", help="Report planned repairs without writing files."),
+) -> None:
+    """Deterministically hydrate derived fields and recreate missing scaffolding.
+
+    Repair never invents record content, changes states, or alters byte ranges;
+    it only recomputes derived location fields from the canonical manuscript and
+    recreates missing empty directories and an empty symbol_table.json.
+    """
+    try:
+        resolved, dest, _, _, canonical = load_version(commit)
+        if not canonical.exists():
+            raise KatzError(
+                "Canonical manuscript is missing; repair cannot hydrate locations",
+                "not_found",
+                {"canonical": str(canonical)},
+            )
+        planned: list[dict[str, Any]] = []
+        unrepairable: list[dict[str, Any]] = []
+
+        for directory in ["issues", "chunks"]:
+            if not (dest / directory).is_dir():
+                planned.append({
+                    "path": str(dest / directory),
+                    "repairable": True,
+                    "action": "create_directory",
+                })
+        symbol_table = dest / "symbol_table.json"
+        if not symbol_table.exists():
+            planned.append({
+                "path": str(symbol_table),
+                "repairable": True,
+                "action": "create_empty_symbol_table",
+            })
+
+        location_repairs: list[tuple[Path, dict[str, Any], dict[str, Any]]] = []
+        record_paths = list(sorted((dest / "issues").glob("*/issue.json"))) if (dest / "issues").is_dir() else []
+        record_paths += list(sorted((dest / "chunks").glob("*.json"))) if (dest / "chunks").is_dir() else []
+        for record_path in record_paths:
+            record = read_json(record_path)
+            location = record.get("location")
+            if not isinstance(location, dict):
+                continue
+            plan = _plan_location_repair(canonical, record_path, location)
+            if plan is None:
+                continue
+            if not plan["repairable"]:
+                unrepairable.append(plan)
+                continue
+            planned.append(plan)
+            location_repairs.append((record_path, record, plan))
+
+        if not check:
+            for directory in ["issues", "chunks"]:
+                (dest / directory).mkdir(parents=True, exist_ok=True)
+            if not symbol_table.exists():
+                symbol_table.write_text("[]\n", encoding="utf-8")
+            for record_path, record, plan in location_repairs:
+                record["location"].update(plan["hydrated"])
+                write_json(record_path, record)
+
+        emit_json({
+            "commit": resolved,
+            "check": check,
+            "repaired": bool(planned) and not check,
+            "planned_repairs": planned,
+            "unrepairable": unrepairable,
+        })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 
@@ -2527,9 +3050,35 @@ def _latest_status(issue_dir: Path) -> dict[str, Any] | None:
     return read_json(files[-1])
 
 
+def _list_issue_edits(issue_dir: Path) -> list[dict[str, Any]]:
+    """Return append-only edit events for an issue, oldest first."""
+    edits_dir = issue_dir / "edits"
+    if not edits_dir.is_dir():
+        return []
+    return [read_json(path) for path in sorted(edits_dir.glob("*.json"))]
+
+
+def _apply_issue_edits(record: dict[str, Any], edits: list[dict[str, Any]]) -> dict[str, Any]:
+    """Apply edit events in order: title/body replace, meta keys merge."""
+    for edit in edits:
+        fields = edit.get("fields")
+        if not isinstance(fields, dict):
+            continue
+        if isinstance(fields.get("title"), str):
+            record["title"] = fields["title"]
+        if isinstance(fields.get("body"), str):
+            record["body"] = fields["body"]
+        if isinstance(fields.get("meta"), dict):
+            meta = record.get("meta") if isinstance(record.get("meta"), dict) else {}
+            meta.update(fields["meta"])
+            record["meta"] = meta
+    return record
+
+
 def _load_issue(issue_dir: Path) -> dict[str, Any]:
-    """Load an issue record, merging in current state from status/."""
+    """Load an issue record, merging in current state from status/ and edits/."""
     record = read_json(issue_dir / "issue.json")
+    record = _apply_issue_edits(record, _list_issue_edits(issue_dir))
     latest = _latest_status(issue_dir)
     record["state"] = latest["state"] if latest else "draft"
     return record
@@ -2554,6 +3103,7 @@ def _full_issue_record(issue_dir: Path, pmap: PaperMap) -> dict[str, Any]:
     record["investigations"] = _list_investigations(issue_dir)
     suggestions_dir = issue_dir / "suggestions"
     record["suggestions"] = [read_json(f) for f in sorted(suggestions_dir.glob("*.json"))] if suggestions_dir.is_dir() else []
+    record["edits"] = _list_issue_edits(issue_dir)
     return record
 
 
@@ -2606,20 +3156,269 @@ def issue_write(
 @issue_app.command("update")
 def issue_update(
     issue_id: str = typer.Option(..., "--id"),
-    state: str = typer.Option(..., "--state"),
+    state: Optional[str] = typer.Option(None, "--state"),
     reason: Optional[str] = typer.Option(None, "--reason"),
+    title: Optional[str] = typer.Option(None, "--title"),
+    body: Optional[str] = typer.Option(None, "--body"),
+    meta: Optional[str] = typer.Option(None, "--meta", help="JSON object merged into the issue meta."),
     commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
-    """Update an issue's state by appending a status record."""
+    """Update an issue by appending status and/or edit records.
+
+    State changes append to status/; title, body, and meta changes append an
+    edit event to edits/. The original issue.json is never rewritten, so the
+    complete history stays inspectable.
+    """
     try:
-        if state not in VALID_STATES:
+        if state is None and title is None and body is None and meta is None:
+            raise KatzError(
+                "Provide at least one of --state, --title, --body, or --meta",
+                "validation_error",
+            )
+        if state is not None and state not in VALID_STATES:
             raise KatzError("Invalid issue state", "validation_error", {"state": state, "valid": sorted(VALID_STATES)})
         _, dest, _, _, _ = load_version(commit)
         _, issue_dir = _issue_dir_for_id(dest, issue_id)
         timestamp = now_utc()
-        status_record = {"state": state, "reason": reason, "timestamp": timestamp}
-        write_event_json(issue_dir / "status", status_record)
-        emit_json(status_record)
+        applied: dict[str, Any] = {}
+        if title is not None or body is not None or meta is not None:
+            fields: dict[str, Any] = {}
+            if title is not None:
+                fields["title"] = title
+            if body is not None:
+                fields["body"] = body
+            if meta is not None:
+                fields["meta"] = parse_meta(meta)
+            edit_record = {"timestamp": timestamp, "reason": reason, "fields": fields}
+            write_event_json(issue_dir / "edits", edit_record)
+            applied["edit"] = edit_record
+        if state is not None:
+            status_record = {"state": state, "reason": reason, "timestamp": timestamp}
+            write_event_json(issue_dir / "status", status_record)
+            applied.update(status_record)
+        record = _load_issue(issue_dir)
+        applied["issue"] = {
+            "id": record.get("id"),
+            "state": record.get("state"),
+            "title": record.get("title"),
+            "body": record.get("body"),
+            "meta": record.get("meta"),
+        }
+        emit_json(applied)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@issue_app.command("patch")
+def issue_patch(
+    issue_id: str = typer.Argument(..., help="Issue id or unambiguous prefix."),
+    field: str = typer.Argument(..., help="Meta field name to set (e.g. severity)."),
+    value: str = typer.Argument(..., help="Value; parsed as JSON when valid, else stored as a string."),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Set a single meta field via an append-only edit event."""
+    try:
+        _, dest, _, _, _ = load_version(commit)
+        resolved_id, issue_dir = _issue_dir_for_id(dest, issue_id)
+        try:
+            parsed_value: Any = json.loads(value)
+        except json.JSONDecodeError:
+            parsed_value = value
+        timestamp = now_utc()
+        edit_record = {"timestamp": timestamp, "reason": None, "fields": {"meta": {field: parsed_value}}}
+        write_event_json(issue_dir / "edits", edit_record)
+        record = _load_issue(issue_dir)
+        emit_json({
+            "id": resolved_id,
+            "field": field,
+            "value": parsed_value,
+            "meta": record.get("meta"),
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+def _quote_matches(region: str, quoted: str) -> list[tuple[int, int]]:
+    """Return all whitespace-tolerant character spans of a quote in a region."""
+    matches: list[tuple[int, int]] = []
+    pattern = r"\s+".join(re.escape(part) for part in quoted.split())
+    if not pattern:
+        return matches
+    for match in re.finditer(pattern, region):
+        matches.append((match.start(), match.end()))
+    return matches
+
+
+@issue_app.command("carry-forward")
+def issue_carry_forward(
+    to: str = typer.Option(..., "--to", help="Target version: registered commit SHA or unambiguous prefix."),
+    from_commit: Optional[str] = typer.Option(None, "--from", help="Source version; defaults to the active version."),
+    states: str = typer.Option(
+        "confirmed,open",
+        "--states",
+        help="Comma-separated source issue states to check.",
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Create draft issues in the target version for persisted findings.",
+    ),
+) -> None:
+    """Check which issues' anchored text survives in another registered version.
+
+    For every selected source issue, the exact quoted passage is searched in the
+    target version's canonical manuscript (whitespace-tolerant). The command is
+    read-only by default; --apply files draft issues in the target version with
+    meta.parent_issue_id linking back to the source finding. Ambiguous and
+    missing passages are reported but never guessed.
+    """
+    try:
+        state_filter = {item.strip() for item in states.split(",") if item.strip()}
+        invalid_states = state_filter - VALID_STATES
+        if invalid_states:
+            raise KatzError(
+                "Invalid issue state in --states",
+                "validation_error",
+                {"invalid": sorted(invalid_states), "valid": sorted(VALID_STATES)},
+            )
+        source_commit, source_dest, _, source_pmap, _ = load_version(from_commit)
+        target_commit, target_dest, _, _, target_canonical = load_version(to)
+        if source_commit == target_commit:
+            raise KatzError(
+                "Source and target versions are the same",
+                "validation_error",
+                {"commit": source_commit},
+            )
+        target_text = target_canonical.read_text(encoding="utf-8")
+
+        existing_parent_ids: set[str] = set()
+        if (target_dest / "issues").is_dir():
+            for issue_path in (target_dest / "issues").glob("*/issue.json"):
+                parent = read_json(issue_path).get("meta", {}).get("parent_issue_id")
+                if isinstance(parent, str):
+                    existing_parent_ids.add(parent)
+
+        findings: list[dict[str, Any]] = []
+        persisted = missing = ambiguous = applied = skipped_existing = 0
+        issues_dir = source_dest / "issues"
+        source_paths = sorted(issues_dir.glob("*/issue.json")) if issues_dir.is_dir() else []
+        for issue_path in source_paths:
+            record = _load_issue(issue_path.parent)
+            if record.get("state") not in state_filter:
+                continue
+            location = record.get("location") if isinstance(record.get("location"), dict) else {}
+            quoted = str(location.get("resolved_text") or "").strip()
+            finding: dict[str, Any] = {
+                "id": record.get("id"),
+                "state": record.get("state"),
+                "title": record.get("title"),
+                "from_location": {
+                    "byte_start": location.get("byte_start"),
+                    "byte_end": location.get("byte_end"),
+                    "line_start": location.get("line_start"),
+                    "line_end": location.get("line_end"),
+                    "section": section_for_range(
+                        source_pmap.sections,
+                        location.get("byte_start", -1),
+                        location.get("byte_end", -1),
+                    ),
+                },
+            }
+            if not quoted:
+                finding["status"] = "no_anchor"
+                missing += 1
+                findings.append(finding)
+                continue
+            matches = _quote_matches(target_text, quoted)
+            if not matches:
+                finding["status"] = "missing"
+                missing += 1
+                findings.append(finding)
+                continue
+            if len(matches) > 1:
+                finding["status"] = "ambiguous"
+                finding["occurrences"] = len(matches)
+                ambiguous += 1
+                findings.append(finding)
+                continue
+            char_start, char_end = matches[0]
+            byte_start = len(target_text[:char_start].encode("utf-8"))
+            byte_end = len(target_text[:char_end].encode("utf-8"))
+            target_location = resolve_location(target_canonical, byte_start, byte_end)
+            finding["status"] = "persisted"
+            finding["moved"] = (
+                target_location["line_start"] != location.get("line_start")
+                or target_location["line_end"] != location.get("line_end")
+            )
+            finding["to_location"] = {
+                "byte_start": target_location["byte_start"],
+                "byte_end": target_location["byte_end"],
+                "line_start": target_location["line_start"],
+                "line_end": target_location["line_end"],
+            }
+            persisted += 1
+            if apply:
+                if record.get("id") in existing_parent_ids:
+                    skipped_existing += 1
+                    finding["applied"] = False
+                    finding["already_carried"] = True
+                    findings.append(finding)
+                    continue
+                spotter_name = record.get("spotter")
+                spotter_available = (
+                    isinstance(spotter_name, str)
+                    and (target_dest / "spotters" / f"{spotter_name}.md").exists()
+                )
+                source_meta = record.get("meta") if isinstance(record.get("meta"), dict) else {}
+                new_meta = dict(source_meta)
+                new_meta.update({
+                    "parent_issue_id": record.get("id"),
+                    "parent_commit": source_commit,
+                })
+                if spotter_name and not spotter_available:
+                    new_meta["original_spotter"] = spotter_name
+                new_id = uuid.uuid4().hex
+                timestamp = now_utc()
+                new_record = {
+                    "schema_version": 2,
+                    "id": new_id,
+                    "commit": target_commit,
+                    "title": record.get("title"),
+                    "body": record.get("body"),
+                    "spotter": spotter_name if spotter_available else None,
+                    "artifacts": list(record.get("artifacts") or []),
+                    "location": target_location,
+                    "created_at": timestamp,
+                    "meta": new_meta,
+                }
+                new_issue_dir = _issue_dir(target_dest, new_id)
+                (new_issue_dir / "status").mkdir(parents=True, exist_ok=True)
+                (new_issue_dir / "investigations").mkdir(parents=True, exist_ok=True)
+                write_json(new_issue_dir / "issue.json", new_record)
+                write_event_json(new_issue_dir / "status", {
+                    "state": "draft",
+                    "reason": f"carried forward from {source_commit[:12]}",
+                    "timestamp": timestamp,
+                })
+                existing_parent_ids.add(str(record.get("id")))
+                finding["applied"] = True
+                finding["new_issue_id"] = new_id
+                applied += 1
+            findings.append(finding)
+
+        emit_json({
+            "from": source_commit,
+            "to": target_commit,
+            "states": sorted(state_filter),
+            "checked": len(findings),
+            "persisted": persisted,
+            "missing": missing,
+            "ambiguous": ambiguous,
+            "applied": applied,
+            "already_carried": skipped_existing,
+            "apply": apply,
+            "findings": findings,
+        })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 
@@ -4759,6 +5558,43 @@ def results_failures(
         fail(str(exc), "edsl_error", {"results": str(results_path)})
 
 
+def _group_positive_findings(positives: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Group positive spotter findings whose anchors overlap for the same spotter.
+
+    Findings from different models that flag the same passage under the same
+    spotter collapse into one group, so ingestion can file one issue with a
+    cross-model agreement score instead of N near-duplicates.
+    """
+    groups: list[list[dict[str, Any]]] = []
+    ordered = sorted(
+        positives,
+        key=lambda finding: (
+            str(finding["spotter"]),
+            finding["byte_start"],
+            finding["byte_end"],
+            str(finding["model"]),
+        ),
+    )
+    for finding in ordered:
+        target = None
+        for group in groups:
+            if group[0]["spotter"] != finding["spotter"]:
+                continue
+            overlaps = any(
+                member["byte_start"] < finding["byte_end"]
+                and finding["byte_start"] < member["byte_end"]
+                for member in group
+            )
+            if overlaps:
+                target = group
+                break
+        if target is None:
+            groups.append([finding])
+        else:
+            target.append(finding)
+    return groups
+
+
 def _locate_quoted_text(region: str, quoted: str) -> tuple[int, int] | None:
     """Locate an exact quote, allowing runs of whitespace to differ."""
     direct = region.find(quoted)
@@ -4864,13 +5700,18 @@ def spotter_ingest(
         if issues_dir.is_dir():
             for issue_path in issues_dir.glob("*/issue.json"):
                 record = read_json(issue_path)
-                result_key = record.get("meta", {}).get("edsl_result_key")
+                meta = record.get("meta", {}) if isinstance(record.get("meta"), dict) else {}
+                result_key = meta.get("edsl_result_key")
                 if result_key:
                     existing_keys.add(result_key)
+                for member_key in meta.get("edsl_result_keys") or []:
+                    if isinstance(member_key, str):
+                        existing_keys.add(member_key)
 
         found = filed = skipped = 0
         issue_ids: list[str] = []
         skipped_details: list[dict[str, Any]] = []
+        positives: list[dict[str, Any]] = []
         for result_index, result in enumerate(results):
             if result_index < len(audit_rows) and not audit_rows[result_index]["valid"]:
                 skipped += 1
@@ -4917,10 +5758,27 @@ def spotter_ingest(
                 default=str,
             )
             result_key = hashlib.sha256(key_payload.encode("utf-8")).hexdigest()
-            if result_key in existing_keys:
+            positives.append({
+                "spotter": spotter_name,
+                "byte_start": byte_start,
+                "byte_end": byte_end,
+                "model": str(model),
+                "answer": answer,
+                "result_key": result_key,
+            })
+
+        model_count = max(1, len([name for name in audit.get("models", []) if name]))
+        for group in _group_positive_findings(positives):
+            member_keys = sorted({member["result_key"] for member in group})
+            group_key = hashlib.sha256("\n".join(member_keys).encode("utf-8")).hexdigest()
+            if group_key in existing_keys or any(key in existing_keys for key in member_keys):
                 skipped += 1
                 continue
-
+            primary = group[0]
+            models_flagging = sorted({member["model"] for member in group})
+            agreement = round(min(1.0, len(models_flagging) / model_count), 6)
+            byte_start = min(member["byte_start"] for member in group)
+            byte_end = max(member["byte_end"] for member in group)
             issue_id = uuid.uuid4().hex
             timestamp = now_utc()
             issue_dir = _issue_dir(dest, issue_id)
@@ -4930,21 +5788,25 @@ def spotter_ingest(
                 "schema_version": 2,
                 "id": issue_id,
                 "commit": resolved,
-                "title": str(answer.get("title", "Untitled issue")),
-                "body": str(answer.get("description", "")),
-                "spotter": spotter_name,
+                "title": str(primary["answer"].get("title", "Untitled issue")),
+                "body": str(primary["answer"].get("description", "")),
+                "spotter": primary["spotter"],
                 "artifacts": [],
                 "location": resolve_location(canonical, byte_start, byte_end),
                 "created_at": timestamp,
                 "meta": {
-                    "edsl_result_key": result_key,
-                    "edsl_model": str(model),
+                    "edsl_result_key": group_key,
+                    "edsl_result_keys": member_keys,
+                    "edsl_model": primary["model"],
+                    "edsl_models": models_flagging,
+                    "agreement": agreement,
                     "edsl_results_path": str(results_path),
                 },
             }
             write_json(issue_dir / "issue.json", record)
             write_event_json(issue_dir / "status", {"state": state, "reason": "imported from EDSL Results", "timestamp": timestamp})
-            existing_keys.add(result_key)
+            existing_keys.add(group_key)
+            existing_keys.update(member_keys)
             issue_ids.append(issue_id)
             filed += 1
 
@@ -4963,6 +5825,7 @@ def spotter_ingest(
             "result_count": len(results),
             "issues_found": found,
             "issues_filed": filed,
+            "cross_model_merged": max(0, len(positives) - len(_group_positive_findings(positives))),
             "skipped": skipped,
             "skipped_details": skipped_details,
             "issue_ids": issue_ids,

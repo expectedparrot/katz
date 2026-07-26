@@ -21,8 +21,40 @@ Failures use the same top-level contract:
 katz init                             # Initialize .katz/ in current git repo
 katz ventilate <input.md> --output-path <output.md> [--force]
 katz validate [--commit <sha>]        # Validate version integrity
-katz status [--no-guide]         # Bootstrap payload with phase + codegen script
+katz repair [--commit <sha>] [--check]  # Hydrate derived fields, recreate scaffolding
+katz next                             # Highest-priority next action (alias of agent next)
+katz version                          # Installed build, agent API version, capabilities
 ```
+
+---
+
+## `katz version` — Registered Versions
+
+```bash
+katz version list                     # registered versions with issue counts + active flag
+katz version checkout <sha>           # point ACTIVE_VERSION at another registered commit
+katz version diff <sha-a> <sha-b> [--limit 200]  # section-aware manuscript diff
+```
+
+`diff` reports `modified_sections`, `unchanged_sections`, and per-line
+`changed`/`added`/`removed` records with before/after text.
+
+---
+
+## `katz workspace` — Standalone Review Workspaces
+
+```bash
+katz workspace new <dir> \
+  --canonical <prepared.md> \
+  [--source <path-or-url>] \
+  [--source-format markdown] \
+  [--source-method workspace-new]
+```
+
+Creates the directory, initializes git, copies the canonical Markdown (plus a
+local `--source` file and sibling images), commits the bundle, initializes
+`.katz/`, and registers the commit as the first active version. Katz does not
+fetch or convert the source; prepare PDF/LaTeX with `katz paper prepare` first.
 
 ---
 
@@ -50,6 +82,9 @@ katz paper prepare paper.pdf --output paper.md
 katz paper prepare manuscript/main.tex --output paper.md
 # PDF uses paper2md; LaTeX expands input/include and uses Pandoc with a
 # structural table/figure audit. --allow-lossy requires deliberate acceptance.
+# LaTeX preparation also writes <output>.provenance.json mapping each section
+# heading to the source file that supplied it; ventilate copies the sidecar and
+# register stores it, so `paper sections` can report source_file per section.
 katz paper add-sections --sections '[...]' # append sections manually
 ```
 
@@ -97,6 +132,10 @@ katz spotter ingest results.ep \
   [--commit <sha>]            # audit, verify, and file valid EDSL findings
 ```
 
+Multi-model runs: findings from different models that flag overlapping text for
+the same spotter are merged into one issue whose `meta.agreement` records the
+fraction of run models that flagged it (`meta.edsl_models` lists them).
+
 ---
 
 ## `katz issue` — Issue Records
@@ -123,8 +162,24 @@ katz issue show --ids <id1>,<id2>,<id3>
 
 katz issue update \
   --id <id-prefix> \
-  --state <state> \
+  [--state <state>] \
+  [--title "..."] [--body "..."] [--meta '{"k":"v"}'] \
   [--reason "..."]
+# State changes append status records; title/body/meta changes append edit
+# events. issue.json is never rewritten, so history stays inspectable.
+
+katz issue patch <id-prefix> <field> <value>
+# Set one meta field (value parsed as JSON when valid, else stored as string).
+
+katz issue carry-forward \
+  --to <sha> [--from <sha>] \
+  [--states confirmed,open] \
+  [--apply]
+# Check which issues' anchored text survives in another registered version.
+# Read-only by default; --apply files draft issues in the target version with
+# meta.parent_issue_id. Ambiguous and missing passages are reported, not guessed.
+
+katz issue clusters                   # suggest overlapping/duplicate candidates
 
 katz issue investigate \
   --id <id-prefix> \

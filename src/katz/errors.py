@@ -137,7 +137,7 @@ def _command_argv() -> str:
         return "katz"
     groups = {
         "agent", "docs", "eval", "guide", "issue", "paper", "report",
-        "results", "review", "spotter",
+        "results", "review", "spotter", "version", "workspace",
     }
     depth = 2 if args[0] in groups and len(args) > 1 else 1
     return " ".join(["katz", *args[:depth]])
