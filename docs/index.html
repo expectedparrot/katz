@@ -13,6 +13,7 @@
     .brand{display:block;margin-bottom:24px;padding:13px 14px;color:var(--ink);background:#fff;border-radius:9px;text-decoration:none}.brand strong{display:block;font:700 19px/1.15 var(--serif)}.brand small{color:var(--muted);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
     nav .book{margin:0 8px 23px;font:600 20px/1.25 var(--serif)}nav .part{margin:19px 8px 5px;color:#9fd3b2;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}nav>a:not(.brand){display:block;padding:6px 8px;color:#d5e9dc;text-decoration:none;border-radius:6px}nav>a:not(.brand):hover{color:#fff;background:#2d6244}.small{margin:28px 8px 0;color:#b7cec0;font-size:12px}.nav-toggle{display:none;width:100%;padding:10px 12px;color:#fff;background:#2d6244;border:1px solid #72a685;border-radius:7px;font:700 14px var(--sans);text-align:left;cursor:pointer}.nav-toggle:after{float:right;content:"+"}.open .nav-toggle:after{content:"−"}
     main{margin-left:var(--sidebar)}article{max-width:920px;margin:auto;padding:48px 48px 110px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.025)}header{padding:60px 0 44px;border-bottom:3px solid var(--green)}
+    .cta{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:26px;font-size:15px}.cta .lead{color:var(--muted);font-weight:700}.cta a{display:inline-block;padding:11px 18px;border-radius:8px;font-weight:700;text-decoration:none}.cta a.primary{color:#fff;background:var(--green)}.cta a.primary:hover{background:var(--dark)}.cta a.ghost{color:var(--dark);border:2px solid var(--green)}.cta a.ghost:hover{background:var(--light)}
     .eyebrow{color:var(--green);font-size:12px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}h1,h2,h3,h4{font-family:var(--serif);font-weight:600;line-height:1.3}h1{max-width:780px;margin:14px 0 20px;font-size:clamp(40px,6vw,61px);letter-spacing:-.025em}h2{margin:78px 0 22px;padding:12px 0 8px;color:var(--green);font-size:32px;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}h3{margin:40px 0 13px;font-size:23px}h4{margin:26px 0 8px;font-size:18px}.dek{max-width:740px;color:var(--muted);font-size:21px;line-height:1.5}.meta{display:flex;flex-wrap:wrap;gap:10px 24px;margin-top:27px;color:var(--muted);font-size:13px}
     p,ul,ol,table,pre{max-width:var(--measure)}a{color:var(--green)}code{padding:.14em .35em;background:#f0f3f0;border-radius:4px;font:88% var(--mono)}pre{position:relative;overflow:auto;margin:18px 0 26px;padding:20px 58px 20px 22px;color:#d8e3db;background:var(--code);border-radius:8px;font:13px/1.55 var(--mono)}pre.wrap{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}pre code{padding:0;color:inherit;background:none}.command-code{border-left:4px solid var(--green);background:#18231d}.syntax-program{color:#7ddc9e;font-weight:700}.syntax-option{color:#e8b86d}.syntax-string{color:#b9d8ff}.copy{position:absolute;top:10px;right:10px;padding:5px 8px;color:#d8ebe0;background:#34453b;border:0;border-radius:5px;font:11px var(--sans);cursor:pointer}.copy:hover{background:var(--green)}
     .philosophy,.contents{max-width:var(--measure);margin:34px 0 16px;padding:24px 28px;background:#f7f9f7;border:1px solid var(--rule);border-left:4px solid var(--green)}.philosophy h2,.contents h2{margin:0 0 13px;padding:0;color:var(--dark);font-size:23px;border:0}.philosophy ol{margin-bottom:0}.philosophy li{margin-bottom:9px}.contents ol{margin:0;padding-left:1.4rem;columns:2;column-gap:42px}.contents li{break-inside:avoid;margin:0 0 5px}.contents a{text-decoration:none}.contents a:hover{text-decoration:underline}.mermaid{max-width:var(--measure);margin:24px 0;padding:20px;background:#fff;border:1px solid var(--rule);text-align:center}.output-toggle{max-width:var(--measure);margin:12px 0 26px}.output-toggle summary{color:var(--green);font-size:13px;font-weight:700;cursor:pointer}.output-toggle[open] summary{margin-bottom:8px}.output-toggle pre{margin:0}
@@ -39,6 +40,7 @@
     <div class="eyebrow">Expected Parrot · A practical, evidence-first tutorial</div>
     <h1>A worked manuscript review with Katz</h1>
     <p class="dek">Katz is primarily an agent-facing tool: its CLI returns structured JSON, its review jobs and results are portable EDSL objects, and its ledger preserves the evidence behind later agent actions. This tutorial walks through a complete manuscript review while explaining what each artifact is for.</p>
+    <div class="cta"><span class="lead">See the finished product first:</span><a class="primary" href="investigated-review.html" target="_blank" rel="noopener noreferrer">Open the investigated review&nbsp;→</a><a class="ghost" href="review.html" target="_blank" rel="noopener noreferrer">Open the pre-investigation draft</a></div>
     <div class="meta"><span>Tool: <strong><a href="https://github.com/expectedparrot/katz">Katz</a></strong></span><span>License: <strong>MIT</strong></span><span>Runtime: <strong>Python 3.11+</strong></span></div>
   </header>
 
@@ -65,6 +67,37 @@ flowchart TD
     G --> J[Approved work-item drafts]
     J --> K[Team tracker]
     </pre>
+  </section>
+
+  <section class="philosophy" aria-labelledby="fastpath-heading">
+    <h2 id="fastpath-heading">The ten-minute path</h2>
+    <p>If you already have a committed, ventilated Markdown manuscript in a Git repository, this is the entire first-pass loop. Every command except <code>ep run</code> is local; inspect the packaged job and its estimated cost before authorizing the model call.</p>
+    <pre><code>katz init
+katz paper register --canonical paper/paper_ventilated.md \
+  --source-format markdown --source-method ventilated-source
+katz paper auto-chunk
+katz spotter init-catalog
+katz spotter enable --recommended
+katz spotter jobs --output jobs.ep
+katz spotter models --model gpt-4.1-mini --output models.ep
+ep run jobs.ep --model_list models.ep --output results.ep
+katz results audit results.ep --jobs jobs.ep
+katz spotter ingest results.ep --jobs jobs.ep
+katz report generate --output review.html</code></pre>
+    <h3>Just got a PDF?</h3>
+    <p>The "someone emailed me a PDF and I need to review it" flow needs three commands before the loop above: convert the PDF to Markdown, ventilate it, and let Katz build a Git workspace around the result. No pre-existing repository is required.</p>
+    <pre><code>katz paper prepare paper.pdf --backend marker \
+  --output paper_md/paper.md
+katz ventilate paper_md/paper.md \
+  --output-path paper_md/paper_ventilated.md
+katz workspace new pdf-review \
+  --canonical paper_md/paper_ventilated.md \
+  --source paper.pdf \
+  --source-format pdf \
+  --source-method paper2md-marker
+cd pdf-review</code></pre>
+    <p><code>workspace new</code> creates the directory, initializes Git, copies the prepared Markdown with its extracted figures and the original PDF, commits the bundle, and registers it as the first active version — so it replaces the <code>katz init</code> and <code>katz paper register</code> steps. Continue the loop above from <code>katz paper auto-chunk</code>. One non-negotiable caveat: PDF conversion is lossy, so open the PDF and the converted Markdown side by side and check reading order, tables, equations, and figures <em>before</em> any model reviews it — <a href="#paper2md">chapter 3</a> has the inspection checklist.</p>
+    <p>The rest of this tutorial explains what each artifact is, why each boundary exists, and how to investigate, human-triage, and track findings across revisions. If you have a LaTeX project rather than a PDF, start with <a href="#paper2md">chapter 3</a> — same shape, but Katz reads the LaTeX source tree directly and audits the conversion for dropped tables.</p>
   </section>
 
   <section class="contents" aria-labelledby="contents-heading">
@@ -182,8 +215,14 @@ flowchart TD
   <section id="install">
     <h2><span class="chapter">02</span> Prepare the workspace and paper</h2>
     <p>We use the open-source paper <a href="https://github.com/ronikobrosly/causal-curve"><em>causal-curve: A Python Causal Inference Package to Estimate Causal Dose-Response Curves</em></a> because its manuscript and supporting code already live together in a public Git repository. That makes the example easy to reproduce and lets us inspect both the paper and the implementation when investigating a finding. Katz uses the current Git commit as the manuscript version identifier, so the repository also gives this review an exact starting state.</p>
-    <p>An existing paper repository is convenient, not required. If all you have is a PDF or a LaTeX project, create or choose a Git workspace, put the source material there, and prepare the canonical Markdown and image bundle as shown in the next section. Inspect and commit that prepared representation before registering it with Katz. From that point onward, the review workflow is the same.</p>
+    <p>An existing paper repository is convenient, not required. If all you have is a PDF or a LaTeX project, prepare the canonical Markdown and image bundle as shown in the next section, then let Katz build the workspace around it:</p>
+    <pre><code>katz workspace new causal-curve-review \
+  --canonical prepared/paper_ventilated.md \
+  --source paper.pdf \
+  --source-format pdf</code></pre>
+    <p><code>workspace new</code> creates the directory, initializes Git, copies the prepared Markdown together with its sibling images and the local source file, commits that bundle, initializes <code>.katz/</code>, and registers the commit as the first active version — the manual sequence this chapter walks through, in one command. Katz still does not fetch, OCR, or convert anything: preparation remains an explicit prior step, and a URL passed to <code>--source</code> is recorded as provenance only. From that point onward, the review workflow is identical to the repository case.</p>
     <p>For this worked example, a separate tutorial branch keeps the generated manuscript derivative and review ledger away from the upstream project history.</p>
+    <p><strong>What will differ in your run.</strong> Model findings, issue UUIDs, job UUIDs, and costs vary between runs; your Git commit will differ from the one shown here; and the source repository may have evolved past the accepted 2020 version. Where this tutorial needs stable output to explain a structure, it uses a deterministic fixture with readable IDs such as <code>ISSUE_CAUSAL_LANGUAGE</code> and notes that in the surrounding text. Compare the <em>shape</em> of your responses with the captures here, not the exact values.</p>
     <h3>Clone the paper repository</h3>
     <pre><code>git clone https://github.com/ronikobrosly/causal-curve.git</code></pre>
     <p>Clone the source repository so Katz can associate the review with an exact version of the paper.</p>
@@ -319,6 +358,21 @@ flowchart TD
     <pre><code>katz paper prepare manuscript/main.tex \
   --output paper_md/paper.md</code></pre>
     <p>This command operates on the LaTeX project directly; Marker and PDF extraction are not involved. Katz recursively expands braced <code>\input{…}</code> and <code>\include{…}</code> commands before invoking Pandoc. It strips enclosing <code>\resizebox</code> wrappers so an inlined <code>tabular</code> remains visible to Pandoc, runs Citeproc for author-year citations, restores title and abstract as explicit headings, and flattens raw HTML anchor tags while preserving their visible cross-reference text. Missing dependencies, include cycles, and references outside the repository fail with structured errors. The response lists every source dependency and inventories table, figure, graphics, and equation environments.</p>
+    <p>LaTeX preparation also records <em>where each section came from</em>. Because the include expansion knows which file supplied each <code>\section</code> command, Katz writes a sidecar file <code>paper_md/paper.md.provenance.json</code> mapping section headings to their source files and listing every collapsed dependency. <code>katz ventilate</code> copies the sidecar beside its derivative, and registration stores it with the version, so <code>katz paper sections</code> can later report a <code>source_file</code> for each mapped section:</p>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz paper sections",
+  "data": [
+    {
+      "id": "the-model",
+      "title": "The Model",
+      "byte_start": 4821,
+      "byte_end": 18404,
+      "source_file": "sections/model.tex"
+    }
+  ]
+}</code></pre>
+    <p>This matters at the end of the review, not the beginning: a finding anchored to the converted Markdown can then point the author at <code>sections/model.tex</code> — the file they will actually edit — instead of a byte offset in a derived file. The response above is abbreviated to the relevant fields.</p>
     <p>Katz then compares source table counts with table artifacts in the converted Markdown. If tables or referenced media appear to have vanished, it refuses to publish the canonical file. <code>--allow-lossy</code> exists for an explicitly inspected exception; agents must not use it without authorization.</p>
     <p>The source boundary distinguishes text from binary assets. <code>\input</code> and <code>\include</code> must stay inside the Git repository because they inject manuscript text. An existing <code>\includegraphics</code> file may live in a sibling directory such as <code>../output/figures</code>: Katz records an <code>external_graphic</code> note and lets Pandoc copy it into the prepared media bundle. A missing graphic becomes a blocking lossy-conversion warning rather than an unsafe-source error.</p>
     <h3>Inspect the prepared canonical copy</h3>
@@ -783,6 +837,23 @@ flowchart TD
   }
 }</code></pre>
     <p>The pilot package is a deterministic five-item subset of the complete cross product. It uses the same survey and scenario schema as the full run, so it tests whether the selected model follows the answer contract before the larger job is authorized.</p>
+    <h3>Set the model and its token budget explicitly</h3>
+    <p>A spotter answer reasons in prose before emitting its JSON verdict, so it can be long. Under a provider's default completion budget, the longest — and typically most substantive — answers are cut off <em>before</em> the verdict, and the audit then reports them as <code>unparseable_answer</code> rather than as findings. <code>ep run</code> has no token flag, so the budget must travel inside an explicit EDSL ModelList:</p>
+    <pre><code>katz spotter models \
+  --model gpt-4.1-mini \
+  --output models.ep</code></pre>
+    <pre><code>{
+  "status": "ok",
+  "command": "katz spotter models",
+  "data": {
+    "object_type": "ModelList",
+    "output": "models.ep",
+    "models": ["gpt-4.1-mini"],
+    "max_tokens": 4000,
+    "next": "ep run &lt;jobs.ep&gt; --model_list models.ep --output &lt;results.ep&gt;"
+  }
+}</code></pre>
+    <p>The default 4,000-token ceiling is Katz's recommended floor for the free-text verdict contract. Repeat <code>--model</code> to review with several models in one run; the audit treats each scenario-and-model pair as a separate expected answer, and ingestion later merges same-passage findings across models into one issue with an agreement score.</p>
     <h3>How Katz builds one pilot item</h3>
     <p>Before EDSL contacts a model, Katz creates a scenario: a dictionary containing one manuscript chunk, one spotter, and the provenance needed to reconnect any answer to the registered paper. The JSON below is that generated input record, not model output. One pilot scenario pairs the mapped Summary chunk with the enabled causal-language spotter:</p>
     <pre class="wrap"><code>{
@@ -828,7 +899,7 @@ final lines, return exactly one fenced JSON verdict:
 {"found": true, "title": "short title", "quoted_text": "exact manuscript quotation", "description": "evidence-backed explanation"}
 ```</code></pre>
     <p>At run time, EDSL renders this template once for each scenario. For the example item, <code>{{ review_target }}</code> becomes <code>section "Summary"</code>, <code>{{ spotter_instructions }}</code> becomes the complete causal-language spotter, and <code>{{ manuscript_content }}</code> becomes the exact Summary slice. The resulting prompt—not the scenario JSON—is what the selected model reads. EDSL then stores the model’s answer beside the unchanged scenario in the Results object.</p>
-    <pre><code>ep run pilot.jobs.ep --model gpt-4.1-mini --output pilot-results.ep</code></pre>
+    <pre><code>ep run pilot.jobs.ep --model_list models.ep --output pilot-results.ep</code></pre>
     <pre><code>{
   "status": "ok",
   "data": {
@@ -915,7 +986,7 @@ final lines, return exactly one fenced JSON verdict:
       "path": "jobs.ep",
       "commit": "$JOBS_PACKAGE_COMMIT"
     },
-    "next": "ep run jobs.ep --model &lt;model-name&gt; --output results.ep"
+    "next": "katz spotter models --model &lt;model-name&gt; --max-tokens 4000 --output models.ep &amp;&amp; ep run jobs.ep --model_list models.ep --output results.ep"
   }
 }</code></pre>
     <h3>What Katz puts in the review package</h3>
@@ -978,11 +1049,11 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
     <p>Estimates the cost of the packaged job. Add <code>--iterations N</code> to estimate repeated runs.</p>
     <h3>Ask a model to review each package item</h3>
     <pre><code>ep run jobs.ep \
-  --model gpt-4.1-mini \
+  --model_list models.ep \
   --output results.ep</code></pre>
     <table><thead><tr><th>Argument or option</th><th>Meaning</th></tr></thead><tbody>
       <tr><td><code>jobs.ep</code></td><td>The portable Jobs package created by Katz.</td></tr>
-      <tr><td><code>--model</code></td><td>Selects the model at run time; the Katz package does not hard-code one.</td></tr>
+      <tr><td><code>--model_list models.ep</code></td><td>Selects the model and its adequate token budget at run time; the Katz package does not hard-code either.</td></tr>
       <tr><td><code>--output results.ep</code></td><td>Preserves the complete EDSL <code>Results</code> object, including answers, scenarios, model metadata, and run provenance.</td></tr>
     </tbody></table>
     <p>Use <code>--local</code> to disable remote inference. For an asynchronous remote run, use <code>--background</code>, then retrieve the completed object with <code>ep jobs results JOB_UUID --output results.ep</code>.</p>
@@ -1012,7 +1083,8 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
   }
 }</code></pre>
     <p>The complete response also includes the audit contract and <code>"run_status": "ingested"</code>. The fixture uses readable issue labels because generated UUIDs vary from run to run. The counts and meanings are the fields an agent should inspect: eleven valid EDSL results, three positive findings, three filed issues, and no unlocatable quotations.</p>
-    <p>Answers with <code>found: false</code> are retained in <code>results.ep</code> but do not become issues. Answers whose quotation cannot be found are skipped rather than assigned a guessed anchor. Re-ingesting the same results is idempotent.</p>
+    <p>Answers with <code>found: false</code> are retained in <code>results.ep</code> but do not become issues. Answers whose quotation cannot be found are skipped rather than assigned a guessed anchor, and each skip is itemized in <code>skipped_details</code> so a real positive is never silently lost. Re-ingesting the same results is idempotent.</p>
+    <p>When the ModelList contains several models, ingestion does not file near-duplicate issues per model. Positive findings that anchor overlapping text for the same spotter are merged into a single issue whose <code>meta.agreement</code> records the fraction of run models that flagged the passage and whose <code>meta.edsl_models</code> lists them. A concern flagged independently by every model is a different triage object than one model's outlier, and the ledger now says which is which.</p>
     <p>The manuscript commit, spotter, scope, section, and source range travel into each scenario. EDSL adds model and execution metadata; ingestion verifies the commit and quotation and stores a result hash to prevent duplicates. Keep <code>results.ep</code>: it is the full run record. Null answers remain visible as failures and prevent complete ingestion.</p>
     <p>Imported issues remain drafts because a locatable quotation proves provenance, not correctness. After the optional one-shot review, the investigation chapters check candidates in detail.</p>
   </section>
@@ -1623,6 +1695,23 @@ including units, and the caption should explain what the nested intervals show.<
     <h4>Example draft: Validation claim needs a reproducible pointer</h4>
     <p><strong>Spotter:</strong> <code>software_claim_support</code>. <strong>Evidence:</strong> A specific claim and byte range from the registered <code>paper.md</code>. <strong>Investigation:</strong> Check the repository tests, examples, documentation, citations, and public JOSS review before deciding whether support is absent. <strong>Action:</strong> Confirm, reject, or revise the candidate—do not report the model’s first impression as fact.</p>
     <p>Use <em>major</em> for findings that could change a central claim or interpretation, <em>minor</em> for bounded problems that matter but do not overturn the argument, and <em>suggestion</em> for optional improvements. Avoid inflating severity to signal enthusiasm.</p>
+    <h3>Correct a record without rewriting history</h3>
+    <p>Triage regularly discovers that a candidate's severity was wrong or its title unclear. Katz records such corrections as append-only edit events rather than rewriting the record: the original <code>issue.json</code> is preserved verbatim, and every read applies the edits in order.</p>
+    <pre><code>katz issue patch ISSUE_CAUSAL_LANGUAGE severity minor</code></pre>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz issue patch",
+  "data": {
+    "id": "ISSUE_CAUSAL_LANGUAGE",
+    "field": "severity",
+    "value": "minor",
+    "meta": {
+      "edsl_model": "gpt-4.1-mini",
+      "severity": "minor"
+    }
+  }
+}</code></pre>
+    <p><code>patch</code> sets one meta field; <code>katz issue update --id ID --title … --body … --meta …</code> does the same for the visible record, optionally alongside a <code>--state</code> change. <code>issue show</code> returns the merged view plus the full <code>edits</code> history, so a reviewer can always see what the model originally claimed and what a person later corrected.</p>
   </section>
 
   <section id="investigate">
@@ -2269,6 +2358,28 @@ or describe the example as an association.
   }
 }</code></pre>
     <p>This proves that the stored source, ranges, and references agree. It cannot prove that an interpretation is fair or that the review noticed every important issue.</p>
+    <h3>Repair what validation flags — deterministically</h3>
+    <p>Agents may also write issue records directly into <code>.katz/</code> with only a byte range, leaving the derived fields for Katz to fill in. When <code>validate</code> reports missing scaffolding or underhydrated locations, <code>repair</code> fixes exactly the class of problems whose correct value is computable from the registered manuscript:</p>
+    <pre><code>katz repair --check</code></pre>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz repair",
+  "data": {
+    "commit": "c658feac957d3052e30da8e0365e4d982d091d9a",
+    "check": true,
+    "repaired": false,
+    "planned_repairs": [
+      {
+        "path": ".katz/versions/c658feac…/issues/…/issue.json",
+        "repairable": true,
+        "action": "hydrate_location",
+        "fields": ["resolved_text", "line_start", "line_end", "contains_math"]
+      }
+    ],
+    "unrepairable": []
+  }
+}</code></pre>
+    <p><code>--check</code> reports the plan without writing; running <code>katz repair</code> applies it. Repair recomputes derived location fields, recreates missing empty directories, and creates a missing empty symbol table — and nothing else. It never invents issue text, changes a state, or moves a byte range; a range that no longer resolves is listed under <code>unrepairable</code> for a person to examine. Run <code>katz validate</code> again afterward to confirm a clean ledger.</p>
   </section>
 
   <section id="report">
@@ -2319,21 +2430,92 @@ or describe the example as an association.
   --canonical paper/paper_ventilated.md \
   --source-format markdown \
   --source-method revision</code></pre>
-    <p>Registration uses the new <code>HEAD</code> and makes it active. Run section mapping and any desired spotters again because this is a distinct manuscript version.</p>
-    <pre><code>katz issue show ISSUE_CAUSAL_LANGUAGE \
-  --commit OLD_COMMIT</code></pre>
-    <p><code>--commit</code> deliberately reads the finding from the earlier ledger while you compare it with the revised passage.</p>
+    <p>Registration uses the new <code>HEAD</code>, makes it active, and records the previous active version as <code>parent_commit</code>. Run section mapping again because this is a distinct manuscript version. Both versions now sit side by side in the ledger:</p>
+    <pre><code>katz version list</code></pre>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz version list",
+  "data": [
+    {"commit": "OLD_COMMIT", "registered_at": "…", "issue_count": 5, "current": false},
+    {"commit": "NEW_COMMIT", "registered_at": "…", "issue_count": 0, "current": true}
+  ]
+}</code></pre>
+    <p><code>katz version checkout OLD_COMMIT</code> switches the active version when you need to work in the earlier ledger without repeating <code>--commit</code> on every command.</p>
+    <h3>See what the revision actually changed</h3>
+    <pre><code>katz version diff OLD_COMMIT NEW_COMMIT</code></pre>
+    <p>The diff is section-aware and line-level: it reports which mapped sections were touched and, for each changed line, the before and after text. Because the manuscript is ventilated, one changed line is one changed sentence:</p>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz version diff",
+  "data": {
+    "from": "OLD_COMMIT",
+    "to": "NEW_COMMIT",
+    "identical": false,
+    "modified_sections": ["summary"],
+    "unchanged_sections": ["methods", "statement-of-need", "acknowledgements", "references"],
+    "change_count": 2,
+    "changes": [
+      {
+        "type": "changed",
+        "section": "summary",
+        "from_line": 39,
+        "before": "- the number of minutes per week of aerobic exercise causes positive health outcomes,",
+        "to_line": 39,
+        "after": "- the number of minutes per week of aerobic exercise is associated with better health outcomes,"
+      }
+    ]
+  }
+}</code></pre>
+    <p>This response is abbreviated and illustrative. The diff scopes the follow-up review: unchanged sections need no re-reading, and each confirmed finding can be checked directly against the lines that replaced its evidence.</p>
+    <h3>Ask which findings survived the revision</h3>
+    <p>Every issue stores the exact passage it was anchored to. <code>carry-forward</code> searches for each of those passages in the new version’s canonical manuscript and classifies the result — without moving any anchors:</p>
+    <pre><code>katz issue carry-forward \
+  --to NEW_COMMIT \
+  --from OLD_COMMIT</code></pre>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz issue carry-forward",
+  "data": {
+    "from": "OLD_COMMIT",
+    "to": "NEW_COMMIT",
+    "states": ["confirmed", "open"],
+    "checked": 2,
+    "persisted": 1,
+    "missing": 1,
+    "ambiguous": 0,
+    "findings": [
+      {
+        "id": "ISSUE_CLAIM_SUPPORT",
+        "status": "persisted",
+        "moved": true,
+        "to_location": {"line_start": 126, "line_end": 128}
+      },
+      {
+        "id": "ISSUE_CAUSAL_LANGUAGE",
+        "status": "missing"
+      }
+    ]
+  }
+}</code></pre>
+    <p>Read the three outcomes as prompts, not verdicts. <em>Persisted</em> means the criticized text still exists — the concern probably still applies, and the finding can be carried into the new version’s ledger. <em>Missing</em> means the passage was removed or rewritten — exactly what a successful fix looks like, but also what an evasive one looks like, so read the replacement text (the <code>version diff</code> above locates it) before crediting the revision. <em>Ambiguous</em> means the quoted text now appears more than once; Katz reports the occurrence count and refuses to guess an anchor.</p>
+    <pre><code>katz issue carry-forward \
+  --to NEW_COMMIT \
+  --from OLD_COMMIT \
+  --apply</code></pre>
+    <p><code>--apply</code> files a draft issue in the new version for each persisted finding, copying its title, body, and artifacts, anchoring it to the passage’s new location, and recording <code>parent_issue_id</code> and <code>parent_commit</code> so the concern’s history spans versions. Re-running is idempotent: already-carried findings are reported, not duplicated. Ambiguous and missing findings are never auto-filed.</p>
+    <h3>Record dispositions in the old ledger</h3>
+    <p>The persisted/missing report drives the explicit judgments. For the causal-language finding, the diff shows the revised sentence now hedges the claim, so the old issue is closed with a reason:</p>
     <pre><code>katz issue update \
   --id ISSUE_CAUSAL_LANGUAGE \
   --state resolved \
-  --reason "The revised example now states the assumptions required for a causal interpretation." \
+  --reason "The revised example now describes an association rather than an unqualified causal effect." \
   --commit OLD_COMMIT</code></pre>
     <p>The state change is written to the old issue’s history. The reason explains what changed; <code>resolved</code> does not imply that the old text was retroactively correct.</p>
     <pre><code>katz validate</code></pre>
     <p>Checks the revised ledger after all transitions.</p>
     <pre><code>katz report generate --output revision-review.html</code></pre>
     <p>Writes a separate revision report instead of overwriting the first review.</p>
-    <p>Keeping separate versions makes the comparison explicit: the original report shows what was found, the status history records the disposition, and the revision report describes the newly registered manuscript.</p>
+    <p>Keeping separate versions makes the comparison explicit: the original report shows what was found, the status history and carry-forward links record each finding’s disposition, and the revision report describes the newly registered manuscript.</p>
   </section>
 
   <section id="authority">
