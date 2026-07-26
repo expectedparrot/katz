@@ -2080,6 +2080,64 @@ or describe the example as an association.
 <script>
   const nav=document.querySelector('nav'),toggle=document.querySelector('.nav-toggle'),progress=document.querySelector('#progress');
   toggle.addEventListener('click',()=>{const open=nav.classList.toggle('open');toggle.setAttribute('aria-expanded',String(open));toggle.textContent=open?'Hide tutorial contents':'Show tutorial contents'});
+  const humanCell=value=>{
+    if(value===null||value===undefined)return '—';
+    if(typeof value==='boolean')return value?'yes':'no';
+    return String(value);
+  };
+  const humanLines=(value,depth=0)=>{
+    const indent='  '.repeat(depth),lines=[];
+    if(Array.isArray(value)){
+      if(!value.length)return [`${indent}None.`];
+      value.forEach(item=>{
+        if(item&&typeof item==='object'){
+          lines.push(...humanLines(item,depth));
+          lines.push('');
+        }else lines.push(`${indent}• ${humanCell(item)}`);
+      });
+      if(lines.at(-1)==='')lines.pop();
+      return lines;
+    }
+    if(!value||typeof value!=='object')return [`${indent}${humanCell(value)}`];
+    const scalars=Object.entries(value).filter(([,item])=>!item||typeof item!=='object');
+    const width=Math.max(0,...scalars.map(([key])=>key.replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase()).length));
+    scalars.forEach(([key,item])=>{
+      const label=key.replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
+      lines.push(`${indent}${label.padEnd(width)}  ${humanCell(item)}`);
+    });
+    Object.entries(value).filter(([,item])=>item&&typeof item==='object').forEach(([key,item])=>{
+      if(lines.length)lines.push('');
+      lines.push(`${indent}${key.replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase())}`);
+      lines.push(...humanLines(item,depth+1));
+    });
+    return lines;
+  };
+  const tutorial=document.querySelector('article');
+  tutorial.querySelectorAll('section:not(#agent-interface) pre code').forEach(code=>{
+    const command=code.textContent.trimStart();
+    if(/^katz\s+(?!--human\b)/.test(command)){
+      code.textContent=code.textContent.replace(/^(\s*)katz\s+/, '$1katz --human ');
+    }
+  });
+  tutorial.querySelectorAll('section:not(#agent-interface) pre code').forEach(code=>{
+    const text=code.textContent.trim();
+    if(!text.startsWith('{'))return;
+    let payload;
+    try{payload=JSON.parse(text)}catch{return}
+    if(!payload.command||!String(payload.command).startsWith('katz '))return;
+    const failed=payload.status==='error'||payload.ok===false;
+    const lines=[`${failed?'✗':'✓'} ${payload.command}`];
+    const data=payload.data??payload.result;
+    if(data&&(!(Array.isArray(data))||data.length))lines.push(...humanLines(data));
+    const errors=payload.errors??(payload.error?[payload.error]:[]);
+    if(errors.length){
+      lines.push('', 'Errors');
+      errors.forEach(error=>lines.push(`${error.code}: ${error.message}`));
+    }
+    if(payload.warnings?.length)lines.push('', 'Warnings',...humanLines(payload.warnings));
+    if(payload.next_steps?.length)lines.push('', 'Next Steps',...payload.next_steps.map((step,index)=>`${index+1}. ${step}`));
+    code.textContent=lines.join('\n');
+  });
   document.querySelectorAll('pre code').forEach(code=>{
     const text=code.textContent;
     if(!/^(?:katz|ep|git|python|find|open|cd|claude|codex|gh)\b/.test(text.trim()))return;
