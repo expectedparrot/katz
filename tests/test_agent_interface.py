@@ -114,7 +114,11 @@ def test_package_documentation_roles_are_distinct() -> None:
         if line.strip() and not line.lstrip().startswith("<!--")
     ]
     assert opening[0] == "# katz"
-    assert opening[1] == "## Copy and paste into a coding agent"
+    assert opening[1].startswith("Katz makes manuscript review traceable:")
+    description_at = readme.index("Katz makes manuscript review traceable:")
+    artwork_at = readme.index("![An economist parrot")
+    agent_block_at = readme.index("## Copy and paste into a coding agent")
+    assert description_at < artwork_at < agent_block_at
     assert "python -m pip install --user --upgrade uv" in readme
     assert "uv tool install --python 3.11 --upgrade --force" in readme
     assert "--with-executables-from" in readme

@@ -1,5 +1,12 @@
 # katz
 
+Katz makes manuscript review traceable: every finding stays connected to the
+exact paper version and passage that prompted it, remains a draft until it is
+investigated, and contributes to an auditable review rather than a pile of
+disconnected comments.
+
+![An economist parrot reviewing a manuscript beside mathematical notation and books](docs/katz-economist-parrot.png)
+
 ## Copy and paste into a coding agent
 
 ```text
@@ -60,17 +67,6 @@ required.
 ```
 
 <!-- id: katz/katz -->
-
-![An economist parrot reviewing a manuscript beside mathematical notation and books](docs/katz-economist-parrot.png)
-
-Katz is an agent-first, version-aware ledger for manuscript review. It connects
-each comment to the exact committed paper version and source range that
-prompted it, preserves model and human review evidence, and turns investigated
-findings into an auditable HTML report.
-
-It produces a repository-local `.katz/` ledger, native EDSL Jobs and Results
-objects, structured diagnostics, issue histories, and review reports. Model
-findings remain drafts until someone investigates their quoted evidence.
 
 The [complete worked tutorial](https://expectedparrot.github.io/katz/) follows
 a public JOSS paper from registration through model review, human triage,
