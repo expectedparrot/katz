@@ -6,9 +6,36 @@
 Set up Katz and help me complete a version-aware review of the manuscript in
 this repository, ending with an evidence-linked report.
 
-Install the current Katz and EDSL releases from their authoritative sources.
-Verify that `katz` and `ep` resolve to those installations. Use Katz's CLI as
-the workflow source of truth:
+Install `uv` if it is not already available:
+
+python -m pip install --user --upgrade uv
+
+Use `uv` to install Katz in an isolated Python 3.11+ tool environment. Include
+EDSL's `ep` executable in the same environment:
+
+uv tool install --python 3.11 --upgrade --force \
+  --with-executables-from "edsl @ git+https://github.com/expectedparrot/edsl.git@main" \
+  "katz @ git+https://github.com/expectedparrot/katz.git@main"
+
+Verify the installed package, capabilities, and both executable interfaces:
+
+katz version
+katz capabilities
+katz --help
+ep --help
+
+Stop if Katz resolves to an unexpected Python environment or the required
+capabilities are absent. Let EDSL own Expected Parrot authentication and local
+profile setup:
+
+ep auth login
+ep profiles current
+ep check
+
+If an existing redacted profile reports valid authentication, do not log in
+again. Never print or inspect the underlying key value.
+
+Use Katz's CLI as the workflow source of truth:
 
 katz guide
 katz next
@@ -54,8 +81,9 @@ investigation, and reporting.
 Katz requires Python 3.11 or newer:
 
 ```bash
-python -m pip install --upgrade \
-  "edsl @ git+https://github.com/expectedparrot/edsl.git@main" \
+python -m pip install --user --upgrade uv
+uv tool install --python 3.11 --upgrade --force \
+  --with-executables-from "edsl @ git+https://github.com/expectedparrot/edsl.git@main" \
   "katz @ git+https://github.com/expectedparrot/katz.git@main"
 katz version
 katz capabilities
@@ -87,21 +115,31 @@ katz guide
 katz next
 ```
 
-Katz will propose initialization, canonical manuscript registration, section
-mapping, review configuration, and Jobs construction based on repository
-state. Each returned action declares whether it mutates state, uses the network,
-or requires approval.
+Katz will identify the manuscript, preserve the exact version being reviewed,
+divide it into reviewable sections, and help choose the checks to apply. Each
+recommended action says whether it changes files, uses the network, or requires
+approval.
 
-After Katz creates a Jobs package, inspect it and execute it explicitly with
-EDSL:
+Katz prepares model review work but deliberately stops before contacting a
+model provider. At that point it saves a portable `jobs.ep` file containing the
+review questions and manuscript material. Review its summary and estimated
+cost before approving any paid work:
 
 ```bash
 ep inspect jobs.ep
 ep jobs cost jobs.ep
+```
+
+After approval, EDSL runs the prepared review and saves the complete responses
+and provenance in `results.ep`:
+
+```bash
 ep run jobs.ep --model_list models.ep --output results.ep
 ```
 
-Then return to the state-aware workflow:
+Then return to Katz. It will audit the saved responses, identify missing or
+malformed work, turn supported findings into draft issues, and guide the review
+toward investigation and reporting:
 
 ```bash
 katz next
