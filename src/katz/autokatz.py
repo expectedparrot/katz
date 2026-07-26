@@ -51,7 +51,7 @@ def get_paper_status():
             capture_output=True, text=True, check=True,
         )
         payload = json.loads(result.stdout)
-        return payload["data"] if payload.get("ok") else None
+        return payload["data"] if payload.get("status") in {"ok", "warning"} else None
     except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
         return None
 

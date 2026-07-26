@@ -2,34 +2,28 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/expectedparrot/katz/main/src/katz/schemas/envelope.schema.json",
   "title": "Katz CLI envelope",
-  "oneOf": [
-    {
-      "type": "object",
-      "required": ["ok", "command", "data"],
-      "properties": {
-        "ok": {"const": true},
-        "command": {"type": "array", "items": {"type": "string"}},
-        "data": {}
-      },
-      "additionalProperties": false
+  "type": "object",
+  "required": ["status", "command", "data", "warnings", "errors", "next_steps"],
+  "properties": {
+    "status": {"enum": ["ok", "warning", "error"]},
+    "command": {"type": "string", "pattern": "^katz(?: |$)"},
+    "data": {},
+    "warnings": {"type": "array"},
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message", "context"],
+        "properties": {
+          "code": {"type": "string"},
+          "message": {"type": "string"},
+          "context": {"type": "object"},
+          "hint": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
     },
-    {
-      "type": "object",
-      "required": ["ok", "command", "error"],
-      "properties": {
-        "ok": {"const": false},
-        "command": {"type": "array", "items": {"type": "string"}},
-        "error": {
-          "type": "object",
-          "required": ["code", "message", "details"],
-          "properties": {
-            "code": {"type": "string"},
-            "message": {"type": "string"},
-            "details": {"type": "object"}
-          }
-        }
-      },
-      "additionalProperties": false
-    }
-  ]
+    "next_steps": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
 }

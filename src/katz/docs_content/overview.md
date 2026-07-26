@@ -105,8 +105,8 @@ keyed to a specific commit SHA. The active version is stored in `.katz/ACTIVE_VE
 All katz commands emit one JSON envelope to stdout:
 
 ```json
-{"ok": true, "command": ["paper", "status"], "data": {...}}
-{"ok": false, "command": ["paper", "status"], "error": {"code": "error_code", "message": "message here", "details": {...}}}
+{"status": "ok", "command": "katz paper status", "data": {...}, "warnings": [], "errors": [], "next_steps": []}
+{"status": "error", "command": "katz paper status", "data": {}, "warnings": [], "errors": [{"code": "error_code", "message": "message here", "context": {}}], "next_steps": []}
 ```
 
 Branch on `ok`, read successful results from `data`, and structured failures

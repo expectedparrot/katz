@@ -28,8 +28,9 @@ def katz(repo: Path, *args: str) -> dict | list:
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
     )
     payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["command"] == list(args)
+    assert payload["status"] in {"ok", "warning"}
+    assert payload["command"].startswith("katz ")
+    assert payload["errors"] == []
     return payload["data"]
 
 
@@ -43,9 +44,11 @@ def katz_fail(repo: Path, *args: str) -> dict:
     )
     assert result.returncode != 0
     payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["command"] == list(args)
-    return payload["error"]
+    assert payload["status"] == "error"
+    assert payload["errors"]
+    error = payload["errors"][0]
+    error["details"] = error["context"]
+    return error
 
 
 RICH_MANUSCRIPT = """\
@@ -1278,7 +1281,7 @@ def test_issue_list_stdout_is_clean_json_for_pipelines(tmp_path: Path) -> None:
     )
     assert result.stderr == ""
     payload = json.loads(result.stdout)
-    assert payload["ok"] is True
+    assert payload["status"] == "ok"
     assert payload["data"][0]["title"] == "Pipeline"
 
 

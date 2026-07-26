@@ -18,8 +18,8 @@ def run_katz(*args):
         ["katz", *args], capture_output=True, text=True, check=True
     )
     payload = json.loads(result.stdout)
-    if not payload.get("ok"):
-        raise RuntimeError(payload["error"])
+    if payload.get("status") not in {"ok", "warning"}:
+        raise RuntimeError(payload["errors"])
     return payload["data"]
 
 

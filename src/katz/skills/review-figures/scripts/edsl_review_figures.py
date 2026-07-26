@@ -23,8 +23,8 @@ from edsl import Model, ModelList, QuestionFreeText, Scenario, ScenarioList
 def run_katz(*args):
     result = subprocess.run(["katz", *args], capture_output=True, text=True, check=True)
     payload = json.loads(result.stdout)
-    if not payload.get("ok"):
-        raise RuntimeError(payload["error"])
+    if payload.get("status") not in {"ok", "warning"}:
+        raise RuntimeError(payload["errors"])
     return payload["data"]
 
 

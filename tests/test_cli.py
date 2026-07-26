@@ -32,8 +32,9 @@ def katz(repo: Path, *args: str) -> dict | list:
         check=True,
     )
     payload = json.loads(result.stdout)
-    assert payload["ok"] is True
-    assert payload["command"] == list(args)
+    assert payload["status"] in {"ok", "warning"}
+    assert payload["command"].startswith("katz ")
+    assert payload["errors"] == []
     return payload["data"]
 
 
@@ -51,9 +52,11 @@ def katz_fail(repo: Path, *args: str) -> dict:
     )
     assert result.returncode != 0
     payload = json.loads(result.stdout)
-    assert payload["ok"] is False
-    assert payload["command"] == list(args)
-    return payload["error"]
+    assert payload["status"] == "error"
+    assert payload["errors"]
+    error = payload["errors"][0]
+    error["details"] = error["context"]
+    return error
 
 
 def setup_repo(tmp_path: Path) -> tuple[Path, Path, str]:

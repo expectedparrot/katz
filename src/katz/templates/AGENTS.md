@@ -2,8 +2,8 @@
 
 Use Katz as the version-aware source of truth for manuscript review.
 
-1. Run `katz agent bootstrap`, then follow only actions returned in
-   `data.next_actions`.
+1. Run `katz guide`, then `katz next`. Rerun `katz next` after every material
+   stage and follow the returned recommendation.
 2. Confirm the canonical manuscript before registration when more than one
    candidate exists. Prepare PDF or LaTeX sources as Markdown first. For LaTeX,
    verify expanded input/include dependencies and the structural table/media
@@ -13,7 +13,7 @@ Use Katz as the version-aware source of truth for manuscript review.
 3. Let EDSL own authentication. Use `ep auth login`, inspect redacted local
    state with `ep profiles current`, and run `ep check` before remote work.
    Never print or copy API-key values into prompts or Katz records.
-4. Use the five-scenario pilot returned by `katz agent next` before a large
+4. Use the five-scenario pilot returned by `katz next` before a large
    run. Inspect Jobs, ask before selecting a paid model, and preserve both
    `.jobs.ep` and Results `.ep` artifacts.
 5. Run `katz results audit RESULTS --jobs JOBS` before interpreting a run.
@@ -29,7 +29,15 @@ Use Katz as the version-aware source of truth for manuscript review.
    for repository investigation.
 10. Ask before selecting a paid model, publishing a report, or creating external
    GitHub issues unless the user already authorized that action.
-11. Run `katz validate` before generating the final report. Never describe a
+11. Keep review state under `.katz/` and use stable run paths. Preserve the
+    canonical manuscript, resolved configuration, prompts, manifests, Jobs,
+    ModelLists, every Results and retry object, registrations, diagnostics,
+    issue history, and reports. Never silently repair, replace, renumber, or
+    delete registered evidence.
+12. Never publish `.env`, `.edsl/profiles/`, confidential reviews, licensed
+    microdata, unpublished original work, or provider responses that cannot be
+    redistributed.
+13. Run `katz validate` before generating the final report. Never describe a
     zero-issue result as complete unless its audit shows 100% valid coverage.
 
 All Katz commands return one JSON envelope. Use the returned command arrays,

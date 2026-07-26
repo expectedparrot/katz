@@ -3,13 +3,13 @@
 All commands emit one JSON envelope by default:
 
 ```json
-{"ok": true, "command": ["paper", "status"], "data": {...}}
+{"status": "ok", "command": "katz paper status", "data": {...}, "warnings": [], "errors": [], "next_steps": []}
 ```
 
 Failures use the same top-level contract:
 
 ```json
-{"ok": false, "command": ["paper", "status"], "error": {"code": "...", "message": "...", "details": {...}}}
+{"status": "error", "command": "katz paper status", "data": {}, "warnings": [], "errors": [{"code": "...", "message": "...", "context": {}}], "next_steps": []}
 ```
 
 ---
