@@ -14,6 +14,11 @@ use `--help` for exact options and defaults.
 
 - Install development dependencies with `python -m pip install -e '.[test]'`.
 - Run `python -m compileall -q src`, `git diff --check`, and `pytest -q`.
+- Code layout: `src/katz/commands/` holds one module per CLI command group;
+  shared logic lives in the library modules (`storage`, `manuscript`, `latex`,
+  `edsl_bridge`, `issues`, `definitions`, `assets`). `cli.py` is app assembly
+  plus top-level commands and re-exports every moved name for compatibility —
+  add new helpers to the owning library module, not to `cli.py`.
 - When documentation changes, check local links, command wrapping, mobile table
   behavior, and the examples in `docs/index.html`.
 - Update CLI help and state-aware guidance before duplicating workflow facts in
