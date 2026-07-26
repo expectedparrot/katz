@@ -18,6 +18,12 @@ from typing import Any, List, Optional
 import typer
 
 from katz import __version__
+from .errors import (  # re-exported for back-compat
+    KatzError,
+    _command_argv,
+    emit_json,
+    fail,
+)
 
 
 app = typer.Typer(help="Version-aware ledger for paper review artifacts.")
@@ -26,7 +32,7 @@ issue_app = typer.Typer(help="Write and query issue records.")
 spotter_app = typer.Typer(help="Manage issue spotters.")
 eval_app = typer.Typer(help="Manage evaluation criteria and responses.")
 docs_app = typer.Typer(help="Read built-in documentation.")
-guide_app = typer.Typer(help="Self-documenting guide for agents.")
+guide_app = typer.Typer(help="Self-documenting guide for agents.", invoke_without_command=True)
 report_app = typer.Typer(help="Generate review reports.")
 review_app = typer.Typer(help="Register and parse human-written peer reviews.")
 agent_app = typer.Typer(help="Discover state and next actions for coding agents.")
@@ -53,46 +59,12 @@ KATZ_DIR = ".katz"
 ACTIVE_VERSION = "ACTIVE_VERSION"
 
 
-class KatzError(Exception):
-    def __init__(self, message: str, code: str, details: dict[str, Any] | None = None):
-        super().__init__(message)
-        self.message = message
-        self.code = code
-        self.details = details or {}
-
-
 @dataclass
 class PaperMap:
     header: dict[str, Any]
     sections: list[dict[str, Any]] = field(default_factory=list)
     sentences: list[dict[str, Any]] = field(default_factory=list)
     figures: list[dict[str, Any]] = field(default_factory=list)
-
-
-def _command_argv() -> list[str]:
-    """Return the invoked Katz arguments for machine-readable provenance."""
-    return sys.argv[1:]
-
-
-def emit_json(value: Any) -> None:
-    """Emit the stable, agent-facing success envelope."""
-    payload = {
-        "ok": True,
-        "command": _command_argv(),
-        "data": value,
-    }
-    typer.echo(json.dumps(payload, indent=2, sort_keys=False))
-
-
-def fail(message: str, code: str, details: dict[str, Any] | None = None) -> None:
-    error: dict[str, Any] = {"code": code, "message": message, "details": details or {}}
-    payload = {
-        "ok": False,
-        "command": _command_argv(),
-        "error": error,
-    }
-    typer.echo(json.dumps(payload, indent=2, sort_keys=False))
-    raise typer.Exit(1)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -2274,6 +2246,12 @@ def agent_next() -> None:
         fail(exc.message, exc.code, exc.details)
 
 
+@app.command("next")
+def next_command() -> None:
+    """Inspect preserved artifacts and return the next review action."""
+    agent_next()
+
+
 @agent_app.command("instructions")
 def agent_instructions(
     target: Optional[str] = typer.Argument(None, help="codex or claude"),
@@ -3739,6 +3717,13 @@ def _expected_results_path(output: Path) -> Path:
     return output.with_name("results.ep")
 
 
+def _save_and_verify_ep(value: Any, output: Path) -> dict[str, Any]:
+    """Save a native EDSL object and prove it can be loaded before success."""
+    saved = value.git.save(output)
+    type(value).git.load(saved["path"])
+    return saved
+
+
 @paper_app.command("review-jobs")
 def paper_review_jobs(
     output: Path = typer.Option(Path("jobs.ep"), "--output", "-o"),
@@ -3793,7 +3778,7 @@ def paper_review_jobs(
             ),
         )
         job = Jobs(survey=question.to_survey()).by(ScenarioList([Scenario(scenario_data)]))
-        saved = job.git.save(output)
+        saved = _save_and_verify_ep(job, output)
         expected_results = _expected_results_path(output)
         record_run(
             dest, "whole_paper_review", "packaged",
@@ -3809,6 +3794,10 @@ def paper_review_jobs(
             "commit": resolved,
             "question": "economic_review",
             "scenario_count": 1,
+            "expected_model_calls": "1 × the number of externally selected models",
+            "model_specifications": "Selected explicitly when running ep; none embedded by Katz.",
+            "likely_cost": "Unknown until the external model is selected.",
+            "inference": "external",
             "attachments": attachment_records,
             "saved": saved,
             "next": f"ep run {output} --model <frontier-model> --output {expected_results}",
@@ -3940,7 +3929,7 @@ def review_jobs(
             question_text=JOURNAL_REVIEW_PARSE_PROMPT,
         )
         job = Jobs(survey=question.to_survey()).by(ScenarioList([scenario]))
-        saved = job.git.save(output)
+        saved = _save_and_verify_ep(job, output)
         expected_results = _expected_results_path(output)
         record_run(
             dest, "journal_review", "packaged",
@@ -3956,6 +3945,10 @@ def review_jobs(
             "commit": resolved,
             "review_id": review_id,
             "question": "journal_review_issues",
+            "expected_model_calls": "1 × the number of externally selected models",
+            "model_specifications": "Selected explicitly when running ep; none embedded by Katz.",
+            "likely_cost": "Unknown until the external model is selected.",
+            "inference": "external",
             "attachments": [canonical.name, review_path.name],
             "saved": saved,
             "next": f"ep run {output} --model <model-name> --output {expected_results}",
@@ -4385,7 +4378,7 @@ def spotter_jobs(
             question_text=SPOTTER_QUESTION_TEXT + SPOTTER_VERDICT_SUFFIX,
         )
         job = Jobs(survey=question.to_survey()).by(ScenarioList(scenarios))
-        saved = job.git.save(output)
+        saved = _save_and_verify_ep(job, output)
         expected_results = _expected_results_path(output)
         record_run(
             dest, "spotter", "packaged",
@@ -4405,6 +4398,12 @@ def spotter_jobs(
             "question": "spotter_result",
             "spotters": [item["name"] for item in definitions],
             "scenario_count": len(scenarios),
+            "expected_model_calls": (
+                f"{len(scenarios)} × the number of models in the external ModelList"
+            ),
+            "model_specifications": "Provided by the explicit models.ep ModelList.",
+            "likely_cost": "Provider-dependent; inspect the ModelList and ep estimate before approval.",
+            "inference": "external",
             "section_scenarios": section_jobs,
             "holistic_scenarios": holistic_jobs,
             "pilot": pilot is not None,
@@ -4788,7 +4787,7 @@ def spotter_models(
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
             built.append(Model(name, **kwargs))
-        ModelList(built).git.save(output)
+        _save_and_verify_ep(ModelList(built), output)
         emit_json({
             "object_type": "ModelList",
             "output": str(output),
@@ -5122,6 +5121,61 @@ def available_skills() -> list[str]:
     if not SKILLS_DIR.is_dir():
         return []
     return [d.name for d in SKILLS_DIR.iterdir() if (d / "SKILL.md").exists()]
+
+
+@guide_app.callback()
+def guide_root(ctx: typer.Context) -> None:
+    """Describe the complete auditable Katz lifecycle."""
+    if ctx.invoked_subcommand is not None:
+        return
+    emit_json(
+        {
+            "lifecycle": [
+                {
+                    "stage": "register",
+                    "purpose": "Preserve and map a committed canonical manuscript.",
+                    "commands": ["katz init", "katz paper register", "katz paper auto-chunk"],
+                },
+                {
+                    "stage": "configure",
+                    "purpose": "Select explicit, versioned review criteria and spotters.",
+                    "commands": ["katz spotter init-catalog", "katz spotter enable"],
+                },
+                {
+                    "stage": "package",
+                    "purpose": "Create and verify a native EDSL Jobs artifact.",
+                    "commands": ["katz spotter jobs", "katz paper review-jobs", "katz review jobs"],
+                },
+                {
+                    "stage": "external-execution",
+                    "purpose": "Run model work explicitly outside Katz.",
+                    "commands": ["ep run <jobs.ep> --output <results.ep>"],
+                    "requires_user_approval": True,
+                },
+                {
+                    "stage": "register-and-audit",
+                    "purpose": "Audit Results and register them without hiding retries.",
+                    "commands": ["katz results audit", "katz ingest", "katz spotter ingest"],
+                },
+                {
+                    "stage": "investigate-and-report",
+                    "purpose": "Investigate draft findings and generate an evidence-linked report.",
+                    "commands": ["katz issue next", "katz validate", "katz report generate"],
+                },
+            ],
+            "execution_boundary": {
+                "owner": "ep",
+                "rule": "Katz creates native Jobs and consumes Results; it never executes model calls.",
+            },
+            "resume": "Run `katz next` after every material stage.",
+            "documentation": {
+                "overview": "katz guide overview",
+                "skills": "katz guide skills",
+                "cli_topics": "katz docs list",
+            },
+        },
+        next_steps=["Run `katz next` to inspect the repository's current artifact state."],
+    )
 
 
 @guide_app.command("overview")

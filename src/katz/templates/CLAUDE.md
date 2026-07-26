@@ -2,8 +2,8 @@
 
 Use Katz as the version-aware source of truth for manuscript review.
 
-1. Run `katz agent bootstrap`, then follow only actions returned in
-   `data.next_actions`.
+1. Run `katz guide`, then `katz next`. Rerun `katz next` after every material
+   stage and follow the returned recommendation.
 2. Confirm the canonical manuscript before registration when more than one
    candidate exists. Prepare PDF or LaTeX sources as Markdown first. For LaTeX,
    verify expanded input/include dependencies and the structural table/media
@@ -13,7 +13,7 @@ Use Katz as the version-aware source of truth for manuscript review.
 3. Let EDSL own authentication. Use `ep auth login`, inspect redacted local
    state with `ep profiles current`, and run `ep check` before remote work.
    Never print or copy API-key values into prompts or Katz records.
-4. Use the five-scenario pilot returned by `katz agent next` before a large
+4. Use the five-scenario pilot returned by `katz next` before a large
    run. Inspect Jobs, ask before selecting a paid model, and preserve both
    `.jobs.ep` and Results `.ep` artifacts.
 5. Run `katz results audit RESULTS --jobs JOBS` before interpreting a run.

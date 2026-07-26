@@ -23,7 +23,8 @@ def katz(repo: Path, *args: str) -> dict:
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
     )
     payload = json.loads(result.stdout)
-    assert payload["ok"] is True
+    assert payload["status"] in {"ok", "warning"}
+    assert payload["errors"] == []
     return payload["data"]
 
 
@@ -60,6 +61,76 @@ def test_agent_bootstrap_is_read_only_and_returns_actions(tmp_path: Path) -> Non
     assert not (repo / ".katz").exists()
 
 
+def test_every_envelope_has_the_agent_first_shape(tmp_path: Path) -> None:
+    repo, _, _ = setup_repo(tmp_path)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+
+    success = subprocess.run(
+        ["python", "-m", "katz.cli", "version"],
+        cwd=repo, env=env, text=True, capture_output=True, check=True,
+    )
+    payload = json.loads(success.stdout)
+    assert set(payload) == {
+        "status", "command", "data", "warnings", "errors", "next_steps",
+    }
+    assert payload["status"] == "ok"
+    assert payload["command"] == "katz version"
+    assert payload["errors"] == []
+    assert success.stderr == ""
+
+    failure = subprocess.run(
+        ["python", "-m", "katz.cli", "paper", "status"],
+        cwd=repo, env=env, text=True, capture_output=True, check=False,
+    )
+    payload = json.loads(failure.stdout)
+    assert failure.returncode != 0
+    assert payload["status"] == "error"
+    assert payload["command"] == "katz paper status"
+    assert payload["data"] == {}
+    assert payload["errors"][0]["code"] == "not_found"
+
+
+def test_top_level_guide_and_next_are_machine_discoverable(tmp_path: Path) -> None:
+    repo, _, _ = setup_repo(tmp_path)
+
+    guide = katz(repo, "guide")
+    assert guide["execution_boundary"]["owner"] == "ep"
+    assert any(stage["stage"] == "external-execution" for stage in guide["lifecycle"])
+
+    next_state = katz(repo, "next")
+    assert next_state["phase"] == "katz_setup"
+    assert next_state["action"]["command"] == ["katz", "init"]
+
+
+def test_package_documentation_roles_are_distinct() -> None:
+    root = Path(__file__).parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+    tutorial = (root / "docs" / "index.html").read_text(encoding="utf-8")
+
+    opening = [
+        line for line in readme.splitlines()
+        if line.strip() and not line.lstrip().startswith("<!--")
+    ]
+    assert opening[0] == "# katz"
+    assert opening[1] == "## Copy and paste into a coding agent"
+    assert "katz guide" in readme
+    assert "katz next" in readme
+    assert len(readme.splitlines()) < 180
+
+    assert "katz guide" in agents
+    assert "katz next" in agents
+    assert "pytest -q" in agents
+    assert "Never print, copy, serialize, log, or commit API keys" in agents
+    assert "Never silently repair, normalize, replace, renumber, or delete" in agents
+
+    assert "A worked manuscript review with Katz" in tutorial
+    assert "Documentation authority" in tutorial
+    assert "Command reference</h2>" not in tutorial
+    assert '"ok": true' not in tutorial
+
+
 def test_agent_status_advances_and_instruction_templates_are_available(tmp_path: Path) -> None:
     repo, manuscript, commit = setup_repo(tmp_path)
     katz(repo, "init")
@@ -77,7 +148,8 @@ def test_agent_status_advances_and_instruction_templates_are_available(tmp_path:
     claude = katz(repo, "agent", "instructions", "claude")
     assert codex["suggested_filename"] == "AGENTS.md"
     assert claude["suggested_filename"] == "CLAUDE.md"
-    assert "katz agent bootstrap" in codex["markdown"]
+    assert "katz guide" in codex["markdown"]
+    assert "katz next" in codex["markdown"]
     written = katz(repo, "agent", "instructions", "--write")
     assert {item["path"] for item in written["written"]} == {"AGENTS.md", "CLAUDE.md"}
     assert (repo / "AGENTS.md").is_file()
