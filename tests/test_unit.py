@@ -35,10 +35,12 @@ def test_load_collection_rejects_non_string_arrays(tmp_path, monkeypatch) -> Non
 
 
 def test_write_event_json_does_not_overwrite_on_filename_collision(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(cli, "event_filename", lambda: "20260101T000000_000000.json")
+    from katz import storage
 
-    first = cli.write_event_json(tmp_path, {"state": "draft"})
-    second = cli.write_event_json(tmp_path, {"state": "open"})
+    monkeypatch.setattr(storage, "event_filename", lambda: "20260101T000000_000000.json")
+
+    first = storage.write_event_json(tmp_path, {"state": "draft"})
+    second = storage.write_event_json(tmp_path, {"state": "open"})
 
     assert first != second
     assert first.name == "20260101T000000_000000.json"

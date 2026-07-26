@@ -18,6 +18,96 @@ from typing import Any, List, Optional
 import typer
 
 from katz import __version__
+from .assets import (  # noqa: F401  (re-exported for compatibility)
+    SKILLS_DIR,
+    CATALOG_DIR,
+    REPORT_SCRIPT,
+    SCHEMAS_DIR,
+    TEMPLATES_DIR,
+    AGENT_API_VERSION,
+)
+from .storage import (  # noqa: F401  (re-exported for compatibility)
+    KATZ_DIR,
+    ACTIVE_VERSION,
+    PaperMap,
+    read_json,
+    write_json,
+    read_jsonl,
+    write_jsonl,
+    append_jsonl,
+    load_paper_map,
+    paper_map_from_legacy,
+    sha256_file,
+    repo_root,
+    current_commit,
+    katz_root,
+    active_version_path,
+    active_commit,
+    resolve_commit,
+    version_dir,
+    ensure_initialized,
+    source_from_header,
+    load_version,
+    now_utc,
+    event_filename,
+    write_event_json,
+    record_run,
+    _latest_packaged_run,
+    parse_meta,
+)
+from .manuscript import (  # noqa: F401  (re-exported for compatibility)
+    _MATH_ENVS,
+    _TEX_SKIP_ENVS,
+    _TEX_STRUCTURAL_RE,
+    _SENTENCE_BOUNDARY_RE,
+    _SENTENCE_SPLIT_RE,
+    _count_non_ventilated_lines,
+    ventilate_markdown,
+    segment_sentences,
+    line_bounds,
+    contains_math,
+    resolve_location,
+    section_for_range,
+    validate_location,
+    _provenance_sidecar_path,
+    _load_provenance_sidecar,
+    _quote_matches,
+    _locate_quoted_text,
+)
+from .latex import (  # noqa: F401  (re-exported for compatibility)
+    _LATEX_INCLUDE_RE,
+    _LATEX_GRAPHICS_RE,
+    _tex_code_and_comment,
+    _expand_latex_source,
+    _latex_source_inventory,
+    _markdown_table_count,
+    _balanced_brace_group,
+    _strip_resizebox_wrappers,
+    _restore_latex_front_matter,
+    _LATEX_INLINE_MARKER_RE,
+    _LATEX_HEADING_RE,
+    _section_provenance_from_expanded,
+    _flatten_html_anchors,
+    _prepare_latex,
+)
+from .edsl_bridge import (  # noqa: F401  (re-exported for compatibility)
+    SPOTTER_QUESTION_TEXT,
+    SPOTTER_VERDICT_SUFFIX,
+    SPOTTER_RECOMMENDED_MAX_TOKENS,
+    ECONOMICS_REVIEW_QUESTION_TEXT,
+    _edsl_imports,
+    _expected_results_path,
+    _save_and_verify_ep,
+    JOURNAL_REVIEW_PARSE_PROMPT,
+    _result_value,
+    _answer_is_found,
+    _scenario_key,
+    _coerce_spotter_answer,
+    _spotter_answer_error,
+    _audit_spotter_results,
+    _resolve_audit_jobs,
+    _group_positive_findings,
+)
 from .errors import (  # re-exported for back-compat
     KatzError,
     _command_argv,
@@ -68,624 +158,20 @@ def output_options(
     """Configure the CLI output mode."""
     configure_output(human=human)
 
-SKILLS_DIR = Path(__file__).parent / "skills"
-CATALOG_DIR = Path(__file__).parent / "catalog"
-REPORT_SCRIPT = SKILLS_DIR / "find-issues" / "scripts" / "generate_review_report.py"
-SCHEMAS_DIR = Path(__file__).parent / "schemas"
-TEMPLATES_DIR = Path(__file__).parent / "templates"
-AGENT_API_VERSION = "1.0"
-
-KATZ_DIR = ".katz"
-ACTIVE_VERSION = "ACTIVE_VERSION"
-
-
-@dataclass
-class PaperMap:
-    header: dict[str, Any]
-    sections: list[dict[str, Any]] = field(default_factory=list)
-    sentences: list[dict[str, Any]] = field(default_factory=list)
-    figures: list[dict[str, Any]] = field(default_factory=list)
-
-
-def read_json(path: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise KatzError(f"{path} does not exist", "not_found", {"path": str(path)}) from exc
-    except json.JSONDecodeError as exc:
-        raise KatzError(
-            f"{path} is not valid JSON",
-            "validation_error",
-            {"path": str(path), "line": exc.lineno, "column": exc.colno},
-        ) from exc
-    if not isinstance(data, dict):
-        raise KatzError(f"{path} must contain a JSON object", "validation_error", {"path": str(path)})
-    return data
-
-
-def write_json(path: Path, data: dict[str, Any]) -> None:
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
 
 # ---------------------------------------------------------------------------
 # JSONL utilities
 # ---------------------------------------------------------------------------
 
 
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise KatzError(f"{path} does not exist", "not_found", {"path": str(path)}) from exc
-    records: list[dict[str, Any]] = []
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            obj = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            raise KatzError(
-                f"{path} line {lineno} is not valid JSON",
-                "validation_error",
-                {"path": str(path), "line": lineno, "column": exc.colno},
-            ) from exc
-        if not isinstance(obj, dict):
-            raise KatzError(
-                f"{path} line {lineno} must be a JSON object",
-                "validation_error",
-                {"path": str(path), "line": lineno},
-            )
-        records.append(obj)
-    return records
-
-
-def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
-    lines = [json.dumps(r, ensure_ascii=False, sort_keys=False) for r in records]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def append_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
-    with path.open("a", encoding="utf-8") as f:
-        for r in records:
-            f.write(json.dumps(r, ensure_ascii=False, sort_keys=False) + "\n")
-
-
-def load_paper_map(path: Path) -> PaperMap:
-    records = read_jsonl(path)
-    headers = [r for r in records if r.get("type") == "header"]
-    if len(headers) != 1:
-        raise KatzError(
-            f"paper_map.jsonl must contain exactly one header record, found {len(headers)}",
-            "validation_error",
-            {"path": str(path)},
-        )
-    return PaperMap(
-        header=headers[0],
-        sections=[r for r in records if r.get("type") == "section"],
-        sentences=[r for r in records if r.get("type") == "sentence"],
-        figures=[r for r in records if r.get("type") == "figure"],
-    )
-
-
-def paper_map_from_legacy(map_data: dict[str, Any]) -> PaperMap:
-    """Convert old-format paper_map.json dict into a PaperMap."""
-    return PaperMap(
-        header={
-            "type": "header",
-            "schema_version": map_data.get("schema_version"),
-            "commit": map_data.get("commit"),
-            "checksum": map_data.get("checksum"),
-            "canonical": map_data.get("canonical"),
-            "source": map_data.get("source", {}),
-        },
-        sections=map_data.get("sections", []),
-        sentences=map_data.get("sentences", []),
-        figures=map_data.get("figures", []),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Sentence segmentation
 # ---------------------------------------------------------------------------
-
-_MATH_ENVS = frozenset({
-    "equation", "equation*", "align", "align*",
-    "gather", "gather*", "multline", "multline*",
-})
-
-# TeX environments that contain non-prose content (figures, tables, code, etc.)
-_TEX_SKIP_ENVS = frozenset({
-    "figure", "figure*", "table", "table*",
-    "algorithm", "algorithm*", "algorithmic",
-    "tikzpicture", "lstlisting", "verbatim", "Verbatim",
-    "thebibliography", "filecontents",
-})
-
-# TeX commands that appear on their own line and are purely structural
-_TEX_STRUCTURAL_RE = re.compile(
-    r"^\\(?:section|subsection|subsubsection|paragraph|subparagraph|"
-    r"chapter|part|appendix|"
-    r"label|"
-    r"bibliographystyle|bibliography|"
-    r"documentclass|usepackage|"
-    r"newcommand|renewcommand|providecommand|"
-    r"setlength|setcounter|addtolength|"
-    r"geometry|hypersetup|pgfplotsset|"
-    r"title|author|date|affiliation|"
-    r"maketitle|tableofcontents|listoffigures|listoftables|"
-    r"clearpage|newpage|"
-    r"centering|raggedright|raggedleft|"
-    r"hline|vline|toprule|midrule|bottomrule|cline|"
-    r"includegraphics|graphicspath)\b"
-)
-
-# Heuristic: a line with a sentence boundary followed by a capital letter
-# suggests multiple sentences on one line (non-ventilated).
-_SENTENCE_BOUNDARY_RE = re.compile(r"[.!?]\s+[A-Z]")
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
-
-
-def _count_non_ventilated_lines(text: str) -> int:
-    """Return the count of lines that appear to contain multiple sentences."""
-    count = 0
-    in_fence = False
-    in_display_math = False
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith(("```", "~~~")):
-            in_fence = not in_fence
-            continue
-        if stripped == "$$":
-            in_display_math = not in_display_math
-            continue
-        if in_fence or in_display_math:
-            continue
-        # Only check substantive lines, skip obvious structural ones
-        if len(stripped) < 40:
-            continue
-        if stripped.startswith(("#", "![", "```", "~~~", "%", "\\", "<", ">", "|", "$$")):
-            continue
-        if re.match(r"^(?:[-+*]|\d+[.)])\s", stripped):
-            continue
-        if _SENTENCE_BOUNDARY_RE.search(stripped):
-            count += 1
-    return count
-
-
-def ventilate_markdown(text: str) -> tuple[str, int]:
-    """Split likely multi-sentence Markdown prose lines conservatively.
-
-    Structural Markdown, fenced code, display math, tables, HTML, comments,
-    and list items are left unchanged. Returns (ventilated_text, lines_changed).
-    """
-    output: list[str] = []
-    changed = 0
-    in_fence = False
-    in_display_math = False
-
-    for line in text.splitlines(keepends=True):
-        content = line.rstrip("\r\n")
-        newline = line[len(content):]
-        stripped = content.strip()
-
-        if stripped.startswith(("```", "~~~")):
-            in_fence = not in_fence
-            output.append(line)
-            continue
-        if stripped == "$$":
-            in_display_math = not in_display_math
-            output.append(line)
-            continue
-
-        structural = (
-            in_fence
-            or in_display_math
-            or not stripped
-            or stripped.startswith(("#", "![", "%", "\\", "<", ">", "|", "$$"))
-            or re.match(r"^(?:[-+*]|\d+[.)])\s", stripped) is not None
-            or re.match(r"^ {4}", content) is not None
-        )
-        if structural or not _SENTENCE_BOUNDARY_RE.search(stripped):
-            output.append(line)
-            continue
-
-        indent = content[: len(content) - len(content.lstrip())]
-        parts = _SENTENCE_SPLIT_RE.split(stripped)
-        if len(parts) == 1:
-            output.append(line)
-            continue
-        changed += 1
-        for index, part in enumerate(parts):
-            suffix = newline if index == len(parts) - 1 else "\n"
-            output.append(f"{indent}{part}{suffix}")
-
-    return "".join(output), changed
-
-
-def segment_sentences(text: str, source_format: str = "markdown") -> list[dict[str, Any]]:
-    """Segment ventilated-prose into sentence records.
-
-    source_format: "markdown" (default), "tex", or "latex".
-    Assumes one prose sentence per line.  Skips structural elements,
-    headings, blank lines, and non-prose environments.
-    """
-    is_tex = source_format in ("tex", "latex")
-    lines = text.split("\n")
-    sentences: list[dict[str, Any]] = []
-    byte_offset = 0
-    in_code_block = False      # markdown only
-    in_display_math = False
-    in_skip_env = False        # TeX non-prose environments
-    sentence_index = 0
-
-    for line_number_0, line in enumerate(lines):
-        line_byte_length = len(line.encode("utf-8"))
-        line_start_byte = byte_offset
-        line_end_byte = byte_offset + line_byte_length
-        # advance past the newline (if not last line)
-        if line_number_0 < len(lines) - 1:
-            byte_offset = line_end_byte + 1
-        else:
-            byte_offset = line_end_byte
-
-        stripped = line.strip()
-
-        if is_tex:
-            # Skip TeX comment lines
-            if stripped.startswith("%"):
-                continue
-            # Track and skip \begin{...} / \end{...} lines
-            if stripped.startswith("\\begin{"):
-                env = stripped[7:].split("}")[0] if "}" in stripped[7:] else ""
-                if env in _TEX_SKIP_ENVS:
-                    in_skip_env = True
-                elif env in _MATH_ENVS:
-                    in_display_math = True
-                continue  # always skip the \begin{...} line itself
-            if stripped.startswith("\\end{"):
-                env = stripped[5:].split("}")[0] if "}" in stripped[5:] else ""
-                if env in _TEX_SKIP_ENVS:
-                    in_skip_env = False
-                elif env in _MATH_ENVS:
-                    in_display_math = False
-                continue  # always skip the \end{...} line itself
-            if in_skip_env or in_display_math:
-                continue
-            # Skip empty lines
-            if not stripped:
-                continue
-            # Skip structural TeX commands
-            if _TEX_STRUCTURAL_RE.match(stripped):
-                continue
-        else:
-            # toggle fenced code blocks
-            if stripped.startswith("```"):
-                in_code_block = not in_code_block
-                continue
-            if in_code_block:
-                continue
-
-            # toggle display math ($$)
-            if stripped == "$$":
-                in_display_math = not in_display_math
-                continue
-            if stripped == "\\[":
-                in_display_math = True
-                continue
-            if stripped == "\\]":
-                in_display_math = False
-                continue
-            if stripped.startswith("\\begin{"):
-                env = stripped[7:].split("}")[0] if "}" in stripped[7:] else ""
-                if env in _MATH_ENVS:
-                    in_display_math = True
-                    continue
-            if stripped.startswith("\\end{"):
-                env = stripped[5:].split("}")[0] if "}" in stripped[5:] else ""
-                if env in _MATH_ENVS:
-                    in_display_math = False
-                    continue
-            if in_display_math:
-                continue
-
-            # skip empty lines
-            if not stripped:
-                continue
-            # skip headings
-            if stripped.startswith("#"):
-                continue
-            # skip image references
-            if stripped.startswith("!["):
-                continue
-            # skip horizontal rules
-            if re.match(r"^[-*_]{3,}\s*$", stripped):
-                continue
-            # skip table separator lines (e.g. |---|---|)
-            if re.match(r"^\|?[\s\-:|]+\|", stripped):
-                continue
-
-        sentences.append({
-            "type": "sentence",
-            "index": sentence_index,
-            "byte_start": line_start_byte,
-            "byte_end": line_end_byte,
-            "line_start": line_number_0 + 1,
-            "line_end": line_number_0 + 1,
-        })
-        sentence_index += 1
-
-    return sentences
 
 
 # ---------------------------------------------------------------------------
 # Core helpers (unchanged API)
 # ---------------------------------------------------------------------------
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return f"sha256:{digest.hexdigest()}"
-
-
-def repo_root() -> Path:
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise KatzError("katz requires an existing git repository", "not_git_repo")
-    return Path(result.stdout.strip())
-
-
-def current_commit() -> str:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise KatzError("git HEAD is not available", "invalid_commit")
-    commit = result.stdout.strip()
-    if len(commit) != 40:
-        raise KatzError("git did not return a full commit SHA", "invalid_commit", {"commit": commit})
-    return commit
-
-
-def katz_root() -> Path:
-    return repo_root() / KATZ_DIR
-
-
-def active_version_path() -> Path:
-    return katz_root() / ACTIVE_VERSION
-
-
-def active_commit() -> str:
-    path = active_version_path()
-    try:
-        commit = path.read_text(encoding="utf-8").strip()
-    except FileNotFoundError as exc:
-        raise KatzError("No active katz version", "invalid_commit") from exc
-    if len(commit) != 40:
-        raise KatzError("ACTIVE_VERSION does not contain a full SHA", "invalid_commit", {"commit": commit})
-    return commit
-
-
-def resolve_commit(commit: Optional[str]) -> str:
-    ensure_initialized()
-    if commit is None:
-        return active_commit()
-    if len(commit) == 40 and version_dir(commit).exists():
-        return commit
-    versions = katz_root() / "versions"
-    matches = [path.name for path in versions.iterdir() if path.is_dir() and path.name.startswith(commit)]
-    if not matches:
-        raise KatzError("SHA is not registered as a katz version", "invalid_commit", {"commit": commit})
-    if len(matches) > 1:
-        raise KatzError("SHA prefix matches multiple registered versions", "ambiguous_commit", {"commit": commit})
-    return matches[0]
-
-
-def version_dir(commit: str) -> Path:
-    return katz_root() / "versions" / commit
-
-
-def ensure_initialized() -> Path:
-    root = katz_root()
-    if not root.exists():
-        raise KatzError(".katz is not initialized; run `katz init` first", "not_found")
-    return root
-
-
-def source_from_header(
-    header: dict[str, Any],
-    source_root: Optional[str],
-    source_uri: Optional[str],
-) -> dict[str, Any]:
-    source = header.get("source")
-    if not isinstance(source, dict):
-        source = {}
-    return {
-        "format": source.get("format", "unknown"),
-        "root": source_root if source_root is not None else source.get("root"),
-        "uri": source_uri if source_uri is not None else source.get("uri"),
-        "method": source.get("method", "unknown"),
-        "files_collapsed": source.get("files_collapsed", []),
-    }
-
-
-def load_version(commit: Optional[str]) -> tuple[str, Path, dict[str, Any], PaperMap, Path]:
-    """Load a registered version, returning (commit, dest, version_json, paper_map, canonical_path).
-
-    Supports both the new paper_map.jsonl and legacy paper_map.json.
-    """
-    resolved = resolve_commit(commit)
-    dest = version_dir(resolved)
-    version = read_json(dest / "version.json")
-    jsonl_path = dest / "paper_map.jsonl"
-    json_path = dest / "paper_map.json"
-    if jsonl_path.exists():
-        pmap = load_paper_map(jsonl_path)
-    elif json_path.exists():
-        pmap = paper_map_from_legacy(read_json(json_path))
-    else:
-        raise KatzError("No paper map found", "not_found", {"version_dir": str(dest)})
-    canonical = dest / version.get("canonical", "paper/manuscript.md")
-    return resolved, dest, version, pmap, canonical
-
-
-def line_bounds(text: str, byte_start: int, byte_end: int) -> tuple[int, int]:
-    starts = [0]
-    encoded = text.encode("utf-8")
-    for index, byte in enumerate(encoded):
-        if byte == 10:
-            starts.append(index + 1)
-    line_start = 1
-    line_end = 1
-    for line_number, start in enumerate(starts, start=1):
-        if start <= byte_start:
-            line_start = line_number
-        if start < byte_end:
-            line_end = line_number
-    return line_start, line_end
-
-
-def contains_math(text: str) -> bool:
-    markers = ["$", "\\(", "\\[", "\\begin{equation", "\\begin{align", "\\frac", "\\sum", "\\int"]
-    return any(marker in text for marker in markers)
-
-
-def resolve_location(canonical: Path, byte_start: int, byte_end: int) -> dict[str, Any]:
-    data = canonical.read_bytes()
-    if byte_start < 0 or byte_end <= byte_start or byte_end > len(data):
-        raise KatzError(
-            "Byte range is outside manuscript bounds",
-            "invalid_range",
-            {"byte_start": byte_start, "byte_end": byte_end, "file_size": len(data)},
-        )
-    try:
-        resolved_text = data[byte_start:byte_end].decode("utf-8")
-        full_text = data.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise KatzError("Byte range is not valid UTF-8", "invalid_range") from exc
-    line_start, line_end = line_bounds(full_text, byte_start, byte_end)
-    return {
-        "byte_start": byte_start,
-        "byte_end": byte_end,
-        "line_start": line_start,
-        "line_end": line_end,
-        "resolved_text": resolved_text,
-        "contains_math": contains_math(resolved_text),
-    }
-
-
-def section_for_range(sections: list[dict[str, Any]], byte_start: int, byte_end: int) -> str | None:
-    for section in sections:
-        if not isinstance(section, dict):
-            continue
-        if section.get("byte_start", -1) <= byte_start and byte_end <= section.get("byte_end", -1):
-            return section.get("id")
-    return None
-
-
-def validate_location(canonical: Path, record_path: Path, location: dict[str, Any], errors: list[dict[str, Any]]) -> None:
-    byte_start = location.get("byte_start")
-    byte_end = location.get("byte_end")
-    if not isinstance(byte_start, int) or not isinstance(byte_end, int):
-        errors.append(
-            {
-                "code": "validation_error",
-                "path": str(record_path),
-                "message": "location byte_start and byte_end must be integers",
-            }
-        )
-        return
-    try:
-        resolved = resolve_location(canonical, byte_start, byte_end)
-    except KatzError as exc:
-        errors.append({"code": exc.code, "path": str(record_path), "message": exc.message})
-        return
-    for field_name in ["resolved_text", "line_start", "line_end", "contains_math"]:
-        if field_name in location and location[field_name] != resolved[field_name]:
-            errors.append(
-                {
-                    "code": "stale_resolved_text" if field_name == "resolved_text" else "validation_error",
-                    "path": str(record_path),
-                    "message": f"location {field_name} does not match manuscript",
-                }
-            )
-
-
-def now_utc() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def event_filename() -> str:
-    """Return a filename-safe timestamp with microseconds for uniqueness."""
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%f")
-    return f"{ts}.json"
-
-
-def write_event_json(directory: Path, data: dict[str, Any]) -> Path:
-    """Write an event record without overwriting an existing timestamp file."""
-    directory.mkdir(parents=True, exist_ok=True)
-    filename = event_filename()
-    candidate = directory / filename
-    stem = candidate.stem
-    suffix = candidate.suffix
-    counter = 1
-    while candidate.exists():
-        candidate = directory / f"{stem}_{counter}{suffix}"
-        counter += 1
-    write_json(candidate, data)
-    return candidate
-
-
-def record_run(dest: Path, kind: str, status: str, **details: Any) -> Path:
-    """Append a first-class run lifecycle record to the active version."""
-    return write_event_json(dest / "runs", {
-        "schema_version": 1,
-        "kind": kind,
-        "status": status,
-        "timestamp": now_utc(),
-        **details,
-    })
-
-
-def _latest_packaged_run(dest: Path, results_path: Path | None = None) -> dict[str, Any] | None:
-    """Find the newest packaged run, optionally matching its expected Results path."""
-    runs_dir = dest / "runs"
-    if not runs_dir.is_dir():
-        return None
-    target = results_path.resolve() if results_path is not None else None
-    for path in reversed(sorted(runs_dir.glob("*.json"))):
-        record = read_json(path)
-        if record.get("status") != "packaged":
-            continue
-        expected = record.get("expected_results_path")
-        if target is None or (expected and Path(str(expected)).resolve() == target):
-            return record
-    return None
-
-
-def parse_meta(meta: Optional[str]) -> dict[str, Any]:
-    if meta is None:
-        return {}
-    try:
-        value = json.loads(meta)
-    except json.JSONDecodeError as exc:
-        raise KatzError("meta must be valid JSON object", "validation_error", {"line": exc.lineno, "column": exc.colno}) from exc
-    if not isinstance(value, dict):
-        raise KatzError("meta must be valid JSON object", "validation_error")
-    return value
 
 
 # ---------------------------------------------------------------------------
@@ -980,30 +466,6 @@ def paper_register(
         fail(exc.message, exc.code, exc.details)
 
 
-def _provenance_sidecar_path(canonical: Path) -> Path:
-    return canonical.with_name(canonical.name + ".provenance.json")
-
-
-def _load_provenance_sidecar(canonical: Path) -> dict[str, Any] | None:
-    """Load `<canonical>.provenance.json` written by `paper prepare`, if present."""
-    sidecar = _provenance_sidecar_path(canonical)
-    if not sidecar.is_file():
-        return None
-    data = read_json(sidecar)
-    sections = data.get("sections")
-    files_collapsed = data.get("files_collapsed")
-    return {
-        "sections": [
-            {"title": item.get("title"), "file": item.get("file")}
-            for item in sections
-            if isinstance(item, dict) and item.get("title")
-        ] if isinstance(sections, list) else [],
-        "files_collapsed": [
-            str(item) for item in files_collapsed
-        ] if isinstance(files_collapsed, list) else [],
-    }
-
-
 @workspace_app.command("new")
 def workspace_new(
     directory: Path = typer.Argument(..., help="Workspace directory to create (must not already exist)."),
@@ -1267,415 +729,6 @@ def _register_manuscript(
             "Consider reformatting the manuscript so each sentence is on its own line."
         )
     return result
-
-
-_LATEX_INCLUDE_RE = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
-_LATEX_GRAPHICS_RE = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\s*\{([^}]+)\}")
-
-
-def _tex_code_and_comment(line: str) -> tuple[str, str]:
-    """Split at the first unescaped TeX comment marker."""
-    for index, character in enumerate(line):
-        if character != "%":
-            continue
-        backslashes = 0
-        cursor = index - 1
-        while cursor >= 0 and line[cursor] == "\\":
-            backslashes += 1
-            cursor -= 1
-        if backslashes % 2 == 0:
-            return line[:index], line[index:]
-    return line, ""
-
-
-def _expand_latex_source(
-    path: Path,
-    allowed_root: Path,
-    stack: tuple[Path, ...] = (),
-) -> tuple[str, list[Path], list[dict[str, str]]]:
-    """Recursively inline braced input/include commands without crossing the repository."""
-    resolved = path.resolve()
-    try:
-        resolved.relative_to(allowed_root)
-    except ValueError as exc:
-        raise KatzError(
-            "LaTeX include resolves outside the allowed source repository",
-            "unsafe_source_reference",
-            {"path": str(resolved), "allowed_root": str(allowed_root)},
-        ) from exc
-    if resolved in stack:
-        raise KatzError(
-            "Cyclic LaTeX include detected",
-            "conversion_error",
-            {"cycle": [str(item) for item in (*stack, resolved)]},
-        )
-    try:
-        text = resolved.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise KatzError(
-            "Referenced LaTeX input is missing",
-            "missing_source_dependency",
-            {"path": str(resolved), "included_from": str(stack[-1]) if stack else None},
-        ) from exc
-    except UnicodeDecodeError as exc:
-        raise KatzError(
-            "LaTeX source dependency is not UTF-8",
-            "validation_error",
-            {"path": str(resolved), "start": exc.start},
-        ) from exc
-
-    dependencies = [resolved]
-    asset_notes: list[dict[str, str]] = []
-    expanded_lines: list[str] = []
-    for line in text.splitlines(keepends=True):
-        code, comment = _tex_code_and_comment(line)
-
-        def replace_include(match: re.Match[str]) -> str:
-            raw_target = match.group(1).strip()
-            target = (resolved.parent / raw_target)
-            if target.suffix == "":
-                target = target.with_suffix(".tex")
-            nested, nested_dependencies, nested_asset_notes = _expand_latex_source(
-                target,
-                allowed_root,
-                (*stack, resolved),
-            )
-            dependencies.extend(nested_dependencies)
-            asset_notes.extend(nested_asset_notes)
-            try:
-                marker_target = target.resolve().relative_to(allowed_root).as_posix()
-            except ValueError:
-                marker_target = raw_target
-            return (
-                f"\n% katz: begin inlined {marker_target}\n"
-                f"{nested.rstrip()}\n"
-                f"% katz: end inlined {marker_target}\n"
-            )
-
-        code = _LATEX_INCLUDE_RE.sub(replace_include, code)
-
-        def rewrite_graphic(match: re.Match[str]) -> str:
-            raw_target = match.group(1).strip()
-            target = (resolved.parent / raw_target)
-            candidates = [target] if target.suffix else [
-                target.with_suffix(extension)
-                for extension in (".pdf", ".png", ".jpg", ".jpeg", ".svg", ".eps")
-            ]
-            graphic = next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
-            if graphic is None:
-                asset_notes.append({
-                    "code": "missing_graphic",
-                    "path": str(target),
-                    "included_from": str(resolved),
-                    "message": "Referenced graphic was not found; its caption and source path remain in the converted text.",
-                })
-                return match.group(0)
-            try:
-                graphic.relative_to(allowed_root)
-            except ValueError:
-                asset_notes.append({
-                    "code": "external_graphic",
-                    "path": str(graphic),
-                    "included_from": str(resolved),
-                    "message": "Graphic is outside the manuscript repository; Katz treated it as a binary asset, not source text.",
-                })
-            dependencies.append(graphic)
-            return match.group(0).replace(match.group(1), graphic.as_posix())
-
-        expanded_lines.append(_LATEX_GRAPHICS_RE.sub(rewrite_graphic, code) + comment)
-    unique_dependencies = list(dict.fromkeys(dependencies))
-    return "".join(expanded_lines), unique_dependencies, asset_notes
-
-
-def _latex_source_inventory(text: str) -> dict[str, int]:
-    table_wrappers = len(re.findall(r"\\begin\{table\*?\}", text))
-    data_tables = len(re.findall(r"\\begin\{(?:longtable|tabular\*?)\}", text))
-    return {
-        "table_environments": max(table_wrappers, data_tables),
-        "figure_environments": len(re.findall(r"\\begin\{figure\*?\}", text)),
-        "graphics_references": len(_LATEX_GRAPHICS_RE.findall(text)),
-        "equation_environments": len(re.findall(r"\\begin\{(?:equation\*?|align\*?|gather\*?)\}", text)),
-    }
-
-
-def _markdown_table_count(text: str) -> int:
-    pipe_tables = len(re.findall(r"(?m)^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*$", text))
-    html_tables = len(re.findall(r"(?i)<table(?:\s|>)", text))
-    preserved_latex = len(re.findall(r"\\begin\{(?:table\*?|longtable|tabular\*?)\}", text))
-    return pipe_tables + html_tables + preserved_latex
-
-
-def _balanced_brace_group(text: str, start: int) -> tuple[str, int] | None:
-    cursor = start
-    while cursor < len(text) and text[cursor].isspace():
-        cursor += 1
-    if cursor >= len(text) or text[cursor] != "{":
-        return None
-    depth = 0
-    content_start = cursor + 1
-    for index in range(cursor, len(text)):
-        if text[index] == "{" and (index == 0 or text[index - 1] != "\\"):
-            depth += 1
-        elif text[index] == "}" and (index == 0 or text[index - 1] != "\\"):
-            depth -= 1
-            if depth == 0:
-                return text[content_start:index], index + 1
-    return None
-
-
-def _strip_resizebox_wrappers(text: str) -> tuple[str, int]:
-    """Replace resizebox(width, height, body) with body so Pandoc sees nested tables."""
-    stripped = 0
-    search_from = 0
-    while True:
-        match = re.search(r"\\resizebox\*?", text[search_from:])
-        if match is None:
-            break
-        command_start = search_from + match.start()
-        cursor = search_from + match.end()
-        groups: list[str] = []
-        end = cursor
-        for _ in range(3):
-            parsed = _balanced_brace_group(text, end)
-            if parsed is None:
-                break
-            value, end = parsed
-            groups.append(value)
-        if len(groups) != 3:
-            search_from = cursor
-            continue
-        text = text[:command_start] + groups[2] + text[end:]
-        stripped += 1
-        search_from = command_start + len(groups[2])
-    return text, stripped
-
-
-def _restore_latex_front_matter(text: str) -> tuple[str, dict[str, bool]]:
-    """Turn title/maketitle and abstract metadata into explicit document sections."""
-    title_match = re.search(r"\\title\s*", text)
-    title = None
-    if title_match is not None:
-        parsed = _balanced_brace_group(text, title_match.end())
-        if parsed is not None:
-            title, end = parsed
-            text = text[:title_match.start()] + text[end:]
-    title_restored = False
-    if title:
-        heading = f"\\section*{{{title}}}"
-        if re.search(r"\\maketitle\b", text):
-            text = re.sub(r"\\maketitle\b", lambda _: heading, text, count=1)
-        else:
-            text = re.sub(
-                r"(\\begin\{document\})",
-                lambda match: match.group(1) + "\n" + heading,
-                text,
-                count=1,
-            )
-        title_restored = True
-    abstract_pattern = re.compile(r"\\begin\{abstract\}(.*?)\\end\{abstract\}", re.DOTALL)
-    abstract_restored = bool(abstract_pattern.search(text))
-    text = abstract_pattern.sub(
-        lambda match: "\\section*{Abstract}\n" + match.group(1).strip() + "\n",
-        text,
-    )
-    return text, {
-        "title_restored": title_restored,
-        "abstract_restored": abstract_restored,
-    }
-
-
-_LATEX_INLINE_MARKER_RE = re.compile(r"^%\s*katz:\s*(begin|end)\s+inlined\s+(.+?)\s*$")
-_LATEX_HEADING_RE = re.compile(
-    r"^\\((?:sub){0,2}section|chapter|part)\*?(?:\[[^\]]*\])?\{(.+?)\}"
-)
-
-
-def _section_provenance_from_expanded(expanded: str, root_label: str) -> list[dict[str, str]]:
-    """Map each sectioning command in the expanded LaTeX to its source file.
-
-    `_expand_latex_source` brackets every inlined file with
-    `% katz: begin inlined <path>` / `% katz: end inlined <path>` comments, so a
-    stack walk attributes each heading to the file that supplied it.
-    """
-    provenance: list[dict[str, str]] = []
-    file_stack: list[str] = [root_label]
-    for line in expanded.splitlines():
-        stripped = line.strip()
-        marker = _LATEX_INLINE_MARKER_RE.match(stripped)
-        if marker is not None:
-            if marker.group(1) == "begin":
-                file_stack.append(marker.group(2))
-            elif len(file_stack) > 1:
-                file_stack.pop()
-            continue
-        heading = _LATEX_HEADING_RE.match(stripped)
-        if heading is not None:
-            provenance.append({"title": heading.group(2).strip(), "file": file_stack[-1]})
-    return provenance
-
-
-def _flatten_html_anchors(markdown: str) -> tuple[str, int]:
-    """Keep visible cross-reference text while removing raw HTML anchor markup."""
-    count = 0
-
-    def paired(match: re.Match[str]) -> str:
-        nonlocal count
-        count += 1
-        return match.group(1)
-
-    markdown = re.sub(
-        r"<a\b[^>]*>(.*?)</a>",
-        paired,
-        markdown,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    return markdown, count
-
-
-def _prepare_latex(source: Path, output: Path, allow_lossy: bool) -> None:
-    executable = shutil.which("pandoc")
-    if executable is None:
-        raise KatzError(
-            "pandoc is required to prepare LaTeX manuscripts",
-            "dependency_error",
-            {"install": ["brew", "install", "pandoc"], "source": str(source)},
-        )
-    try:
-        repository = repo_root()
-        source.resolve().relative_to(repository)
-        allowed_root = repository
-    except (KatzError, ValueError):
-        allowed_root = source.resolve().parent
-
-    expanded, dependencies, asset_notes = _expand_latex_source(source, allowed_root.resolve())
-    unresolved = []
-    for line_number, line in enumerate(expanded.splitlines(), start=1):
-        code, _ = _tex_code_and_comment(line)
-        if _LATEX_INCLUDE_RE.search(code):
-            unresolved.append(line_number)
-    if unresolved:
-        raise KatzError(
-            "Some LaTeX include commands could not be expanded",
-            "conversion_error",
-            {"lines": unresolved[:20]},
-        )
-
-    inventory = _latex_source_inventory(expanded)
-    expanded, resizebox_wrappers_stripped = _strip_resizebox_wrappers(expanded)
-    expanded, front_matter = _restore_latex_front_matter(expanded)
-    section_provenance = _section_provenance_from_expanded(expanded, source.name)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    media_name = f"{output.stem}_media"
-    destination_media = output.parent / media_name
-    if destination_media.exists():
-        raise KatzError(
-            "Refusing to overwrite an existing LaTeX media directory",
-            "validation_error",
-            {"media_directory": str(destination_media)},
-        )
-    with tempfile.TemporaryDirectory(prefix="katz-latex-") as temp_dir:
-        temp_root = Path(temp_dir)
-        temp_output = temp_root / output.name
-        temp_media = temp_root / media_name
-        completed = subprocess.run(
-            [
-                executable,
-                "--from", "latex",
-                "--to", "gfm",
-                "--wrap=none",
-                "--citeproc",
-                f"--extract-media={temp_media}",
-                "--output", str(temp_output),
-                "-",
-            ],
-            cwd=source.resolve().parent,
-            input=expanded,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if completed.returncode != 0 or not temp_output.is_file():
-            raise KatzError(
-                "Pandoc LaTeX conversion failed",
-                "conversion_error",
-                {"returncode": completed.returncode, "stderr": completed.stderr[-3000:]},
-            )
-        markdown = temp_output.read_text(encoding="utf-8")
-        markdown = markdown.replace(str(temp_media), media_name)
-        markdown, anchors_flattened = _flatten_html_anchors(markdown)
-        table_artifacts = _markdown_table_count(markdown)
-        warnings_list = [note["message"] for note in asset_notes]
-        blocking_warnings = [
-            note["message"] for note in asset_notes if note["code"] == "missing_graphic"
-        ]
-        if inventory["table_environments"] and table_artifacts < inventory["table_environments"]:
-            warning = (
-                f"LaTeX contains {inventory['table_environments']} table environments, "
-                f"but only {table_artifacts} table artifacts were detected after conversion."
-            )
-            warnings_list.append(warning)
-            blocking_warnings.append(warning)
-        if inventory["graphics_references"] and not temp_media.exists():
-            warning = (
-                f"LaTeX references {inventory['graphics_references']} graphics, but Pandoc extracted no media."
-            )
-            warnings_list.append(warning)
-            blocking_warnings.append(warning)
-        if blocking_warnings and not allow_lossy:
-            raise KatzError(
-                "LaTeX structural audit detected possible conversion loss",
-                "lossy_conversion",
-                {
-                    "warnings": warnings_list,
-                    "blocking_warnings": blocking_warnings,
-                    "external_assets": asset_notes,
-                    "source_inventory": inventory,
-                    "hint": "Repair the source/conversion or rerun with --allow-lossy after inspecting the discrepancy.",
-                },
-            )
-        output.write_text(markdown, encoding="utf-8")
-        assets: list[str] = []
-        if temp_media.is_dir():
-            shutil.copytree(temp_media, destination_media)
-            assets = [str(path) for path in destination_media.rglob("*") if path.is_file()]
-
-    headings = sum(bool(re.match(r"^#{1,6}\s+", line)) for line in markdown.splitlines())
-    sidecar = _provenance_sidecar_path(output)
-    write_json(sidecar, {
-        "schema_version": 1,
-        "source_root": str(source),
-        "method": "katz-paper-prepare",
-        "files_collapsed": [str(path) for path in dependencies],
-        "sections": section_provenance,
-    })
-    emit_json({
-        "prepared": True,
-        "source_type": "latex",
-        "source": str(source),
-        "output": str(output),
-        "converter": "pandoc",
-        "dependencies": [str(path) for path in dependencies],
-        "dependency_count": len(dependencies),
-        "section_provenance": section_provenance,
-        "provenance_sidecar": str(sidecar),
-        "source_inventory": inventory,
-        "normalization": {
-            "resizebox_wrappers_stripped": resizebox_wrappers_stripped,
-            "html_anchors_flattened": anchors_flattened,
-            **front_matter,
-            "citeproc": True,
-        },
-        "converted_table_artifacts": table_artifacts,
-        "assets": assets,
-        "external_assets": asset_notes,
-        "headings": headings,
-        "warnings": warnings_list,
-        "lossy_conversion_allowed": allow_lossy,
-        "next_actions": [
-            ["katz", "ventilate", str(output), "--output-path", str(output.with_name(f"{output.stem}_ventilated.md"))],
-        ],
-    })
 
 
 @paper_app.command("prepare")
@@ -3238,17 +2291,6 @@ def issue_patch(
         fail(exc.message, exc.code, exc.details)
 
 
-def _quote_matches(region: str, quoted: str) -> list[tuple[int, int]]:
-    """Return all whitespace-tolerant character spans of a quote in a region."""
-    matches: list[tuple[int, int]] = []
-    pattern = r"\s+".join(re.escape(part) for part in quoted.split())
-    if not pattern:
-        return matches
-    for match in re.finditer(pattern, region):
-        matches.append((match.start(), match.end()))
-    return matches
-
-
 @issue_app.command("carry-forward")
 def issue_carry_forward(
     to: str = typer.Option(..., "--to", help="Target version: registered commit SHA or unambiguous prefix."),
@@ -4425,121 +3467,6 @@ def eval_remove(
         fail(exc.message, exc.code, exc.details)
 
 
-SPOTTER_QUESTION_TEXT = """\
-You are reviewing {{ review_target }} from an academic manuscript.
-
-Issue spotter:
-{{ spotter_instructions }}
-
-Paper context:
-{{ paper_context }}
-
-Manuscript content:
-{{ manuscript_content }}
-
-Apply the spotter carefully. Return found=false when there is no genuine,
-substantive issue. When found=true, quote the exact shortest passage that
-demonstrates the issue and explain why it matters. Before claiming something is
-missing, use the paper context to distinguish “missing from this section” from
-“missing from the paper.” Do not invent text.
-"""
-
-# Appended to the spotter prompt so the model reasons freely first and never has
-# its deliberation discarded by strict schema validation, then commits to a
-# machine-readable verdict Katz can parse. Free-text reasoning avoids the
-# false-negative failure mode where a forced JSON binary suppresses a genuine
-# concern the model was still weighing.
-SPOTTER_VERDICT_SUFFIX = """
-
-Work in two steps.
-First, reason in prose: enumerate candidate issues and, for each, decide whether
-it is genuine and substantive or whether it is addressed, acknowledged, or out of
-scope elsewhere in the paper.
-Then, on the final lines and with nothing after it, output your verdict as a
-single fenced JSON object:
-
-```json
-{"found": true, "title": "short title", "quoted_text": "exact manuscript quotation", "description": "evidence-backed explanation"}
-```
-
-Use found=false with empty strings for title, quoted_text, and description when
-there is no genuine, substantive issue. Emit exactly one such JSON object.
-"""
-
-# Free-text spotter answers reason in prose before the JSON verdict, so
-# issue-finding answers are long. Runs need enough output budget to reach the
-# verdict; the provider default (often ~1000) truncates them into
-# unparseable_answer rows. A ModelList is how EDSL sets this at run time.
-SPOTTER_RECOMMENDED_MAX_TOKENS = 4000
-
-ECONOMICS_REVIEW_QUESTION_TEXT = """\
-Act as a demanding but constructive economics referee. Read the complete manuscript
-attachment and inspect every attached figure before writing the report.
-
-Attachments:
-- Complete manuscript: {{ manuscript }}
-{{ figure_attachment_list }}
-
-Evaluate the paper on the dimensions that apply: contribution and relation to the
-literature; economic question, mechanism, and interpretation; research design and
-identification; estimation and statistical inference; data and measurement; results,
-robustness, and heterogeneity; welfare or policy claims; reproducibility; exposition;
-and whether each table or figure supports the argument. For a methods or software
-paper, adapt these standards rather than pretending it contains an empirical design.
-
-Return a self-contained Markdown referee report with:
-1. Summary and contribution
-2. Overall assessment and recommendation
-3. Major concerns
-4. Minor concerns
-5. Questions for the authors
-6. Figure and table comments
-
-Write each actionable concern under a heading in exactly this form:
-### [major] Short title
-or:
-### [minor] Short title
-
-Under each concern include these labeled fields:
-- Evidence: an exact, shortest quotation from the manuscript, or a figure filename
-- Location: the manuscript section or figure filename
-- Reason: why this matters for the paper's economic argument or evidentiary standard
-- Suggested response: a concrete way the authors could address it
-
-Do not invent quotations, results, citations, tables, or figure contents. If a concern
-cannot be tied to exact evidence in an attachment, present it as a question rather than
-an issue candidate. Distinguish limitations from fatal flaws and acknowledge material
-strengths.
-"""
-
-
-def _edsl_imports() -> tuple[Any, Any, Any, Any]:
-    try:
-        from edsl import Jobs, Scenario, ScenarioList
-        from edsl.questions import QuestionDict
-    except ImportError as exc:
-        raise KatzError(
-            "EDSL is required to create or ingest .ep objects",
-            "dependency_error",
-            {"install": "python -m pip install edsl"},
-        ) from exc
-    return Jobs, Scenario, ScenarioList, QuestionDict
-
-
-def _expected_results_path(output: Path) -> Path:
-    name = output.name
-    if name.endswith(".jobs.ep"):
-        return output.with_name(f"{name[:-8]}-results.ep")
-    return output.with_name("results.ep")
-
-
-def _save_and_verify_ep(value: Any, output: Path) -> dict[str, Any]:
-    """Save a native EDSL object and prove it can be loaded before success."""
-    saved = value.git.save(output)
-    type(value).git.load(saved["path"])
-    return saved
-
-
 @paper_app.command("review-jobs")
 def paper_review_jobs(
     output: Path = typer.Option(Path("jobs.ep"), "--output", "-o"),
@@ -4622,29 +3549,6 @@ def paper_review_jobs(
         fail(exc.message, exc.code, exc.details)
     except Exception as exc:
         fail(str(exc), "edsl_error", {"output": str(output)})
-
-
-JOURNAL_REVIEW_PARSE_PROMPT = """You are converting a human-written journal review into
-candidate Katz issues. Read both attached files: the referee review and the registered
-manuscript. Preserve the reviewer's meaning and do not add criticisms of your own.
-
-Return ONLY a JSON array. Each element must have these string fields:
-- title: a short descriptive title
-- body: the reviewer's concern, with enough context to investigate it
-- quoted_text: the shortest exact quotation from the manuscript that grounds the concern
-- reviewer_comment: the relevant exact quotation from the referee review
-- severity: major, minor, question, or unspecified
-- suggested_response: the reviewer's requested change, or an empty string
-
-Include only actionable comments that can be grounded in an exact manuscript quotation.
-Do not turn praise, editorial logistics, confidential editor-only remarks, or a general
-recommendation into manuscript issues. Split distinct concerns, but do not split one
-concern merely because it spans several sentences. If no grounded actionable comments
-exist, return [].
-
-Registered manuscript: {{ manuscript }}
-Human referee review: {{ journal_review }}
-"""
 
 
 def _review_dir(dest: Path, review_id: str) -> Path:
@@ -5255,225 +4159,6 @@ def spotter_jobs(
         fail(str(exc), "edsl_error", {"output": str(output)})
 
 
-def _result_value(result: Any, group: str, key: str) -> Any:
-    try:
-        value = result[group]
-        if isinstance(value, dict):
-            return value.get(key)
-        return getattr(value, key, None)
-    except (KeyError, TypeError):
-        return None
-
-
-def _answer_is_found(value: Any) -> bool:
-    """Interpret structured EDSL booleans without treating the string 'false' as true."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() == "true"
-    return value == 1
-
-
-def _scenario_key(value: Any) -> str:
-    """Return a stable identity for one Katz review scenario."""
-    scenario = value if isinstance(value, dict) else dict(value)
-    identity = {
-        "katz_commit": scenario.get("katz_commit"),
-        "spotter_name": scenario.get("spotter_name"),
-        "spotter_scope": scenario.get("spotter_scope"),
-        "section_id": scenario.get("section_id"),
-        "byte_start": scenario.get("byte_start"),
-        "byte_end": scenario.get("byte_end"),
-    }
-    return json.dumps(identity, sort_keys=True, default=str)
-
-
-def _coerce_spotter_answer(answer: Any) -> dict[str, Any] | None:
-    """Normalise a spotter answer into a {found,title,quoted_text,description} dict.
-
-    Accepts either a structured dict (legacy QuestionDict path) or a free-text
-    string that reasons in prose and ends with a JSON verdict object (current
-    QuestionFreeText path). Returns None only when no verdict can be recovered,
-    so free-text reasoning is never silently scored as a negative finding.
-    """
-    if isinstance(answer, dict):
-        return answer if "found" in answer else None
-    if not isinstance(answer, str):
-        return None
-    text = answer.strip()
-    if not text:
-        return None
-    candidates: list[str] = []
-    candidates += re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    candidates += re.findall(r"(\{[^{}]*\"found\"[^{}]*\})", text, re.DOTALL)
-    greedy = re.search(r"\{.*\"found\".*\}", text, re.DOTALL)
-    if greedy:
-        candidates.append(greedy.group(0))
-    for candidate in reversed(candidates):
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict) and "found" in parsed:
-            return parsed
-    return None
-
-
-def _spotter_answer_error(answer: Any) -> str | None:
-    if answer is None:
-        return "null_answer"
-    if isinstance(answer, str):
-        coerced = _coerce_spotter_answer(answer)
-        if coerced is None:
-            return "unparseable_answer" if answer.strip() else "null_answer"
-        answer = coerced
-    if not isinstance(answer, dict):
-        return "answer_not_object"
-    found = answer.get("found")
-    valid_found = (
-        isinstance(found, bool)
-        or (isinstance(found, int) and not isinstance(found, bool) and found in {0, 1})
-        or (isinstance(found, str) and found.strip().lower() in {"true", "false"})
-    )
-    if not valid_found:
-        return "invalid_found"
-    if _answer_is_found(found):
-        missing = [
-            key for key in ("title", "quoted_text", "description")
-            if not isinstance(answer.get(key), str) or not answer.get(key, "").strip()
-        ]
-        if missing:
-            return "missing_positive_fields:" + ",".join(missing)
-    return None
-
-
-def _audit_spotter_results(results_path: Path, jobs_path: Path | None = None) -> dict[str, Any]:
-    """Audit structured spotter Results against the originating Jobs when available."""
-    _edsl_imports()
-    from edsl import Jobs, Results
-
-    results = Results.git.load(results_path)
-    expected_keys: list[str] = []
-    if jobs_path is not None:
-        jobs = Jobs.git.load(jobs_path)
-        expected_keys = [_scenario_key(scenario) for scenario in jobs.scenarios]
-
-    rows: list[dict[str, Any]] = []
-    returned_keys: list[str] = []
-    returned_pairs: list[tuple[str, str]] = []
-    valid_positive = valid_negative = 0
-    null_answers = invalid_answers = model_exceptions = 0
-    failure_examples: list[dict[str, Any]] = []
-    models: set[str] = set()
-    for index, result in enumerate(results):
-        scenario = result["scenario"] if isinstance(result["scenario"], dict) else dict(result["scenario"])
-        key = _scenario_key(scenario)
-        returned_keys.append(key)
-        answer = _result_value(result, "answer", "spotter_result")
-        verdict = _coerce_spotter_answer(answer)
-        model = _result_value(result, "model", "model") or _result_value(result, "model", "_model_")
-        model_str = str(model) if model else ""
-        returned_pairs.append((key, model_str))
-        if model:
-            models.add(str(model))
-        exception = _result_value(result, "exceptions", "spotter_result")
-        error = _spotter_answer_error(answer)
-        if exception:
-            model_exceptions += 1
-            error = "model_exception"
-        elif error == "null_answer":
-            null_answers += 1
-        elif error:
-            invalid_answers += 1
-        elif verdict is not None and _answer_is_found(verdict.get("found")):
-            valid_positive += 1
-        else:
-            valid_negative += 1
-        row = {
-            "index": index,
-            "scenario": {
-                "spotter_name": scenario.get("spotter_name"),
-                "section_id": scenario.get("section_id"),
-                "section_title": scenario.get("section_title"),
-            },
-            "valid": error is None,
-            "found": _answer_is_found(verdict.get("found")) if verdict is not None and error is None else None,
-            "error": error,
-            "answer": verdict if verdict is not None else answer,
-        }
-        rows.append(row)
-        if error and len(failure_examples) < 10:
-            failure_examples.append({key: value for key, value in row.items() if key != "answer"})
-
-    expected_set = set(expected_keys)
-    returned_set = set(returned_keys)
-    # A duplicate is the SAME scenario answered twice by the SAME model; distinct
-    # models answering one scenario are separate observations, not duplicates.
-    returned_pair_set = set(returned_pairs)
-    duplicate_rows = len(returned_pairs) - len(returned_pair_set)
-    missing_scenarios = len(expected_set - returned_set) if expected_keys else None
-    unexpected_scenarios = len(returned_set - expected_set) if expected_keys else None
-    expected_count = len(expected_keys) if expected_keys else None
-
-    # Coverage is model-aware: every jobs scenario must be answered by every model
-    # present in the Results. With one model this reduces to one answer/scenario.
-    model_names = models or {""}
-    if expected_keys:
-        expected_pairs = {(k, m) for k in expected_keys for m in model_names}
-        expected_answer_count: int | None = len(expected_pairs)
-        missing_answers: int | None = len(expected_pairs - returned_pair_set)
-    else:
-        expected_answer_count = None
-        missing_answers = None
-
-    valid_count = valid_positive + valid_negative
-    denominator = expected_answer_count if expected_answer_count is not None else len(results)
-    coverage = (valid_count / denominator) if denominator else 0.0
-    complete = bool(
-        expected_answer_count is not None
-        and expected_answer_count > 0
-        and valid_count == expected_answer_count
-        and not duplicate_rows
-        and not missing_scenarios
-        and not unexpected_scenarios
-        and not missing_answers
-        and not null_answers
-        and not invalid_answers
-        and not model_exceptions
-    )
-    return {
-        "contract": "katz.spotter-results-audit.v1",
-        "results_path": str(results_path.resolve()),
-        "jobs_path": str(jobs_path.resolve()) if jobs_path is not None else None,
-        "expected_scenarios": expected_count,
-        "expected_answers": expected_answer_count,
-        "returned_rows": len(results),
-        "valid_answers": valid_count,
-        "valid_positive_findings": valid_positive,
-        "valid_negative_findings": valid_negative,
-        "null_answers": null_answers,
-        "invalid_answers": invalid_answers,
-        "model_exceptions": model_exceptions,
-        "missing_scenarios": missing_scenarios,
-        "missing_answers": missing_answers,
-        "unexpected_scenarios": unexpected_scenarios,
-        "duplicate_rows": duplicate_rows,
-        "coverage": round(coverage, 6),
-        "complete": complete,
-        "models": sorted(models),
-        "failure_examples": failure_examples,
-        "_rows": rows,
-    }
-
-
-def _resolve_audit_jobs(dest: Path, results_path: Path, jobs_path: Path | None) -> Path | None:
-    if jobs_path is not None:
-        return jobs_path
-    run = _latest_packaged_run(dest, results_path)
-    candidate = Path(str(run.get("jobs_path"))) if run and run.get("jobs_path") else None
-    return candidate if candidate is not None and candidate.is_file() else None
-
-
 @results_app.command("audit")
 def results_audit(
     results_path: Path = typer.Argument(..., exists=True, readable=True),
@@ -5556,58 +4241,6 @@ def results_failures(
         fail(exc.message, exc.code, exc.details)
     except Exception as exc:
         fail(str(exc), "edsl_error", {"results": str(results_path)})
-
-
-def _group_positive_findings(positives: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Group positive spotter findings whose anchors overlap for the same spotter.
-
-    Findings from different models that flag the same passage under the same
-    spotter collapse into one group, so ingestion can file one issue with a
-    cross-model agreement score instead of N near-duplicates.
-    """
-    groups: list[list[dict[str, Any]]] = []
-    ordered = sorted(
-        positives,
-        key=lambda finding: (
-            str(finding["spotter"]),
-            finding["byte_start"],
-            finding["byte_end"],
-            str(finding["model"]),
-        ),
-    )
-    for finding in ordered:
-        target = None
-        for group in groups:
-            if group[0]["spotter"] != finding["spotter"]:
-                continue
-            overlaps = any(
-                member["byte_start"] < finding["byte_end"]
-                and finding["byte_start"] < member["byte_end"]
-                for member in group
-            )
-            if overlaps:
-                target = group
-                break
-        if target is None:
-            groups.append([finding])
-        else:
-            target.append(finding)
-    return groups
-
-
-def _locate_quoted_text(region: str, quoted: str) -> tuple[int, int] | None:
-    """Locate an exact quote, allowing runs of whitespace to differ."""
-    direct = region.find(quoted)
-    if direct >= 0:
-        return direct, direct + len(quoted)
-
-    pattern = r"\s+".join(re.escape(part) for part in quoted.split())
-    if not pattern:
-        return None
-    match = re.search(pattern, region)
-    if match is None:
-        return None
-    return match.start(), match.end()
 
 
 @spotter_app.command("models")
