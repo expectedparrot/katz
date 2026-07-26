@@ -483,17 +483,86 @@ Pay special attention to:
     <h3>Enable the built-in review checks</h3>
     <pre><code>katz spotter init-catalog</code></pre>
     <p>Copies the built-in <code>default</code> collection into <code>.katz/spotters/</code>, skipping definitions already present. Use <code>--preset NAME</code> to select another installed collection.</p>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz spotter init-catalog",
+  "data": {
+    "preset": "default",
+    "added": [
+      {"name": "overclaiming", "scope": "section"},
+      {"name": "logical_gaps", "scope": "section"},
+      {"name": "statistical_errors", "scope": "section"},
+      "… 10 more definitions"
+    ],
+    "skipped": []
+  }
+}</code></pre>
     <h3>See which checks are available</h3>
     <pre><code>katz spotter catalog</code></pre>
     <p>Lists spotters available in the repository catalog. Add <code>--scope section</code> or <code>--scope holistic</code> to filter by execution scope.</p>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz spotter catalog",
+  "data": [
+    {
+      "name": "causal_language",
+      "title": "Causal Language",
+      "scope": "section",
+      "has_investigation": true
+    },
+    {
+      "name": "overclaiming",
+      "title": "Overclaiming",
+      "scope": "section",
+      "has_investigation": true
+    },
+    "… 11 more definitions"
+  ]
+}</code></pre>
     <h3>Choose two checks for this paper</h3>
     <pre><code>katz spotter enable causal_language</code></pre>
     <p>The positional name selects <code>.katz/spotters/causal_language.md</code>. Katz copies it into the active version, freezing the instructions used for this review. Optional <code>--commit SHA</code> targets another registered version.</p>
+    <pre><code>{
+  "status": "ok",
+  "command": "katz spotter enable",
+  "data": {
+    "enabled": "causal_language",
+    "already_enabled": false
+  }
+}</code></pre>
     <pre><code>katz spotter enable overclaiming</code></pre>
     <p>Enables the same way, but looks for conclusions whose strength exceeds the available evidence.</p>
+    <pre><code>{
+  "status": "ok",
+  "command": "katz spotter enable",
+  "data": {
+    "enabled": "overclaiming",
+    "already_enabled": false
+  }
+}</code></pre>
     <h3>Confirm what this paper will use</h3>
     <pre><code>katz spotter list</code></pre>
     <p>Lists definitions enabled for the active version. <code>--scope</code> filters the list and <code>--commit</code> selects another version.</p>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz spotter list",
+  "data": [
+    {
+      "name": "causal_language",
+      "title": "Causal Language",
+      "scope": "section",
+      "has_investigation": true,
+      "chars": 1300
+    },
+    {
+      "name": "overclaiming",
+      "title": "Overclaiming",
+      "scope": "section",
+      "has_investigation": true,
+      "chars": 1263
+    }
+  ]
+}</code></pre>
     <h3>Write a paper-specific review check</h3>
     <p>The <code>causal-curve</code> article is a software paper, so we add a lens that asks whether statements about implemented functionality are supported by evidence or a reproducible pointer. Because the claim may appear in one section while support appears elsewhere, this is a <em>holistic</em> spotter.</p>
     <pre><code>katz spotter add \
@@ -507,10 +576,42 @@ Pay special attention to:
       <tr><td><code>--description</code></td><td>Required instructions defining what evidence should trigger the spotter.</td></tr>
       <tr><td><code>--investigation</code></td><td>Optional guidance for confirming or rejecting generated candidates.</td></tr>
     </tbody></table>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz spotter add",
+  "data": {
+    "added": "software_claim_support",
+    "scope": "holistic",
+    "catalog": "$REPO/.katz/spotters/software_claim_support.md"
+  }
+}</code></pre>
     <pre><code>katz spotter catalog-show software_claim_support</code></pre>
     <p>Shows the catalog copy, including parsed scope, title, description, and investigation guidance.</p>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz spotter catalog-show",
+  "data": {
+    "name": "software_claim_support",
+    "scope": "holistic",
+    "title": "Software Claim Support",
+    "description": "Identify concrete claims about implemented estimators, supported outcomes, performance, or validation. Flag a claim only when the paper provides neither evidence nor a specific reproducible pointer to documentation, tests, examples, or cited literature.",
+    "investigation": "Check the complete paper, linked documentation, examples, tests, and the public JOSS review. Confirm only if the support is materially absent; reject if another section or cited artifact supplies it."
+  }
+}</code></pre>
     <pre><code>katz spotter show software_claim_support</code></pre>
     <p>Shows the enabled version copy—the exact instructions that EDSL will use.</p>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz spotter show",
+  "data": {
+    "name": "software_claim_support",
+    "scope": "holistic",
+    "title": "Software Claim Support",
+    "description": "Identify concrete claims about implemented estimators, supported outcomes, performance, or validation.…",
+    "investigation": "Check the complete paper, linked documentation, examples, tests, and the public JOSS review.…",
+    "content": "---\nscope: holistic\n---\n# Software Claim Support\n\n…"
+  }
+}</code></pre>
     <p><code>spotter add</code> slugifies the name, writes <code>.katz/spotters/software_claim_support.md</code>, and auto-enables the same file for the active version. If there is no registered active version yet, it adds only the catalog copy; run <code>katz spotter enable software_claim_support</code> after registration.</p>
     <p>Scope controls both context and cost. Use section scope when the relevant evidence should be present locally; use holistic scope only when the model must reconcile a claim with support elsewhere in the paper. For this example, the two built-ins run by section, while software claim support runs once over the complete manuscript.</p>
   </section>
