@@ -497,6 +497,7 @@ dependencies = [
     { name = "click" },
     { name = "edsl" },
     { name = "pyyaml" },
+    { name = "rich" },
     { name = "typer" },
 ]
 
@@ -511,6 +512,7 @@ requires-dist = [
     { name = "edsl", git = "https://github.com/expectedparrot/edsl.git" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rich", specifier = ">=13.9" },
     { name = "typer", specifier = ">=0.23" },
 ]
 provides-extras = ["test"]

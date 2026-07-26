@@ -1,6 +1,7 @@
 # CLI Quick Reference
 
-All commands emit one JSON envelope by default:
+All commands emit one JSON envelope by default. For a Rich terminal summary,
+place the global option before the command: `katz --human COMMAND ...`.
 
 ```json
 {"status": "ok", "command": "katz paper status", "data": {...}, "warnings": [], "errors": [], "next_steps": []}

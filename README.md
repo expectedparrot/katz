@@ -129,6 +129,13 @@ divide it into reviewable sections, and help choose the checks to apply. Each
 recommended action says whether it changes files, uses the network, or requires
 approval.
 
+Katz returns JSON by default for coding agents. To inspect the same state as a
+formatted terminal summary, place `--human` before the command:
+
+```bash
+katz --human next
+```
+
 When the review reaches a step that may contact a model provider, the coding
 agent will show the proposed scope and cost and ask for approval. After the
 review runs, Katz checks whether every requested check completed, records

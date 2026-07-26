@@ -21,6 +21,7 @@ from katz import __version__
 from .errors import (  # re-exported for back-compat
     KatzError,
     _command_argv,
+    configure_output,
     emit_json,
     fail,
 )
@@ -47,6 +48,18 @@ app.add_typer(report_app, name="report")
 app.add_typer(review_app, name="review")
 app.add_typer(agent_app, name="agent")
 app.add_typer(results_app, name="results")
+
+
+@app.callback()
+def output_options(
+    human: bool = typer.Option(
+        False,
+        "--human",
+        help="Render readable Rich tables and summaries instead of the JSON envelope.",
+    ),
+) -> None:
+    """Configure the CLI output mode."""
+    configure_output(human=human)
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 CATALOG_DIR = Path(__file__).parent / "catalog"
@@ -2346,6 +2359,10 @@ def capabilities() -> None:
                 "id", "purpose", "command", "mutates_state", "requires_network",
                 "requires_user_approval", "reason",
             ],
+        },
+        "output_modes": {
+            "default": "json",
+            "human": "katz --human COMMAND [ARGS]...",
         },
         "ingestion": ["spotter_results", "journal_review_results", "jobs_package", "humanize_results", "narrative_review"],
         "integrations": {

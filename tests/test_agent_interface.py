@@ -91,6 +91,29 @@ def test_every_envelope_has_the_agent_first_shape(tmp_path: Path) -> None:
     assert payload["errors"][0]["code"] == "not_found"
 
 
+def test_human_output_is_readable_and_preserves_failure_exit(tmp_path: Path) -> None:
+    repo, _, _ = setup_repo(tmp_path)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+
+    success = subprocess.run(
+        ["python", "-m", "katz.cli", "--human", "version"],
+        cwd=repo, env=env, text=True, capture_output=True, check=True,
+    )
+    assert "katz version" in success.stdout
+    assert "Package Path" in success.stdout
+    assert '"status"' not in success.stdout
+
+    failure = subprocess.run(
+        ["python", "-m", "katz.cli", "--human", "paper", "status"],
+        cwd=repo, env=env, text=True, capture_output=True, check=False,
+    )
+    assert failure.returncode != 0
+    assert "katz paper status" in failure.stdout
+    assert "not_found" in failure.stdout
+    assert '"errors"' not in failure.stdout
+
+
 def test_top_level_guide_and_next_are_machine_discoverable(tmp_path: Path) -> None:
     repo, _, _ = setup_repo(tmp_path)
 

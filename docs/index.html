@@ -113,6 +113,23 @@
   "next_steps": []
 }</code></pre>
     <p>After completing an authorized action, run <code>katz next</code> again. Candidate manuscript ranking is advisory; ambiguous registration requires confirmation. Every proposed action declares whether it mutates state, uses the network, or requires approval. <code>katz agent status</code> returns the complete state when one recommendation is not enough context.</p>
+    <p>JSON remains the default for agents and shell pipelines. A person can place the global <code>--human</code> option before any command to render the same data as Rich headings, summaries, and tables:</p>
+    <pre><code>katz --human next</code></pre>
+    <pre><code>✓ katz next
+ Schema Version  1.0
+ Phase           katz_setup
+ Ready           no
+
+Action
+ Id                      katz_init
+ Purpose                 Initialize the Katz ledger
+ Mutates State           yes
+ Requires Network        no
+ Requires User Approval  no
+
+Command
+• katz
+• init</code></pre>
     <p>The repository’s <code>AGENTS.md</code> owns working rules. The CLI parser owns exact options and defaults. Captured Katz outputs below come from the worked run and are abbreviated: repeated envelope fields may be omitted, while run-specific counts, commits, issue records, and diagnostics are retained.</p>
   </section>
 

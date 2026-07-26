@@ -19,6 +19,7 @@ classifiers = [
 dependencies = [
   "click>=8.1",
   "edsl @ git+https://github.com/expectedparrot/edsl.git",
+  "rich>=13.9",
   "typer>=0.23",
   "pyyaml>=6.0"
 ]

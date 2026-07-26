@@ -102,7 +102,8 @@ keyed to a specific commit SHA. The active version is stored in `.katz/ACTIVE_VE
 
 ## Output Format
 
-All katz commands emit one JSON envelope to stdout:
+All katz commands emit one JSON envelope to stdout by default. For a Rich
+terminal summary, place the global option first: `katz --human COMMAND ...`.
 
 ```json
 {"status": "ok", "command": "katz paper status", "data": {...}, "warnings": [], "errors": [], "next_steps": []}
