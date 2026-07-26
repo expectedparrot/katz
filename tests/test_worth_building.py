@@ -456,6 +456,63 @@ def test_workspace_new_copies_local_source(tmp_path: Path) -> None:
     assert (workspace / "source" / "original.pdf").is_file()
 
 
+def test_workspace_new_from_source_packages_review(tmp_path: Path) -> None:
+    source = tmp_path / "draft.md"
+    source.write_text(
+        "# Summary\nA claim sentence. Another claim sentence.\n"
+        "# Methods\nA method sentence.\n",
+        encoding="utf-8",
+    )
+    workspace = tmp_path / "ws"
+
+    result = katz(
+        tmp_path, "workspace", "new", str(workspace),
+        "--from", str(source),
+        "--model", "gpt-4.1-mini",
+    )
+    assert result["registration"]["registered"] is True
+    assert result["jobs_ready"] is True
+    assert result["canonical"] == "paper/draft_ventilated.md"
+    assert result["source"]["root"] == "source/draft.md"
+
+    steps = result["steps"]
+    assert steps["ventilate"]["data"]["lines_changed"] == 1
+    assert steps["auto_chunk"]["status"] == "ok"
+    assert steps["spotter_catalog"]["status"] == "ok"
+    assert steps["spotter_enable"]["status"] == "ok"
+    assert steps["spotter_jobs"]["status"] == "ok"
+    assert steps["spotter_jobs"]["data"]["scenario_count"] > 0
+    assert steps["spotter_models"]["data"]["models"] == ["gpt-4.1-mini"]
+    assert (workspace / "jobs.ep").is_file()
+    assert (workspace / "models.ep").is_file()
+
+    # Source provenance was inferred from the --from suffix.
+    status = katz(workspace, "paper", "status")
+    assert status["source_format"] == "markdown"
+    assert status["sections"] == 2
+
+    # The two human checkpoints are explicit: inspect, then authorize ep run.
+    payload = json.loads(_run_katz(
+        tmp_path, "workspace", "new", str(tmp_path / "ws2"), "--from", str(source),
+        check=True,
+    ).stdout)
+    assert any("Inspect" in step for step in payload["next_steps"])
+    assert any("ep run jobs.ep" in step for step in payload["next_steps"])
+    assert "never runs models" in payload["data"]["execution_boundary"]
+
+
+def test_workspace_new_requires_exactly_one_input(tmp_path: Path) -> None:
+    canonical = tmp_path / "prepared.md"
+    canonical.write_text("# Paper\nA sentence.\n", encoding="utf-8")
+    error = katz_fail(
+        tmp_path, "workspace", "new", str(tmp_path / "ws"),
+        "--canonical", str(canonical), "--from", str(canonical),
+    )
+    assert error["code"] == "validation_error"
+    error = katz_fail(tmp_path, "workspace", "new", str(tmp_path / "ws"))
+    assert error["code"] == "validation_error"
+
+
 def test_workspace_new_refuses_existing_directory(tmp_path: Path) -> None:
     canonical = tmp_path / "prepared.md"
     canonical.write_text("# Paper\nA sentence.\n", encoding="utf-8")

@@ -49,12 +49,25 @@ katz workspace new <dir> \
   [--source <path-or-url>] \
   [--source-format markdown] \
   [--source-method workspace-new]
+
+katz workspace new <dir> \
+  --from <paper.pdf|main.tex|draft.md> \
+  [--backend auto|marker|pymupdf] \
+  [--model <model-name>]
 ```
 
-Creates the directory, initializes git, copies the canonical Markdown (plus a
-local `--source` file and sibling images), commits the bundle, initializes
-`.katz/`, and registers the commit as the first active version. Katz does not
-fetch or convert the source; prepare PDF/LaTeX with `katz paper prepare` first.
+With `--canonical`: creates the directory, initializes git, copies the
+prepared Markdown (plus a local `--source` file and sibling images), commits
+the bundle, initializes `.katz/`, and registers the commit as the first
+active version.
+
+With `--from`: additionally converts PDF/LaTeX sources first (`paper prepare`),
+ventilates, then after registration maps sections, enables the recommended
+spotters, and builds `jobs.ep` (plus `models.ep` when `--model` is given).
+Each composed step's envelope is recorded under `steps`; failures are recorded
+and dependent steps skipped rather than aborting the created workspace. The
+command never executes model calls — it stops at the `ep run` boundary, and
+its `next_steps` require inspecting the converted manuscript first.
 
 ---
 

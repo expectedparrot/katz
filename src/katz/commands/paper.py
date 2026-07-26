@@ -274,7 +274,8 @@ def paper_prepare(
                 "paper2md is required to extract PDF text, figures, and tables",
                 "dependency_error",
                 {
-                    "install": ["python", "-m", "pip", "install", "paper2md"],
+                    "install": ["uv", "tool", "install", "paper2md"],
+                    "install_pip": ["python", "-m", "pip", "install", "paper2md"],
                     "fallback": ["pdftotext", str(source), str(output.with_suffix(".txt"))],
                 },
             )

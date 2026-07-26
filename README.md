@@ -23,36 +23,35 @@ Katz can:
 ## Quick start: from a PDF to a review report
 
 Someone sent you a PDF and you need to review it. After [installing Katz and
-`ep`](#install-and-verify) plus `paper2md` (`python -m pip install paper2md`):
+`ep`](#install-and-verify):
 
 ```bash
-katz paper prepare paper.pdf --backend marker --output paper_md/paper.md
-katz ventilate paper_md/paper.md --output-path paper_md/paper_ventilated.md
-# Inspect the conversion against the PDF before continuing: reading order,
-# tables, equations, figures. PDF extraction is lossy.
-katz workspace new pdf-review \
-  --canonical paper_md/paper_ventilated.md \
-  --source paper.pdf --source-format pdf --source-method paper2md-marker
+uv tool install paper2md      # PDF -> Markdown extraction, once
+katz workspace new pdf-review --from paper.pdf --model gpt-4.1-mini
+```
+
+That one command converts the PDF, ventilates the Markdown, builds a Git
+workspace, registers the manuscript, maps its sections, enables the
+recommended review spotters, and packages the model review as `jobs.ep` +
+`models.ep` — recording every step in its response, then stopping at the two
+decisions that stay yours:
+
+```bash
+# 1. Inspect pdf-review/paper/paper_ventilated.md against the PDF
+#    (reading order, tables, equations, figures — extraction is lossy).
 cd pdf-review
-katz paper auto-chunk
-katz spotter init-catalog
-katz spotter enable --recommended
-katz spotter jobs --output jobs.ep
-katz spotter models --model gpt-4.1-mini --output models.ep
-ep auth login    # once; EDSL owns credentials and model execution
+# 2. Authorize the model run (`ep auth login` once beforehand).
 ep run jobs.ep --model_list models.ep --output results.ep
-katz results audit results.ep --jobs jobs.ep
-katz spotter ingest results.ep --jobs jobs.ep
+katz ingest results.ep --apply
 katz report generate --output review.html
 ```
 
-`workspace new` builds a Git workspace around the prepared manuscript and
-registers it as the reviewed version; the generated report links every finding
-to the exact passage that triggered it ([example report](https://expectedparrot.github.io/katz/investigated-review.html)).
-Already have Markdown in a Git repository? Skip the first three commands and
-start with `katz init` + `katz paper register`. The
+The generated report links every finding to the exact passage that triggered
+it ([example report](https://expectedparrot.github.io/katz/investigated-review.html)).
+`--from` also accepts LaTeX and Markdown sources; inside an existing paper
+repository, use `katz init` + `katz paper register` instead. The
 [worked tutorial](https://expectedparrot.github.io/katz/) explains every step
-and artifact.
+and artifact behind the shortcut.
 
 ## Copy and paste into a coding agent
 

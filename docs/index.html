@@ -85,18 +85,12 @@ katz results audit results.ep --jobs jobs.ep
 katz spotter ingest results.ep --jobs jobs.ep
 katz report generate --output review.html</code></pre>
     <h3>Just got a PDF?</h3>
-    <p>The "someone emailed me a PDF and I need to review it" flow needs three commands before the loop above: convert the PDF to Markdown, ventilate it, and let Katz build a Git workspace around the result. No pre-existing repository is required.</p>
-    <pre><code>katz paper prepare paper.pdf --backend marker \
-  --output paper_md/paper.md
-katz ventilate paper_md/paper.md \
-  --output-path paper_md/paper_ventilated.md
-katz workspace new pdf-review \
-  --canonical paper_md/paper_ventilated.md \
-  --source paper.pdf \
-  --source-format pdf \
-  --source-method paper2md-marker
+    <p>The "someone emailed me a PDF and I need to review it" flow compresses to one command. No pre-existing repository is required (PDF extraction needs <code>paper2md</code>: <code>uv tool install paper2md</code>).</p>
+    <pre><code>katz workspace new pdf-review \
+  --from paper.pdf \
+  --model gpt-4.1-mini
 cd pdf-review</code></pre>
-    <p><code>workspace new</code> creates the directory, initializes Git, copies the prepared Markdown with its extracted figures and the original PDF, commits the bundle, and registers it as the first active version — so it replaces the <code>katz init</code> and <code>katz paper register</code> steps. Continue the loop above from <code>katz paper auto-chunk</code>. One non-negotiable caveat: PDF conversion is lossy, so open the PDF and the converted Markdown side by side and check reading order, tables, equations, and figures <em>before</em> any model reviews it — <a href="#paper2md">chapter 3</a> has the inspection checklist.</p>
+    <p><code>--from</code> runs the entire local pipeline: PDF-to-Markdown conversion, ventilation, workspace creation, Git commit, registration, section mapping, the recommended spotter set, and a packaged <code>jobs.ep</code> with a <code>models.ep</code> token budget for the named model. The response records each step's result and then stops — the loop above continues at <code>ep run</code>, because Katz never executes model calls itself. One non-negotiable caveat: PDF conversion is lossy, so open the PDF and <code>paper/paper_ventilated.md</code> side by side and check reading order, tables, equations, and figures <em>before</em> authorizing the run — <a href="#paper2md">chapter 3</a> has the inspection checklist. After the run: <code>katz ingest results.ep --apply</code>, then <code>katz report generate</code>. Chapters 2–7 walk through the longhand equivalent of every step the shortcut takes.</p>
     <p>The rest of this tutorial explains what each artifact is, why each boundary exists, and how to investigate, human-triage, and track findings across revisions. If you have a LaTeX project rather than a PDF, start with <a href="#paper2md">chapter 3</a> — same shape, but Katz reads the LaTeX source tree directly and audits the conversion for dropped tables.</p>
   </section>
 

@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 import sys
+from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, Iterator
 
 import typer
 from rich.console import Console
@@ -13,6 +14,7 @@ from rich.text import Text
 
 
 _HUMAN_OUTPUT: ContextVar[bool] = ContextVar("katz_human_output", default=False)
+_CAPTURE: ContextVar[list[dict[str, Any]] | None] = ContextVar("katz_capture", default=None)
 
 
 class KatzError(Exception):
@@ -26,6 +28,22 @@ class KatzError(Exception):
 def configure_output(*, human: bool) -> None:
     """Select the explicit human renderer for the current CLI invocation."""
     _HUMAN_OUTPUT.set(human)
+
+
+@contextmanager
+def capture_envelopes() -> Iterator[list[dict[str, Any]]]:
+    """Collect emitted envelopes instead of printing them.
+
+    Lets an aggregate command compose existing commands in-process: while
+    active, emit_json appends its payload to the yielded list and fail raises
+    KatzError instead of printing and exiting, so the composing command can
+    record each step's envelope and handle failures itself.
+    """
+    token = _CAPTURE.set([])
+    try:
+        yield _CAPTURE.get()  # type: ignore[misc]
+    finally:
+        _CAPTURE.reset(token)
 
 
 def _cell(value: Any) -> str:
@@ -161,6 +179,10 @@ def emit_json(
         "errors": [],
         "next_steps": next_steps or [],
     }
+    captured = _CAPTURE.get()
+    if captured is not None:
+        captured.append(payload)
+        return
     if _HUMAN_OUTPUT.get():
         _render_human_success(
             payload["command"],
@@ -197,6 +219,10 @@ def fail(
         "errors": [error],
         "next_steps": next_steps or [],
     }
+    captured = _CAPTURE.get()
+    if captured is not None:
+        captured.append(payload)
+        raise KatzError(message, code, details or {})
     if _HUMAN_OUTPUT.get():
         _render_human_error(payload["command"], error, payload["next_steps"])
         raise typer.Exit(1)
