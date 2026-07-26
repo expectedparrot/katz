@@ -15,7 +15,7 @@
     main{margin-left:var(--sidebar)}article{max-width:920px;margin:auto;padding:48px 48px 110px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.025)}header{padding:60px 0 44px;border-bottom:3px solid var(--green)}
     .eyebrow{color:var(--green);font-size:12px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}h1,h2,h3,h4{font-family:var(--serif);font-weight:600;line-height:1.3}h1{max-width:780px;margin:14px 0 20px;font-size:clamp(40px,6vw,61px);letter-spacing:-.025em}h2{margin:78px 0 22px;padding:12px 0 8px;color:var(--green);font-size:32px;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}h3{margin:40px 0 13px;font-size:23px}h4{margin:26px 0 8px;font-size:18px}.dek{max-width:740px;color:var(--muted);font-size:21px;line-height:1.5}.meta{display:flex;flex-wrap:wrap;gap:10px 24px;margin-top:27px;color:var(--muted);font-size:13px}
     p,ul,ol,table,pre{max-width:var(--measure)}a{color:var(--green)}code{padding:.14em .35em;background:#f0f3f0;border-radius:4px;font:88% var(--mono)}pre{position:relative;overflow:auto;margin:18px 0 26px;padding:20px 58px 20px 22px;color:#d8e3db;background:var(--code);border-radius:8px;font:13px/1.55 var(--mono)}pre.wrap{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}pre code{padding:0;color:inherit;background:none}.command-code{border-left:4px solid var(--green);background:#18231d}.syntax-program{color:#7ddc9e;font-weight:700}.syntax-option{color:#e8b86d}.syntax-string{color:#b9d8ff}.copy{position:absolute;top:10px;right:10px;padding:5px 8px;color:#d8ebe0;background:#34453b;border:0;border-radius:5px;font:11px var(--sans);cursor:pointer}.copy:hover{background:var(--green)}
-    .philosophy,.contents{max-width:var(--measure);margin:34px 0 16px;padding:24px 28px;background:#f7f9f7;border:1px solid var(--rule);border-left:4px solid var(--green)}.philosophy h2,.contents h2{margin:0 0 13px;padding:0;color:var(--dark);font-size:23px;border:0}.philosophy ol{margin-bottom:0}.philosophy li{margin-bottom:9px}.contents ol{margin:0;padding-left:1.4rem;columns:2;column-gap:42px}.contents li{break-inside:avoid;margin:0 0 5px}.contents a{text-decoration:none}.contents a:hover{text-decoration:underline}.output-toggle{max-width:var(--measure);margin:12px 0 26px}.output-toggle summary{color:var(--green);font-size:13px;font-weight:700;cursor:pointer}.output-toggle[open] summary{margin-bottom:8px}.output-toggle pre{margin:0}
+    .philosophy,.contents{max-width:var(--measure);margin:34px 0 16px;padding:24px 28px;background:#f7f9f7;border:1px solid var(--rule);border-left:4px solid var(--green)}.philosophy h2,.contents h2{margin:0 0 13px;padding:0;color:var(--dark);font-size:23px;border:0}.philosophy ol{margin-bottom:0}.philosophy li{margin-bottom:9px}.contents ol{margin:0;padding-left:1.4rem;columns:2;column-gap:42px}.contents li{break-inside:avoid;margin:0 0 5px}.contents a{text-decoration:none}.contents a:hover{text-decoration:underline}.mermaid{max-width:var(--measure);margin:24px 0;padding:20px;background:#fff;border:1px solid var(--rule);text-align:center}.output-toggle{max-width:var(--measure);margin:12px 0 26px}.output-toggle summary{color:var(--green);font-size:13px;font-weight:700;cursor:pointer}.output-toggle[open] summary{margin-bottom:8px}.output-toggle pre{margin:0}
     figure.screenshot{max-width:var(--measure);margin:24px 0 30px}figure.screenshot img{display:block;width:100%;height:auto;border:1px solid var(--rule);border-radius:6px}figure.screenshot figcaption{margin-top:9px;color:var(--muted);font-size:13px;line-height:1.5}
     .chapter{font-size:.55em;vertical-align:.35em}table{width:100%;margin:20px 0 28px;border-collapse:collapse;font-size:14px}th,td{padding:11px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--rule)}th{color:#fff;background:var(--green)}tbody tr:nth-child(even){background:#f7f9f7}
     footer{margin-top:85px;padding-top:28px;color:var(--muted);border-top:3px solid var(--green);font-size:13px}
@@ -29,7 +29,7 @@
   <div class="book">Version-aware manuscript review with Katz</div>
   <button class="nav-toggle" type="button" aria-expanded="false">Show tutorial contents</button>
   <div class="part">Foundations</div><a href="#orientation">1. What Katz does</a><a href="#agent-interface">Let an agent discover the workflow</a><a href="#install">2. Prepare the workspace</a><a href="#paper2md">3. Convert a PDF when needed</a><a href="#register">4. Save the exact paper version</a>
-  <div class="part">Review</div><a href="#structure">5. Divide the paper into sections</a><a href="#spotters">6. Choose what to look for</a><a href="#edsl-run">7. Run the automated first pass</a><a href="#one-shot-review">8. Ask for one expert review</a><a href="#journal-review">Import a journal referee report</a><a href="#issues">9. Read the proposed findings</a><a href="#investigate">10. Decide which findings are real</a><a href="#human-triage">11. Ask people to classify findings</a><a href="#github-issues">12. Turn findings into work items</a>
+  <div class="part">Review</div><a href="#structure">5. Divide the paper into sections</a><a href="#spotters">6. Choose what to look for</a><a href="#edsl-run">7. Run the automated first pass</a><a href="#one-shot-review">8. Ask for one expert review</a><a href="#journal-review">Import an existing review</a><a href="#issues">9. Read the proposed findings</a><a href="#investigate">10. Decide which findings are real</a><a href="#human-triage">11. Ask people to classify findings</a><a href="#work-items">12. Turn findings into work items</a>
   <div class="part">Assessment</div><a href="#evaluate">13. Record whole-paper judgments</a><a href="#validate">14. Check the review data</a><a href="#report">15. Build the review website</a><a href="#revision">16. Track fixes in a revision</a>
   <div class="part">Audit trail</div><a href="#authority">Documentation authority</a><a href="#checklist">17. Files created</a>
   <div class="small">A practical tutorial for Katz, the version-aware paper-review ledger.</div>
@@ -49,8 +49,22 @@
       <li><strong>Put the paper into canonical form.</strong> Preserve one reviewable manuscript representation, tie it to a Git commit, and map stable sections and source ranges.</li>
       <li><strong>Use a map-reduce pattern to identify candidate issues.</strong> Map selected spotters across manuscript sections—or the whole paper when global context is required—then reduce the returned results into a deduplicated, source-anchored issue ledger.</li>
       <li><strong>Let an agent triage and investigate the ledger.</strong> The agent reads surrounding context, rejects false positives, merges duplicates, confirms material findings, and records its reasoning. When human judgment is required, it can route the same issue records through an EDSL Humanize survey and apply the returned decisions.</li>
-      <li><strong>Promote confirmed findings into the work system.</strong> With human approval, turn appropriate findings into GitHub issues, preserve their Katz IDs and manuscript evidence, and use those issues to organize the actual revisions or implementation work.</li>
+      <li><strong>Promote confirmed findings into the work system.</strong> With human approval, turn appropriate findings into tracker-neutral work-item drafts, preserve their Katz IDs and manuscript evidence, and then send the approved drafts to the team’s chosen tracker.</li>
     </ol>
+    <pre class="mermaid" aria-label="Golden path through a Katz manuscript review">
+flowchart TD
+    A[Canonical manuscript] --> B[Register version]
+    B --> C[Map spotters across sections]
+    B --> D[Import existing reviews]
+    C --> E[Draft issue ledger]
+    D --> E
+    E --> F[Investigate and deduplicate]
+    F -->|confirm| G[Validated findings]
+    F -->|reject| H[Preserved rejection]
+    G --> I[Review report]
+    G --> J[Approved work-item drafts]
+    J --> K[Team tracker]
+    </pre>
   </section>
 
   <section class="contents" aria-labelledby="contents-heading">
@@ -68,7 +82,7 @@
       <li><a href="#issues">Read the proposed findings</a></li>
       <li><a href="#investigate">Decide which findings are real</a></li>
       <li><a href="#human-triage">Ask people to classify findings</a></li>
-      <li><a href="#github-issues">Turn confirmed findings into work items</a></li>
+      <li><a href="#work-items">Turn confirmed findings into work items</a></li>
       <li><a href="#evaluate">Record whole-paper judgments</a></li>
       <li><a href="#validate">Check the review data</a></li>
       <li><a href="#report">Build the review website</a></li>
@@ -992,6 +1006,35 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
     <h2>Turn a journal referee report into grounded candidate issues</h2>
     <p>Katz can also start from a review written by a person: a journal referee report, an editor letter, or comments returned during a revise-and-resubmit. The original document is preserved beside the registered manuscript version. Katz then creates an EDSL job that gives a parsing model both files and asks it to extract only actionable comments that can be tied to exact manuscript text. The model is a parser here, not another referee: it must preserve the human reviewer’s meaning and add no criticisms of its own.</p>
     <p>For the worked paper, we use its real <a href="https://github.com/openjournals/joss-reviews/issues/2523">public JOSS review thread</a>. The prepared input file <a href="https://github.com/expectedparrot/katz/blob/main/examples/causal-curve-review/joss-human-reviews.md"><code>joss-human-reviews.md</code></a> preserves the substantive comments from Tom Faulkenberry, Alex Jones, and Chelsea Parlett-Pelleriti while omitting bot messages and editorial logistics.</p>
+    <p>More than one existing review can be registered against the same manuscript version. To make that case concrete, suppose a methods colleague separately sent this short report. It is synthetic tutorial material, not part of the JOSS record:</p>
+    <pre><code># Additional methods review (synthetic)
+
+The Methods section says the estimator constructs the final curve through
+binary treatment comparisons, but it does not define the target estimand or
+explain how those comparisons are combined. Please add enough detail for a
+reader to understand the procedure without reconstructing it from the code.
+
+The example dose-response figure should identify the treatment and outcome,
+including units, and the caption should explain what the nested intervals show.</code></pre>
+    <p>Save that text as <code>additional-methods-review.md</code> and register it independently. A separate review ID preserves its provenance and prevents its comments from being attributed to the JOSS reviewers:</p>
+    <pre><code>katz review add additional-methods-review.md \
+  --reviewer "Methods colleague" \
+  --venue "Independent review" \
+  --round "supplemental"</code></pre>
+    <pre class="wrap"><code>{
+  "status": "ok",
+  "command": "katz review add",
+  "data": {
+    "id": "review-7c93b1f4e2a8",
+    "reviewer": "Methods colleague",
+    "venue": "Independent review",
+    "round": "supplemental",
+    "source_name": "additional-methods-review.md",
+    "already_registered": false,
+    "next": "katz review jobs review-7c93b1f4e2a8 --output supplemental-review.jobs.ep"
+  }
+}</code></pre>
+    <p>Build, inspect, run, and ingest that review through the same steps shown below. Its grounded comments enter the same draft issue ledger, where investigation can merge them with overlapping spotter findings or retain them as distinct concerns. The original report remains available even when all of its extracted comments are duplicates.</p>
 
     <h3>Preserve the original report and its provenance</h3>
     <pre><code>katz review add joss-human-reviews.md \
@@ -1786,19 +1829,9 @@ After checking the paper and relevant artifacts, how should this candidate be cl
     <p>Katz does not currently auto-ingest Humanize responses. That is intentional in this example: the applying agent checks issue IDs, validates allowed labels, retains the complete <code>human-triage-results.ep</code>, and makes each ledger mutation explicit. After application, regenerate <code>investigated-review.html</code> to show the human-backed verdicts and suggestions.</p>
   </section>
 
-  <section id="github-issues">
-    <h2><span class="chapter">12</span> Turn confirmed findings into GitHub work items</h2>
-    <p>Once findings are investigated, Katz provides a second agent-readable workflow for turning them into actionable GitHub issues. This is deliberately not a <code>katz github</code> API: Katz supplies the structured review data and composition procedure, while the authenticated <code>gh</code> CLI performs the external write only after the user approves the proposed title and body.</p>
-    <pre><code>katz guide skill create-github-issues</code></pre>
-    <pre><code>---
-name: create-github-issues
-description: Collaboratively create GitHub issues from review findings
----
-
-# Create GitHub Issues
-
-Gather confirmed findings, agree on a grouping, compose complete Markdown,
-show it to the user, and post with gh only after approval.</code></pre>
+  <section id="work-items">
+    <h2><span class="chapter">12</span> Turn confirmed findings into work items</h2>
+    <p>A confirmed Katz finding is evidence, not yet a tracker ticket. Turning it into work means choosing a useful grouping, writing a self-contained title and body, reviewing that draft with the user, and only then handing the approved artifact to whatever system the team uses. Katz supplies the source record and composition procedure; it does not require GitHub, GitLab, Jira, Linear, or any other tracker.</p>
     <h3>Gather the records</h3>
     <p>The workflow starts with confirmed issues and completed evaluations, not raw model candidates:</p>
     <pre><code>katz issue list --state confirmed</code></pre>
@@ -1821,10 +1854,10 @@ show it to the user, and post with gh only after approval.</code></pre>
 }</code></pre>
     <p>Only the candidate investigated above appears in this walkthrough. For every selected ID, load the full record:</p>
     <pre><code>katz issue show ISSUE_CAUSAL_LANGUAGE</code></pre>
-    <p>The full JSON record supplies the manuscript quotation, section and lines, investigation notes, suggestions, status history, and Katz ID. Those fields let a GitHub issue remain understandable without copying the entire review report.</p>
-    <h3>Choose the GitHub issue shape</h3>
+    <p>The full record supplies the manuscript quotation, section and lines, investigation notes, suggestions, status history, and Katz ID. Those fields let a work item remain understandable without copying the entire review report.</p>
+    <h3>Choose the work-item shape</h3>
     <p>The workflow asks whether the user wants one summary issue, one issue per theme, or one issue per confirmed finding. Group by the underlying problem rather than by the spotter that happened to find it; multiple model candidates may describe the same requested change.</p>
-    <p>For this walkthrough, one confirmed finding becomes one proposed GitHub issue:</p>
+    <p>For this walkthrough, one confirmed finding becomes one proposed work item:</p>
     <pre><code>## Problem
 
 The paper's exercise example says that minutes of aerobic exercise
@@ -1843,16 +1876,14 @@ or describe the example as an association.
 - Lines: 39–40
 - Katz issue: ISSUE_CAUSAL_LANGUAGE
 - Review commit: c658feac</code></pre>
-    <p>Show this complete Markdown and title to the user before doing anything on GitHub. The user may change the wording, combine it with another finding, add labels or an assignee, or decide not to post it.</p>
-    <h3>Post only after approval</h3>
-    <p>After approval, save the reviewed body as <code>github-issue.md</code> and use <code>gh</code> against a repository where you are authorized to create issues:</p>
-    <pre><code>gh issue create \
-  --repo OWNER/REPOSITORY \
-  --title "Clarify assumptions behind the causal exercise example" \
-  --body-file github-issue.md</code></pre>
-    <p>On success, <code>gh</code> prints the new issue URL:</p>
-    <pre><code>https://github.com/OWNER/REPOSITORY/issues/NUMBER</code></pre>
-    <p>Do not use the original <code>causal-curve</code> repository for a tutorial post unless its maintainers have asked for the review. Use a repository you control when testing this workflow.</p>
+    <p>Save the reviewed body as <code>work-item.md</code>. The user may change the wording, combine it with another finding, add ownership or priority, or decide that it belongs only in the review report. No external write should happen during composition.</p>
+    <h3>Deliver through the team’s adapter</h3>
+    <table><thead><tr><th>Destination</th><th>Adapter</th><th>What stays invariant</th></tr></thead><tbody>
+      <tr><td>GitHub or GitLab</td><td>Repository CLI or API after approval</td><td>Approved title and Markdown body</td></tr>
+      <tr><td>Jira or Linear</td><td>Workspace API, integration, or manual entry</td><td>Katz ID, review commit, evidence, and requested change</td></tr>
+      <tr><td>Email, document, or internal queue</td><td>Attach or paste the approved artifact</td><td>The same self-contained work-item draft</td></tr>
+    </tbody></table>
+    <p>After delivery, record the destination identifier or URL alongside the Katz issue if the surrounding project has a place for that relationship. Do not mark the scholarly finding resolved merely because a ticket was created; resolution requires checking the resulting manuscript or repository change. For this tutorial, do not post anything to the original <code>causal-curve</code> project unless its maintainers have requested it.</p>
   </section>
 
   <section id="evaluate">
@@ -2067,7 +2098,7 @@ or describe the example as an association.
       <tr><td><code>one-shot-review.jobs.ep</code>, <code>frontier-max.json</code>, and <code>one-shot-review-results.ep</code></td><td>The attached whole manuscript and figures, explicit frontier-model budget, and complete economics-style referee response.</td><td>They preserve the one-shot review separately from the section-level spotter pass and the issues an agent later extracts.</td></tr>
       <tr><td><code>triage-survey.ep</code>, <code>triage-scenarios.ep</code>, and <code>human-triage-results.ep</code></td><td>The human review instrument, issue payloads, and returned decisions.</td><td>They preserve the human judgment layer before an agent applies it to Katz.</td></tr>
       <tr><td><code>review.html</code>, <code>investigated-review.html</code>, and <code>logo.png</code></td><td>Human-readable views before and after investigation, with their source passages.</td><td>They are regenerated outputs, not the underlying review state.</td></tr>
-      <tr><td><code>github-issue.md</code></td><td>An approved, traceable issue body assembled from confirmed findings.</td><td>It is reviewed before <code>gh</code> creates any external issue.</td></tr>
+      <tr><td><code>work-item.md</code></td><td>An approved, tracker-neutral work-item body assembled from confirmed findings.</td><td>It is reviewed before any adapter creates an external record.</td></tr>
       <tr><td><code>.katz/review_data.json</code> and <code>.katz/referee_report.md</code></td><td>A structured synthesis input and the agent-written narrative review.</td><td>The first preserves traceable records; the second communicates the review to authors or an editor.</td></tr>
     </tbody></table>
     <p>A reader should be able to move from a report finding to its issue, from the issue to an exact manuscript version and passage, and from a model-generated issue back to the EDSL result that proposed it.</p>
@@ -2077,7 +2108,9 @@ or describe the example as an association.
     <p>Katz is an MIT-licensed open-source project from <a href="https://www.expectedparrot.com/">Expected Parrot</a>. Source code and issue tracking are available at <a href="https://github.com/expectedparrot/katz">github.com/expectedparrot/katz</a>.</p>
   </footer>
 </article></main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.2/dist/mermaid.min.js"></script>
 <script>
+  mermaid.initialize({startOnLoad:true,theme:'neutral',securityLevel:'strict'});
   const nav=document.querySelector('nav'),toggle=document.querySelector('.nav-toggle'),progress=document.querySelector('#progress');
   toggle.addEventListener('click',()=>{const open=nav.classList.toggle('open');toggle.setAttribute('aria-expanded',String(open));toggle.textContent=open?'Hide tutorial contents':'Show tutorial contents'});
   const humanCell=value=>{
@@ -2157,7 +2190,7 @@ or describe the example as an association.
     code.replaceChildren(fragment);
   });
   document.querySelectorAll('pre').forEach(pre=>{
-    if(pre.classList.contains('command-code'))return;
+    if(pre.classList.contains('command-code')||pre.classList.contains('mermaid'))return;
     let previous=pre.previousElementSibling;
     while(previous&&previous.tagName!=='PRE'&&previous.tagName!=='H2'){
       previous=previous.previousElementSibling;
@@ -2173,7 +2206,7 @@ or describe the example as an association.
       summary.textContent=details.open?'Hide command output':'Show command output';
     });
   });
-  document.querySelectorAll('pre').forEach(pre=>{const button=document.createElement('button');button.className='copy';button.type='button';button.textContent='Copy';button.addEventListener('click',async()=>{await navigator.clipboard.writeText(pre.querySelector('code').innerText);button.textContent='Copied';setTimeout(()=>button.textContent='Copy',1200)});pre.appendChild(button)});
+  document.querySelectorAll('pre:not(.mermaid)').forEach(pre=>{const button=document.createElement('button');button.className='copy';button.type='button';button.textContent='Copy';button.addEventListener('click',async()=>{await navigator.clipboard.writeText(pre.querySelector('code').innerText);button.textContent='Copied';setTimeout(()=>button.textContent='Copy',1200)});pre.appendChild(button)});
   const updateProgress=()=>{const height=document.documentElement.scrollHeight-innerHeight;progress.style.width=(height?scrollY/height*100:0)+'%'};addEventListener('scroll',updateProgress,{passive:true});updateProgress();
 </script>
 </body>
