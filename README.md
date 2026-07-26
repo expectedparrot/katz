@@ -1,9 +1,10 @@
 # katz
 
-Katz makes manuscript review traceable: every finding stays connected to the
-exact paper version and passage that prompted it, remains a draft until it is
-investigated, and contributes to an auditable review rather than a pile of
-disconnected comments.
+Katz is a command-line tool that stores manuscript-review state in a
+repository-local ledger. It registers a canonical manuscript at a Git commit,
+maps its sections and source ranges, records model and human findings as issues
+anchored to those ranges, tracks investigation and resolution history, and
+generates reports from the stored issue state.
 
 ![An economist parrot reviewing a manuscript beside mathematical notation and books](docs/katz-economist-parrot.png)
 

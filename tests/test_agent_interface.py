@@ -114,8 +114,8 @@ def test_package_documentation_roles_are_distinct() -> None:
         if line.strip() and not line.lstrip().startswith("<!--")
     ]
     assert opening[0] == "# katz"
-    assert opening[1].startswith("Katz makes manuscript review traceable:")
-    description_at = readme.index("Katz makes manuscript review traceable:")
+    assert opening[1].startswith("Katz is a command-line tool")
+    description_at = readme.index("Katz is a command-line tool")
     artwork_at = readme.index("![An economist parrot")
     agent_block_at = readme.index("## Copy and paste into a coding agent")
     assert description_at < artwork_at < agent_block_at
