@@ -6,6 +6,18 @@ maps its sections and source ranges, records model and human findings as issues
 anchored to those ranges, tracks investigation and resolution history, and
 generates reports from the stored issue state.
 
+Katz can:
+
+- register Markdown manuscripts and prepared PDF or LaTeX sources against Git
+  versions;
+- run issue spotters across sections in a map-reduce review or apply holistic
+  checks to the complete manuscript;
+- ingest existing referee reports and review results from other sources;
+- cluster overlapping findings and guide investigation against manuscript and
+  repository context;
+- record decisions, suggested fixes, evaluations, and revision history; and
+- generate navigable review reports from the issue ledger.
+
 ![An economist parrot reviewing a manuscript beside mathematical notation and books](docs/katz-economist-parrot.png)
 
 ## Copy and paste into a coding agent
@@ -117,57 +129,22 @@ divide it into reviewable sections, and help choose the checks to apply. Each
 recommended action says whether it changes files, uses the network, or requires
 approval.
 
-Katz prepares model review work but deliberately stops before contacting a
-model provider. At that point it saves a portable `jobs.ep` file containing the
-review questions and manuscript material. Review its summary and estimated
-cost before approving any paid work:
-
-```bash
-ep inspect jobs.ep
-ep jobs cost jobs.ep
-```
-
-After approval, EDSL runs the prepared review and saves the complete responses
-and provenance in `results.ep`:
-
-```bash
-ep run jobs.ep --model_list models.ep --output results.ep
-```
-
-Then return to Katz. It will audit the saved responses, identify missing or
-malformed work, turn supported findings into draft issues, and guide the review
-toward investigation and reporting:
-
-```bash
-katz next
-```
+When the review reaches a step that may contact a model provider, the coding
+agent will show the proposed scope and cost and ask for approval. After the
+review runs, Katz checks whether every requested check completed, records
+supported findings as drafts, and guides their investigation and reporting.
+The reader does not need to manage the intermediate execution files.
 
 The CLI guide and `next` response are authoritative for workflow state. Use
 `katz COMMAND --help` for exact arguments and defaults.
 
-## Principal command groups
-
-- `katz paper` registers and queries canonical manuscripts.
-- `katz spotter` configures review checks and packages section-level Jobs.
-- `katz review` preserves and parses human referee reports.
-- `katz results` audits native EDSL Results.
-- `katz issue` records, clusters, investigates, and resolves findings.
-- `katz eval` records whole-paper judgments.
-- `katz report` generates the review website.
-- `katz guide`, `katz next`, and `katz agent` expose machine-readable workflow
-  guidance.
-
-Every successful or failed command emits exactly one JSON envelope with
-`status`, canonical `command`, `data`, `warnings`, `errors`, and `next_steps`.
-
 ## Central caveat
 
-A locatable quotation proves provenance, not correctness. Model findings and
-parsed human comments are candidates. Audit Results against their originating
-Jobs, distinguish valid negative judgments from missing or malformed answers,
-and investigate candidates in manuscript and repository context before
-confirming them. A zero-issue review is not complete unless the audit reports
-complete valid coverage.
+A locatable quotation identifies where a finding came from; it does not prove
+that the finding is correct. Model findings and parsed human comments remain
+candidates until they are investigated in manuscript and repository context.
+Missing or failed review checks are not negative findings, so an incomplete
+review cannot support a claim that no issues were found.
 
 ## Learn more
 

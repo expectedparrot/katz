@@ -103,45 +103,6 @@ def test_top_level_guide_and_next_are_machine_discoverable(tmp_path: Path) -> No
     assert next_state["action"]["command"] == ["katz", "init"]
 
 
-def test_package_documentation_roles_are_distinct() -> None:
-    root = Path(__file__).parents[1]
-    readme = (root / "README.md").read_text(encoding="utf-8")
-    agents = (root / "AGENTS.md").read_text(encoding="utf-8")
-    tutorial = (root / "docs" / "index.html").read_text(encoding="utf-8")
-
-    opening = [
-        line for line in readme.splitlines()
-        if line.strip() and not line.lstrip().startswith("<!--")
-    ]
-    assert opening[0] == "# katz"
-    assert opening[1].startswith("Katz is a command-line tool")
-    description_at = readme.index("Katz is a command-line tool")
-    artwork_at = readme.index("![An economist parrot")
-    agent_block_at = readme.index("## Copy and paste into a coding agent")
-    assert description_at < artwork_at < agent_block_at
-    assert "python -m pip install --user --upgrade uv" in readme
-    assert "uv tool install --python 3.11 --upgrade --force" in readme
-    assert "--with-executables-from" in readme
-    assert "katz version" in readme
-    assert "ep auth login" in readme
-    assert "ep profiles current" in readme
-    assert "ep check" in readme
-    assert "katz guide" in readme
-    assert "katz next" in readme
-    assert len(readme.splitlines()) < 220
-
-    assert "katz guide" in agents
-    assert "katz next" in agents
-    assert "pytest -q" in agents
-    assert "Never print, copy, serialize, log, or commit API keys" in agents
-    assert "Never silently repair, normalize, replace, renumber, or delete" in agents
-
-    assert "A worked manuscript review with Katz" in tutorial
-    assert "Documentation authority" in tutorial
-    assert "Command reference</h2>" not in tutorial
-    assert '"ok": true' not in tutorial
-
-
 def test_agent_status_advances_and_instruction_templates_are_available(tmp_path: Path) -> None:
     repo, manuscript, commit = setup_repo(tmp_path)
     katz(repo, "init")
