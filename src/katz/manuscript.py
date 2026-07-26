@@ -373,3 +373,48 @@ def _locate_quoted_text(region: str, quoted: str) -> tuple[int, int] | None:
     if match is None:
         return None
     return match.start(), match.end()
+
+
+_DERIVED_LOCATION_FIELDS = ("resolved_text", "line_start", "line_end", "contains_math")
+
+
+def _plan_location_repair(
+    canonical: Path,
+    record_path: Path,
+    location: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a repair plan for one location, or None when it is already hydrated.
+
+    Only derived fields are ever rewritten; byte ranges are never invented or
+    changed, and an invalid byte range is reported as unrepairable.
+    """
+    byte_start = location.get("byte_start")
+    byte_end = location.get("byte_end")
+    if not isinstance(byte_start, int) or not isinstance(byte_end, int):
+        return {
+            "path": str(record_path),
+            "repairable": False,
+            "reason": "location byte_start and byte_end must be integers",
+        }
+    try:
+        resolved = resolve_location(canonical, byte_start, byte_end)
+    except KatzError as exc:
+        return {
+            "path": str(record_path),
+            "repairable": False,
+            "reason": exc.message,
+            "code": exc.code,
+        }
+    stale = [
+        field_name for field_name in _DERIVED_LOCATION_FIELDS
+        if location.get(field_name) != resolved[field_name]
+    ]
+    if not stale:
+        return None
+    return {
+        "path": str(record_path),
+        "repairable": True,
+        "action": "hydrate_location",
+        "fields": stale,
+        "hydrated": {field_name: resolved[field_name] for field_name in stale},
+    }

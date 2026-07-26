@@ -9,26 +9,30 @@ from katz import autokatz
 
 
 def test_load_collection_rejects_invalid_json(tmp_path, monkeypatch) -> None:
+    from katz import definitions
+
     collection = tmp_path / "spotters" / "collections"
     collection.mkdir(parents=True)
     (collection / "broken.json").write_text("{", encoding="utf-8")
-    monkeypatch.setattr(cli, "CATALOG_DIR", tmp_path)
+    monkeypatch.setattr(definitions, "CATALOG_DIR", tmp_path)
 
     with pytest.raises(cli.KatzError) as excinfo:
-        cli._load_collection("spotters", "broken")
+        definitions._load_collection("spotters", "broken")
 
     assert excinfo.value.code == "validation_error"
     assert excinfo.value.details["line"] == 1
 
 
 def test_load_collection_rejects_non_string_arrays(tmp_path, monkeypatch) -> None:
+    from katz import definitions
+
     collection = tmp_path / "evals" / "collections"
     collection.mkdir(parents=True)
     (collection / "bad.json").write_text(json.dumps(["ok", 3]), encoding="utf-8")
-    monkeypatch.setattr(cli, "CATALOG_DIR", tmp_path)
+    monkeypatch.setattr(definitions, "CATALOG_DIR", tmp_path)
 
     with pytest.raises(cli.KatzError) as excinfo:
-        cli._load_collection("evals", "bad")
+        definitions._load_collection("evals", "bad")
 
     assert excinfo.value.code == "validation_error"
     assert "array of strings" in excinfo.value.message
