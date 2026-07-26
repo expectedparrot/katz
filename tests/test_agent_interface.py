@@ -115,9 +115,16 @@ def test_package_documentation_roles_are_distinct() -> None:
     ]
     assert opening[0] == "# katz"
     assert opening[1] == "## Copy and paste into a coding agent"
+    assert "python -m pip install --user --upgrade uv" in readme
+    assert "uv tool install --python 3.11 --upgrade --force" in readme
+    assert "--with-executables-from" in readme
+    assert "katz version" in readme
+    assert "ep auth login" in readme
+    assert "ep profiles current" in readme
+    assert "ep check" in readme
     assert "katz guide" in readme
     assert "katz next" in readme
-    assert len(readme.splitlines()) < 180
+    assert len(readme.splitlines()) < 220
 
     assert "katz guide" in agents
     assert "katz next" in agents
