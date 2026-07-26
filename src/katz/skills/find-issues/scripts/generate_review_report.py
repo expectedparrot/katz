@@ -3,11 +3,13 @@
 
 import json
 import shutil
-import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+
+from katz.issues import _full_issue_record
+from katz.storage import katz_root, load_version, read_json, sha256_file, version_dir
 
 LOGO_PATH = Path(__file__).resolve().parents[3] / "assets" / "logo.png"
 
@@ -19,36 +21,58 @@ def write_report_assets(output):
         shutil.copy2(LOGO_PATH, destination)
 
 
-def run_katz(*args):
-    result = subprocess.run(
-        ["katz", *args], capture_output=True, text=True, check=True
-    )
-    payload = json.loads(result.stdout)
-    if payload.get("status") not in {"ok", "warning"}:
-        raise RuntimeError(payload["errors"])
-    return payload["data"]
+def collect_report_data(commit=None):
+    """Gather everything build_html needs directly from the katz ledger.
 
+    This is the single data-access path shared by `katz report generate` and
+    the standalone `main()`; it never shells out to the katz binary.
+    """
+    resolved, dest, version, pmap, canonical = load_version(commit)
 
-def load_sections(commit):
-    """Read all section records from paper_map.jsonl."""
-    path = Path(f".katz/versions/{commit}/paper_map.jsonl")
-    sections = []
-    with open(path) as f:
-        for line in f:
-            rec = json.loads(line)
-            if rec.get("type") == "section":
-                sections.append(rec)
-    return sections
+    issues = []
+    issues_dir = dest / "issues"
+    if issues_dir.is_dir():
+        for issue_dir in sorted(issues_dir.iterdir()):
+            if issue_dir.is_dir() and (issue_dir / "issue.json").exists():
+                issues.append(_full_issue_record(issue_dir, pmap))
 
-
-def load_manuscript(commit):
-    path = Path(f".katz/versions/{commit}/paper/manuscript.md")
-    return path.read_text()
+    source = version.get("source", {})
+    if not isinstance(source, dict):
+        source = {}
+    audited_run = None
+    if (dest / "runs").is_dir():
+        for path in reversed(sorted((dest / "runs").glob("*.json"))):
+            candidate = read_json(path)
+            if "audit" in candidate:
+                audited_run = candidate
+                break
+    status = {
+        "commit": resolved,
+        "source_format": source.get("format"),
+        "source_root": source.get("root") or "paper",
+        "source_uri": source.get("uri"),
+        "canonical": version.get("canonical"),
+        "sections": len(pmap.sections),
+        "sentences": len(pmap.sentences),
+        "figures": len(pmap.figures),
+        "valid": canonical.exists() and sha256_file(canonical) == version.get("checksum") == pmap.header.get("checksum"),
+        "review_audit": audited_run.get("audit") if audited_run else None,
+    }
+    return {
+        "status": status,
+        "sections": [s for s in pmap.sections if isinstance(s, dict)],
+        "issues": issues,
+        "manuscript": canonical.read_text(encoding="utf-8"),
+        "eval_criteria": load_eval_criteria(resolved),
+        "eval_results": load_eval_results(resolved),
+        "referee_report": load_referee_report(resolved),
+        "images": load_images_as_data_uris(resolved),
+    }
 
 
 def load_eval_criteria(commit):
     """Load enabled eval criteria from the version's evals/ directory."""
-    evals_dir = Path(f".katz/versions/{commit}/evals")
+    evals_dir = version_dir(commit) / "evals"
     criteria = {}
     if evals_dir.is_dir():
         for f in sorted(evals_dir.glob("*.md")):
@@ -82,24 +106,12 @@ def load_eval_criteria(commit):
 
 def load_eval_results(commit):
     """Load eval responses from the version's eval_results/ directory."""
-    results_dir = Path(f".katz/versions/{commit}/eval_results")
+    results_dir = version_dir(commit) / "eval_results"
     results = []
     if results_dir.is_dir():
         for f in sorted(results_dir.glob("*.json")):
             results.append(json.loads(f.read_text(encoding="utf-8")))
     return results
-
-
-def get_full_issues(issue_summaries):
-    """Fetch full records for each issue, merging in section from the summary."""
-    issues = []
-    for summary in issue_summaries:
-        issue = run_katz("issue", "show", summary["id"])
-        # katz issue show omits 'section' from location; carry it from the list
-        section = summary.get("location", {}).get("section", "unknown")
-        issue.setdefault("location", {})["section"] = section
-        issues.append(issue)
-    return issues
 
 
 STATE_COLORS = {
@@ -161,10 +173,10 @@ def resolve_text(manuscript, loc):
 def load_referee_report(commit):
     """Load the narrative referee report if it exists."""
     for name in ("referee_report.md", "REVIEW.md"):
-        path = Path(f".katz/{name}")
+        path = katz_root() / name
         if path.exists():
             return path.read_text(encoding="utf-8")
-        path2 = Path(f".katz/versions/{commit}/{name}")
+        path2 = version_dir(commit) / name
         if path2.exists():
             return path2.read_text(encoding="utf-8")
     return None
@@ -223,7 +235,7 @@ def md_to_html_simple(md_text):
 def load_images_as_data_uris(commit):
     """Load images from the paper directory as base64 data URIs."""
     import base64
-    paper_dir = Path(f".katz/versions/{commit}/paper")
+    paper_dir = version_dir(commit) / "paper"
     images = {}
     image_exts = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                   ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp"}
@@ -1243,23 +1255,15 @@ document.getElementById('manuscript-pane').addEventListener('click', function(e)
 def main():
     output = sys.argv[1] if len(sys.argv) > 1 else ".katz/review.html"
 
-    status = run_katz("paper", "status")
-    commit = status["commit"]
-    sections = load_sections(commit)
-    issue_summaries = run_katz("issue", "list")
-    issues = get_full_issues(issue_summaries)
-
-    manuscript = load_manuscript(commit)
-    eval_criteria = load_eval_criteria(commit)
-    eval_results = load_eval_results(commit)
-    referee_report = load_referee_report(commit)
-    images = load_images_as_data_uris(commit)
-    html = build_html(status, sections, issues, manuscript, eval_criteria, eval_results, referee_report, images)
+    data = collect_report_data()
+    html = build_html(**data)
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(output).write_text(html)
     write_report_assets(output)
-    n_evals = len(eval_results)
-    print(f"Wrote {output} ({len(issues)} issues, {len(sections)} sections, {n_evals} evaluations)")
+    print(
+        f"Wrote {output} ({len(data['issues'])} issues, "
+        f"{len(data['sections'])} sections, {len(data['eval_results'])} evaluations)"
+    )
 
 
 if __name__ == "__main__":

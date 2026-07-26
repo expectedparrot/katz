@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 import importlib.util
-import typer
 import warnings
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Optional
+
+import typer
 
 from ..assets import REPORT_SCRIPT
 from ..errors import KatzError, emit_json, fail
-from ..issues import _full_issue_record
-from ..storage import load_version, read_json, sha256_file
 
 
 report_app = typer.Typer(help="Generate review reports.")
@@ -36,52 +35,9 @@ def report_generate(
 ) -> None:
     """Generate the HTML review report."""
     try:
-        resolved, dest, version, pmap, canonical = load_version(commit)
         report_module = _load_report_module()
-
-        issues = []
-        issues_dir = dest / "issues"
-        if issues_dir.is_dir():
-            for issue_dir in sorted(issues_dir.iterdir()):
-                if issue_dir.is_dir() and (issue_dir / "issue.json").exists():
-                    issues.append(_full_issue_record(issue_dir, pmap))
-
-        eval_criteria = report_module.load_eval_criteria(resolved)
-        eval_results_records = report_module.load_eval_results(resolved)
-        referee_report = report_module.load_referee_report(resolved)
-        images = report_module.load_images_as_data_uris(resolved)
-        source = version.get("source", {})
-        if not isinstance(source, dict):
-            source = {}
-        audited_run = None
-        if (dest / "runs").is_dir():
-            for path in reversed(sorted((dest / "runs").glob("*.json"))):
-                candidate = read_json(path)
-                if "audit" in candidate:
-                    audited_run = candidate
-                    break
-        status = {
-            "commit": resolved,
-            "source_format": source.get("format"),
-            "source_root": source.get("root") or "paper",
-            "source_uri": source.get("uri"),
-            "canonical": version.get("canonical"),
-            "sections": len(pmap.sections),
-            "sentences": len(pmap.sentences),
-            "figures": len(pmap.figures),
-            "valid": canonical.exists() and sha256_file(canonical) == version.get("checksum") == pmap.header.get("checksum"),
-            "review_audit": audited_run.get("audit") if audited_run else None,
-        }
-        html = report_module.build_html(
-            status,
-            pmap.sections,
-            issues,
-            canonical.read_text(encoding="utf-8"),
-            eval_criteria,
-            eval_results_records,
-            referee_report,
-            images,
-        )
+        data = report_module.collect_report_data(commit)
+        html = report_module.build_html(**data)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(html, encoding="utf-8")
         report_module.write_report_assets(output)
@@ -89,10 +45,10 @@ def report_generate(
             {
                 "generated": True,
                 "path": str(output),
-                "commit": resolved,
-                "issues": len(issues),
-                "sections": len(pmap.sections),
-                "evaluations": len(eval_results_records),
+                "commit": data["status"]["commit"],
+                "issues": len(data["issues"]),
+                "sections": len(data["sections"]),
+                "evaluations": len(data["eval_results"]),
             }
         )
     except KatzError as exc:
