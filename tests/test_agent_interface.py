@@ -249,6 +249,28 @@ def test_agent_next_recommends_batch_packets_for_many_drafts(tmp_path: Path) -> 
     ]
 
 
+def test_agent_next_recommends_finalization_when_report_source_exists(tmp_path: Path) -> None:
+    repo, manuscript, _ = setup_repo(tmp_path)
+    katz(repo, "init")
+    katz(repo, "paper", "register", "--canonical", str(manuscript))
+    katz(repo, "paper", "auto-chunk")
+    issue = katz(
+        repo, "issue", "write",
+        "--title", "Confirmed concern", "--body", "Needs revision.",
+        "--byte-start", "0", "--byte-end", "5",
+    )
+    katz(repo, "issue", "investigate", "--id", issue["id"], "--verdict", "confirmed")
+    (repo / "writeup").mkdir()
+    (repo / "writeup" / "report.md").write_text("# Referee Report\n\n## Summary\n\nText.\n")
+
+    status = katz(repo, "agent", "status")
+    assert status["phase"] == "report_finalization"
+    assert status["next_actions"][0]["id"] == "finalize_report"
+    assert status["next_actions"][0]["command"] == [
+        "katz", "report", "finalize", "--report", "writeup/report.md",
+    ]
+
+
 def test_unified_ingest_detects_jobs_without_mutating(tmp_path: Path) -> None:
     repo, manuscript, _ = setup_repo(tmp_path)
     katz(repo, "init")

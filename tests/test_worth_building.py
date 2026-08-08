@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from katz import cli
+from katz.commands.report import _write_outputs_transactionally
 
 
 def git(repo: Path, *args: str) -> str:
@@ -87,6 +88,51 @@ def commit_revision(repo: Path, canonical: Path, text: str, message: str) -> str
     git(repo, "add", "-A")
     git(repo, "commit", "--allow-empty", "-m", message)
     return git(repo, "rev-parse", "HEAD")
+
+
+def setup_finalizable_review(tmp_path: Path) -> tuple[Path, Path, str]:
+    repo, canonical, _ = setup_repo(tmp_path)
+    commit = register_manuscript(repo, canonical)
+    katz(repo, "paper", "auto-chunk")
+    issue = katz(
+        repo, "issue", "write",
+        "--title", "Clarify the estimate",
+        "--body", "The estimate needs context.",
+        "--byte-start", "8", "--byte-end", "20",
+    )
+    katz(
+        repo, "issue", "investigate",
+        "--id", issue["id"], "--verdict", "confirmed",
+        "--notes", "The concern remains after checking the manuscript.",
+    )
+    runs = repo / ".katz" / "versions" / commit / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "complete.json").write_text(json.dumps({
+        "schema_version": 1,
+        "kind": "spotter",
+        "status": "ingested",
+        "timestamp": "2026-08-08T00:00:00Z",
+        "skipped": 0,
+        "audit": {
+            "expected_answers": 1,
+            "valid_answers": 1,
+            "null_answers": 0,
+            "invalid_answers": 0,
+            "model_exceptions": 0,
+            "missing_answers": 0,
+            "coverage": 1.0,
+            "complete": True,
+        },
+    }, indent=2), encoding="utf-8")
+    report = repo / "writeup" / "report.md"
+    report.parent.mkdir()
+    report.write_text(
+        "---\ntitle: Referee Report\n---\n\n"
+        "## Summary\n\nThe paper makes a useful contribution.\n\n"
+        "## Major concerns\n\n- Clarify the reported estimate.\n",
+        encoding="utf-8",
+    )
+    return repo, report, commit
 
 
 # ---------------------------------------------------------------------------
@@ -620,6 +666,136 @@ def test_paper_prepare_latex_writes_provenance_sidecar(tmp_path: Path) -> None:
     sidecar = json.loads(Path(result["provenance_sidecar"]).read_text())
     assert sidecar["sections"] == result["section_provenance"]
     assert any(dep.endswith("model.tex") for dep in sidecar["files_collapsed"])
+
+
+# ---------------------------------------------------------------------------
+# bounded report finalization
+# ---------------------------------------------------------------------------
+
+
+def test_report_finalize_preview_apply_and_replay(tmp_path: Path) -> None:
+    repo, report, _ = setup_finalizable_review(tmp_path)
+    narrative = repo / "writeup" / "report.html"
+    explorer = repo / "writeup" / "issues.html"
+
+    preview = katz(
+        repo, "report", "finalize", "--report", str(report),
+        "--html", str(narrative), "--explorer", str(explorer),
+    )
+    assert preview["mode"] == "preview"
+    assert preview["complete"] is True
+    assert preview["coverage"] == {
+        "requested": 1,
+        "valid": 1,
+        "incomplete": 0,
+        "fraction": 1.0,
+        "parse_failures": 0,
+        "missing_answers": 0,
+        "ingestion_skips": 0,
+        "anchoring_failures": 0,
+        "anchoring_failures_are_upper_bound": False,
+    }
+    assert not narrative.exists()
+    command = preview["next_actions"][0]["command"]
+    assert command[-1] == "--apply"
+
+    applied = katz(repo, *command[1:])
+    assert applied["mode"] == "applied"
+    assert applied["plan_hash"] == preview["plan_hash"]
+    assert applied["complete"] is True
+    assert narrative.is_file() and explorer.is_file()
+    narrative_text = narrative.read_text(encoding="utf-8")
+    assert "Complete reviewed coverage" in narrative_text
+    assert "The paper makes a useful contribution." in narrative_text
+    mtimes = (narrative.stat().st_mtime_ns, explorer.stat().st_mtime_ns)
+
+    replayed = katz(repo, *command[1:])
+    assert replayed["plan_hash"] == preview["plan_hash"], replayed
+    assert replayed["mode"] == "replayed", replayed
+    assert replayed["replayed"] is True
+    assert (narrative.stat().st_mtime_ns, explorer.stat().st_mtime_ns) == mtimes
+
+
+def test_report_finalize_rejects_yaml_title_with_h1(tmp_path: Path) -> None:
+    repo, report, _ = setup_finalizable_review(tmp_path)
+    report.write_text(
+        "---\ntitle: Referee Report\n---\n\n# Referee Report\n\n## Summary\n\nText.\n",
+        encoding="utf-8",
+    )
+    narrative = repo / "writeup" / "report.html"
+    error = katz_fail(
+        repo, "report", "finalize", "--report", str(report),
+        "--html", str(narrative), "--apply",
+    )
+    assert error["code"] == "report_check_failed"
+    assert error["details"]["lines"] == [5]
+    assert "change body H1 headings to H2" in error["details"]["suggestion"]
+    assert not narrative.exists()
+
+
+def test_report_finalize_marks_partial_evidence_incomplete(tmp_path: Path) -> None:
+    repo, report, commit = setup_finalizable_review(tmp_path)
+    run_path = repo / ".katz" / "versions" / commit / "runs" / "complete.json"
+    run = json.loads(run_path.read_text())
+    run["status"] = "partial"
+    run["skipped"] = 2
+    run["audit"].update({"complete": False, "valid_answers": 0, "coverage": 0.0, "invalid_answers": 1})
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+
+    preview_result = _run_katz(
+        repo, "report", "finalize", "--report", str(report), check=True,
+    )
+    envelope = json.loads(preview_result.stdout)
+    assert envelope["status"] == "warning"
+    preview = envelope["data"]
+    assert preview["complete"] is False
+    assert set(preview["coverage"].keys()) >= {"parse_failures", "ingestion_skips", "anchoring_failures"}
+    assert set(envelope["warnings"][0]["reasons"]) >= {"incomplete_model_coverage", "partial_ingestion", "ingestion_skips_present"}
+
+    applied_result = _run_katz(
+        repo, "report", "finalize", "--report", str(report), "--apply", check=True,
+    )
+    applied = json.loads(applied_result.stdout)["data"]
+    assert applied["complete"] is False
+    assert "Incomplete review evidence" in report.with_suffix(".html").read_text(encoding="utf-8")
+
+
+def test_report_finalize_rejects_stale_preview_plan(tmp_path: Path) -> None:
+    repo, report, _ = setup_finalizable_review(tmp_path)
+    preview = katz(repo, "report", "finalize", "--report", str(report))
+    katz(
+        repo, "issue", "write",
+        "--title", "New draft", "--body", "Created after preview.",
+        "--byte-start", "0", "--byte-end", "5",
+    )
+    error = katz_fail(
+        repo, "report", "finalize", "--report", str(report),
+        "--expect-plan", preview["plan_hash"], "--apply",
+    )
+    assert error["code"] == "stale_finalization_plan"
+    assert not report.with_suffix(".html").exists()
+
+
+def test_report_output_transaction_rolls_back_on_publish_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    first = tmp_path / "first.html"
+    second = tmp_path / "second.html"
+    first.write_bytes(b"original")
+    real_replace = os.replace
+    calls = 0
+
+    def fail_second(source: str | Path, destination: str | Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("simulated publish failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr("katz.commands.report.os.replace", fail_second)
+    with pytest.raises(OSError, match="simulated publish failure"):
+        _write_outputs_transactionally({first: b"new first", second: b"new second"})
+
+    assert first.read_bytes() == b"original"
+    assert not second.exists()
 
 
 # ---------------------------------------------------------------------------

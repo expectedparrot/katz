@@ -95,6 +95,7 @@ from .commands.paper import (  # noqa: F401  (re-exported for compatibility)
 from .commands.report import (  # noqa: F401  (re-exported for compatibility)
     _load_report_module,
     report_app,
+    report_finalize,
     report_generate,
 )
 from .commands.results import (  # noqa: F401  (re-exported for compatibility)
@@ -404,7 +405,8 @@ def capabilities() -> None:
                 "katz agent instructions claude", "katz agent schema NAME",
                 "katz capabilities", "katz ingest PATH", "katz issue next",
                 "katz results audit RESULTS --jobs JOBS", "katz results failures RESULTS",
-                "katz issue clusters",
+                "katz issue clusters", "katz issue investigate-batch --input VERDICTS",
+                "katz report finalize --report REPORT",
             ],
             "action_fields": [
                 "id", "purpose", "command", "mutates_state", "requires_network",
@@ -428,6 +430,7 @@ def capabilities() -> None:
             "issue_ingestion_is_idempotent": True,
             "spotter_ingestion_fails_closed": True,
             "zero_issue_requires_complete_coverage": True,
+            "report_finalization_previews_by_default": True,
             "api_keys_are_never_returned": True,
         },
         "schemas": schema_names,

@@ -210,21 +210,19 @@ Eval responses appear in the HTML report alongside issue cards.
 
 **Goal:** Synthesize findings into a structured output.
 
-**HTML report (issue cards + eval responses):**
+Write the narrative report to `writeup/report.md`, then preview its final
+artifact package:
+
 ```bash
-katz report generate --output review.html
-# open review.html in a browser
+katz report finalize \
+  --report writeup/report.md \
+  --html writeup/report.html \
+  --explorer writeup/artifacts/paper_explorer.html
 ```
 
-**Task-local explorer artifact for research-agent workflows:**
-```bash
-katz report generate --output writeup/artifacts/paper_explorer.html
-```
-
-When the review is being delivered through a research-agent task scaffold, use
-the generated Katz HTML as a supporting explorer artifact and write the main
-user-facing review in `writeup/report.md`, then compile that report through
-Gutenberg.
+Fix any source diagnostics, then run the exact hash-locked `--apply` command
+returned in `next_actions`. Katz compiles both standalone HTML files without an
+external renderer and marks incomplete evidence prominently.
 
 **Confirm issue list for summary:**
 ```bash

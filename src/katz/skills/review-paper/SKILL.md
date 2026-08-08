@@ -166,37 +166,15 @@ spotter procedure, allowed verdicts, and exact follow-up command shape.
 
 For each issue, read the manuscript context, determine a verdict (confirmed/rejected/uncertain), and record it with `katz issue investigate` and `katz issue update`.
 
-### 8. Generate issue report / explorer
-
-Run the report generator for the detailed issue-level HTML report:
-
-```bash
-katz report generate
-```
-
-Then open `.katz/review.html` to see the full report with issue cards, investigation verdicts, and manuscript quotes.
-
-For research-agent task workflows, prefer writing the HTML artifact directly
-into the active task tree instead:
-
-```bash
-katz report generate --output writeup/artifacts/paper_explorer.html
-```
-
-This task-local HTML artifact is the standard "paper explorer" companion page
-that the main report can link to.
-
-### 9. Write referee report / task report
+### 8. Write and finalize the referee report
 
 Follow: `katz guide skill referee-report` — synthesize the investigated issues into a narrative referee report.
 
-This produces `.katz/referee_report.md` — a structured, professional review suitable for sharing with authors or an editor.
-
-For research-agent task workflows, do not stop at `.katz/referee_report.md`.
-Use the Katz issue ledger and referee material to write the main user-facing
-task report at `writeup/report.md`, include an HTML-only related-artifacts
-block linking to `artifacts/paper_explorer.html`, and compile the task report
-to `writeup/report.html` and `writeup/report.pdf`.
+Write the main user-facing task report at `writeup/report.md`, then use
+`katz report finalize --report writeup/report.md` for source validation. Run
+the exact `--apply` command it returns to compile the standalone narrative HTML
+and issue explorer together. Do not compile or check these artifacts through a
+separate package.
 
 At each step, read the skill instructions and follow them. Use `katz guide script <path>` to inspect any scripts before running them.
 

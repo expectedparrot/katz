@@ -54,7 +54,7 @@ def guide_root(ctx: typer.Context) -> None:
                 {
                     "stage": "investigate-and-report",
                     "purpose": "Investigate draft findings and generate an evidence-linked report.",
-                    "commands": ["katz issue next", "katz validate", "katz report generate"],
+                    "commands": ["katz issue next", "katz validate", "katz report finalize"],
                 },
             ],
             "execution_boundary": {

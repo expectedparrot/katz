@@ -54,6 +54,8 @@ def version_root(ctx: typer.Context) -> None:
             "repair",
             "workspace_new",
             "multi_model_agreement",
+            "batch_issue_investigation",
+            "report_finalization",
         ],
     })
 

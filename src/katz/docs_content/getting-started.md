@@ -220,27 +220,25 @@ katz issue merge --ids abc123,def456,ghi789 --title "Concise merged title"
 
 ## Step 7 — Generate the Report
 
-Once investigation is complete:
+Once investigation is complete, write the narrative to `writeup/report.md` and
+preview finalization:
 
 ```bash
 katz issue list --state confirmed    # review what's confirmed
-
-katz report generate --output review.html
-# → {"generated": true, "path": "review.html", "issues": 12}
+katz report finalize --report writeup/report.md
 ```
 
-Open `review.html` in a browser to see the full structured report with issue cards,
-investigation verdicts, and manuscript quotes.
-
-In a research-agent task workflow, prefer a task-local explorer path instead of
-an ad hoc top-level file:
+The preview validates headings, ledger state, issue states, and coverage, and
+returns an exact `--apply` command containing a plan hash. Run that command to
+generate the narrative HTML and issue explorer together. To choose explicit
+paths:
 
 ```bash
-katz report generate --output writeup/artifacts/paper_explorer.html
+katz report finalize \
+  --report writeup/report.md \
+  --html writeup/report.html \
+  --explorer writeup/artifacts/paper_explorer.html
 ```
-
-Then use that HTML artifact as a linked companion from the task's
-`writeup/report.md`.
 
 ---
 

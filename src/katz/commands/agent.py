@@ -379,16 +379,42 @@ def _agent_state() -> dict[str, Any]:
         ))
     elif issue_counts.get("confirmed", 0) or issue_counts.get("open", 0):
         phase = "reporting"
-        actions.extend([
-            _agent_action("validate", "Validate anchors and ledger consistency", ["katz", "validate"], mutates_state=False),
-            _agent_action("generate_report", "Generate a human-readable review report", ["katz", "report", "generate", "--output", "review.html"], mutates_state=True),
-        ])
+        report_source = root / "writeup" / "report.md"
+        if report_source.is_file():
+            phase = "report_finalization"
+            actions.append(_agent_action(
+                "finalize_report",
+                "Validate and compile the narrative report and issue explorer as one bounded package",
+                ["katz", "report", "finalize", "--report", "writeup/report.md"],
+                mutates_state=False,
+            ))
+        else:
+            actions.append(_agent_action(
+                "write_referee_report",
+                "Synthesize investigated findings into the narrative report source",
+                ["katz", "guide", "skill", "referee-report"],
+                mutates_state=False,
+            ))
+        actions.append(_agent_action("validate", "Validate anchors and ledger consistency", ["katz", "validate"], mutates_state=False))
     elif latest_run and latest_run.get("status") == "ingested":
         phase = "reporting"
-        actions.extend([
-            _agent_action("validate", "Validate the completed review ledger", ["katz", "validate"], mutates_state=False),
-            _agent_action("generate_report", "Generate a report, including an explicit zero-issue result when applicable", ["katz", "report", "generate", "--output", "review.html"], mutates_state=True),
-        ])
+        report_source = root / "writeup" / "report.md"
+        if report_source.is_file():
+            phase = "report_finalization"
+            actions.append(_agent_action(
+                "finalize_report",
+                "Validate and compile the zero-issue narrative and evidence package",
+                ["katz", "report", "finalize", "--report", "writeup/report.md"],
+                mutates_state=False,
+            ))
+        else:
+            actions.append(_agent_action(
+                "write_referee_report",
+                "Write a narrative that states the audited zero-issue result without overstating coverage",
+                ["katz", "guide", "skill", "referee-report"],
+                mutates_state=False,
+            ))
+        actions.append(_agent_action("validate", "Validate the completed review ledger", ["katz", "validate"], mutates_state=False))
     elif not spotters:
         phase = "review_configuration"
         catalog_names = sorted(path.stem for path in (root / KATZ_DIR / "spotters").glob("*.md"))

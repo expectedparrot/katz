@@ -46,7 +46,8 @@ Read the abstract and introduction from the canonical manuscript to understand t
 
 ### 3. Write the referee report
 
-Write the report as markdown to `.katz/referee_report.md`. Follow this structure:
+Write the report as Markdown to `writeup/report.md`. Follow this structure.
+Use either a YAML `title` or one H1 title, never both; body sections begin at H2.
 
 #### Header
 
@@ -110,4 +111,29 @@ Re-read the report. Check:
 - The report would be useful to the authors, not just the editor
 - The summary accurately reflects the paper (re-read the abstract if needed)
 
-Report the path to the finished file.
+Have Katz validate the complete source and preview every final artifact:
+
+```bash
+katz report finalize \
+  --report writeup/report.md \
+  --html writeup/report.html \
+  --explorer writeup/artifacts/paper_explorer.html
+```
+
+Fix every reported source error. Then execute the exact apply command returned
+in `next_actions`; it includes the preview plan hash and will reject a stale
+ledger or changed report:
+
+```bash
+katz report finalize \
+  --report writeup/report.md \
+  --html writeup/report.html \
+  --explorer writeup/artifacts/paper_explorer.html \
+  --expect-plan <hash> \
+  --apply
+```
+
+Do not run Pandoc or a separate report checker. Katz uses its packaged renderer,
+generates both HTML artifacts transactionally, validates coverage and issue
+states, and marks partial evidence prominently. Report the returned artifact
+paths, hashes, and `complete` value.

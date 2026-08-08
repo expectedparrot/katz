@@ -332,6 +332,17 @@ the run remains partial and reports cannot present it as a complete review.
 katz report generate \
   [--output .katz/review.html] \
   [--commit <sha>]
+
+katz report finalize \
+  --report writeup/report.md \
+  [--html writeup/report.html] \
+  [--explorer writeup/issues.html] \
+  [--expect-plan <preview-plan-hash>] \
+  [--apply]
+# Validate the authored Markdown and preview by default. --apply atomically
+# compiles standalone narrative HTML and the Katz issue explorer. Exact replay
+# does not rewrite unchanged artifacts. Partial evidence remains prominently
+# marked incomplete in both JSON and HTML.
 ```
 
 ---
