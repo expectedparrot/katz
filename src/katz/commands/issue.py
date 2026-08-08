@@ -1,6 +1,7 @@
 """`katz issue` commands: write, triage, investigate, carry forward."""
 from __future__ import annotations
 
+import hashlib
 import json
 import typer
 import uuid
@@ -12,11 +13,15 @@ from ..definitions import _parse_spotter
 from ..errors import KatzError, emit_json, fail
 from ..issues import (
     VALID_STATES,
+    VALID_VERDICTS,
+    _append_investigation,
     _full_issue_record,
     _issue_dir,
     _issue_dir_for_id,
     _issue_duplicate_clusters,
+    _issue_revision_token,
     _load_issue,
+    _validate_investigation,
 )
 from ..manuscript import _quote_matches, resolve_location, section_for_range
 from ..storage import load_version, now_utc, parse_meta, read_json, write_event_json, write_json
@@ -424,31 +429,245 @@ def issue_investigate(
 ) -> None:
     """Append an investigation record to an issue."""
     try:
-        if verdict not in {"confirmed", "rejected", "uncertain"}:
-            raise KatzError("Invalid verdict", "validation_error", {"verdict": verdict})
-        if state is not None and state not in VALID_STATES:
-            raise KatzError("Invalid state", "validation_error", {"state": state, "valid": sorted(VALID_STATES)})
+        _validate_investigation(verdict=verdict, state=state)
         _, dest, _, _, _ = load_version(commit)
         _, issue_dir = _issue_dir_for_id(dest, issue_id)
-        timestamp = now_utc()
-        inv_record: dict[str, Any] = {"verdict": verdict, "timestamp": timestamp}
+        parsed_evidence: Any = evidence
         if evidence is not None:
-            inv_record["evidence"] = parse_meta(evidence) if evidence.startswith("[") or evidence.startswith("{") else evidence
-        if notes is not None:
-            inv_record["notes"] = notes
-        write_event_json(issue_dir / "investigations", inv_record)
+            parsed_evidence = parse_meta(evidence) if evidence.startswith("[") or evidence.startswith("{") else evidence
+        result, _ = _append_investigation(
+            issue_dir,
+            verdict=verdict,
+            evidence=parsed_evidence,
+            notes=notes,
+            state=state,
+        )
+        emit_json(result)
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
 
-        target_state = state or {
-            "confirmed": "confirmed",
-            "rejected": "rejected",
-            "uncertain": "open",
-        }[verdict]
-        reason = notes[:200] if notes else verdict
-        status_record = {"state": target_state, "reason": reason, "timestamp": timestamp}
-        write_event_json(issue_dir / "status", status_record)
-        inv_record["state_updated"] = target_state
 
-        emit_json(inv_record)
+@issue_app.command("investigate-batch")
+def issue_investigate_batch(
+    input_path: Path = typer.Option(..., "--input", exists=True, readable=True),
+    apply: bool = typer.Option(False, "--apply", help="Apply the validated decisions; preview by default."),
+    allow_partial: bool = typer.Option(False, "--allow-partial", help="Apply valid decisions even when other items fail validation."),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+) -> None:
+    """Validate and apply a stale-safe batch of issue investigations."""
+    try:
+        payload = read_json(input_path)
+        if not isinstance(payload, dict):
+            raise KatzError("Batch input must be a JSON object", "validation_error")
+        resolved, dest, _, _, canonical = load_version(commit)
+        request_hash = hashlib.sha256(
+            json.dumps(
+                {"payload": payload, "allow_partial": allow_partial},
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+        batches_dir = dest / "investigation_batches"
+        manifest_path = batches_dir / f"{request_hash}.json"
+        if apply and manifest_path.is_file():
+            manifest = read_json(manifest_path)
+            emit_json({
+                **manifest,
+                "mode": "replayed",
+                "replayed": True,
+                "manifest": str(manifest_path),
+            })
+            return
+
+        global_errors: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        packet_id = payload.get("packet_id")
+        if not isinstance(packet_id, str) or not packet_id:
+            global_errors.append({"code": "invalid_packet", "message": "packet_id must be a non-empty string"})
+        if payload.get("commit") != resolved:
+            global_errors.append({
+                "code": "stale_packet",
+                "message": "Packet commit does not match the active version",
+                "expected": resolved,
+                "actual": payload.get("commit"),
+            })
+        manuscript_hash = hashlib.sha256(canonical.read_bytes()).hexdigest()
+        if payload.get("manuscript_sha256") != manuscript_hash:
+            global_errors.append({
+                "code": "stale_packet",
+                "message": "Packet manuscript hash does not match the registered manuscript",
+                "expected": manuscript_hash,
+                "actual": payload.get("manuscript_sha256"),
+            })
+        decisions = payload.get("decisions")
+        if not isinstance(decisions, list) or not decisions:
+            global_errors.append({"code": "invalid_packet", "message": "decisions must be a non-empty array"})
+            decisions = []
+
+        seen: set[str] = set()
+        valid: list[dict[str, Any]] = []
+        item_results: list[dict[str, Any]] = []
+        for index, decision in enumerate(decisions):
+            item_errors: list[dict[str, Any]] = []
+            if not isinstance(decision, dict):
+                item_errors.append({"code": "invalid_decision", "message": "Decision must be an object"})
+                item_results.append({"index": index, "status": "invalid", "errors": item_errors})
+                continue
+            requested_id = decision.get("id")
+            resolved_id: str | None = None
+            issue_dir: Path | None = None
+            if not isinstance(requested_id, str) or not requested_id:
+                item_errors.append({"code": "invalid_decision", "message": "id must be a non-empty string"})
+            else:
+                try:
+                    resolved_id, issue_dir = _issue_dir_for_id(dest, requested_id)
+                except KatzError as exc:
+                    item_errors.append({"code": exc.code, "message": exc.message, "context": exc.details})
+            if resolved_id is not None:
+                if resolved_id in seen:
+                    item_errors.append({"code": "duplicate_id", "message": "Issue appears more than once in the batch"})
+                seen.add(resolved_id)
+            verdict = decision.get("verdict")
+            state_value = decision.get("state")
+            if state_value is not None and not isinstance(state_value, str):
+                item_errors.append({"code": "invalid_decision", "message": "state must be a string when provided"})
+            if not isinstance(verdict, str):
+                item_errors.append({"code": "invalid_decision", "message": "verdict must be a string"})
+            else:
+                try:
+                    _validate_investigation(verdict=verdict, state=state_value)
+                except KatzError as exc:
+                    item_errors.append({"code": exc.code, "message": exc.message, "context": exc.details})
+            notes = decision.get("notes")
+            if notes is not None and not isinstance(notes, str):
+                item_errors.append({"code": "invalid_decision", "message": "notes must be a string when provided"})
+            if issue_dir is not None:
+                expected_token = _issue_revision_token(issue_dir)
+                if decision.get("revision_token") != expected_token:
+                    item_errors.append({
+                        "code": "stale_issue",
+                        "message": "Issue changed after the packet was generated",
+                        "expected": expected_token,
+                        "actual": decision.get("revision_token"),
+                    })
+            if item_errors:
+                result = {"index": index, "id": requested_id, "status": "invalid", "errors": item_errors}
+                errors.extend({**error, "index": index, "id": requested_id} for error in item_errors)
+                item_results.append(result)
+                continue
+            normalized = {
+                "index": index,
+                "id": resolved_id,
+                "issue_dir": issue_dir,
+                "verdict": verdict,
+                "state": state_value,
+                "notes": notes,
+                "evidence": decision.get("evidence"),
+            }
+            valid.append(normalized)
+            item_results.append({
+                "index": index,
+                "id": resolved_id,
+                "status": "ready",
+                "verdict": verdict,
+                "state": _validate_investigation(verdict=verdict, state=state_value),
+            })
+
+        if global_errors or (errors and not allow_partial):
+            raise KatzError(
+                "Batch validation failed; no issue state was changed",
+                "batch_validation_failed",
+                {
+                    "items": item_results,
+                    "errors": global_errors + errors,
+                    "atomic": not allow_partial,
+                },
+            )
+        if not valid:
+            raise KatzError(
+                "Batch contains no valid decisions",
+                "batch_validation_failed",
+                {"items": item_results, "errors": errors},
+            )
+        counts = {
+            "ready": len(valid),
+            "invalid": len(item_results) - len(valid),
+            "applied": 0,
+        }
+        if not apply:
+            emit_json({
+                "schema_version": AGENT_API_VERSION,
+                "mode": "preview",
+                "packet_id": packet_id,
+                "request_hash": request_hash,
+                "atomic": not allow_partial,
+                "will_mutate": False,
+                "items": item_results,
+                "counts": counts,
+                "next_actions": [
+                    _agent_action(
+                        "apply_batch_investigation",
+                        "Apply the validated investigation events",
+                        ["katz", "issue", "investigate-batch", "--input", str(input_path), "--apply"]
+                        + (["--allow-partial"] if allow_partial else []),
+                        mutates_state=True,
+                    )
+                ],
+            })
+            return
+
+        timestamp = now_utc()
+        created_paths: list[Path] = []
+        applied_items: list[dict[str, Any]] = []
+        try:
+            batches_dir.mkdir(parents=True, exist_ok=True)
+            for item in valid:
+                result, event_paths = _append_investigation(
+                    item["issue_dir"],
+                    verdict=item["verdict"],
+                    evidence=item["evidence"],
+                    notes=item["notes"],
+                    state=item["state"],
+                    timestamp=timestamp,
+                )
+                created_paths.extend(event_paths)
+                applied_items.append({
+                    "index": item["index"],
+                    "id": item["id"],
+                    "status": "applied",
+                    **result,
+                    "events": [str(path.relative_to(dest)) for path in event_paths],
+                })
+            remaining = sum(
+                _load_issue(path.parent).get("state") == "draft"
+                for path in (dest / "issues").glob("*/issue.json")
+            ) if (dest / "issues").is_dir() else 0
+            counts["applied"] = len(applied_items)
+            manifest = {
+                "schema_version": 1,
+                "packet_id": packet_id,
+                "request_hash": request_hash,
+                "commit": resolved,
+                "timestamp": timestamp,
+                "atomic": not allow_partial,
+                "status": "partial" if errors else "applied",
+                "items": applied_items + [item for item in item_results if item["status"] == "invalid"],
+                "counts": counts,
+                "remaining_draft": remaining,
+            }
+            write_json(manifest_path, manifest)
+        except Exception:
+            for path in reversed(created_paths):
+                path.unlink(missing_ok=True)
+            manifest_path.unlink(missing_ok=True)
+            raise
+        emit_json({
+            **manifest,
+            "mode": "applied",
+            "replayed": False,
+            "manifest": str(manifest_path),
+        })
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 
@@ -567,9 +786,11 @@ def issue_next(
     state: str = typer.Option("draft", "--state"),
     context_lines: int = typer.Option(3, "--context-lines", min=0, max=20),
     view: str = typer.Option("full", "--view", help="full or compact"),
+    limit: int = typer.Option(1, "--limit", min=1, max=100),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Also write the packet data as JSON."),
     commit: Optional[str] = typer.Option(None, "--commit"),
 ) -> None:
-    """Return one complete, deterministic issue investigation packet."""
+    """Return a bounded, deterministic issue investigation packet."""
     try:
         if state not in VALID_STATES:
             raise KatzError("Invalid issue state", "validation_error", {"state": state})
@@ -583,78 +804,164 @@ def issue_next(
                 record = _load_issue(path.parent)
                 if record.get("state") == state:
                     candidates.append((str(record.get("created_at", "")), path.parent))
+        if output is not None and output.exists():
+            raise KatzError("Output already exists", "validation_error", {"output": str(output)})
         if not candidates:
-            emit_json({
+            packet = {
                 "schema_version": AGENT_API_VERSION,
                 "commit": resolved,
                 "state": state,
                 "issue": None,
+                "issues": [],
                 "remaining": 0,
                 "next_actions": [],
-            })
+            }
+            if output is not None:
+                write_json(output, packet)
+                packet["output"] = str(output)
+            emit_json(packet)
             return
         candidates.sort(key=lambda item: (item[0], item[1].name))
-        issue_dir = candidates[0][1]
-        issue = _full_issue_record(issue_dir, pmap)
-        location = issue.get("location", {})
         manuscript_lines = canonical.read_text(encoding="utf-8").splitlines()
-        line_start = int(location.get("line_start") or 1)
-        line_end = int(location.get("line_end") or line_start)
-        context_start = max(1, line_start - context_lines)
-        context_end = min(len(manuscript_lines), line_end + context_lines)
-        context = "\n".join(
-            f"{number}: {manuscript_lines[number - 1]}"
-            for number in range(context_start, context_end + 1)
-        )
-        spotter_instructions = None
-        spotter_name = issue.get("spotter")
-        if spotter_name:
-            spotter_path = dest / "spotters" / f"{spotter_name}.md"
-            if spotter_path.is_file():
-                spotter_instructions = _parse_spotter(spotter_path.read_text(encoding="utf-8"))
-        issue_id = str(issue["id"])
-        if view == "compact":
-            issue = {
-                "id": issue.get("id"),
-                "state": issue.get("state"),
-                "title": issue.get("title"),
-                "body": issue.get("body"),
-                "spotter": issue.get("spotter"),
-                "location": issue.get("location"),
+        clusters = _issue_duplicate_clusters(dest)
+        cluster_by_issue: dict[str, dict[str, Any]] = {}
+        for cluster in clusters:
+            cluster_id = hashlib.sha256(
+                "\n".join(sorted(cluster["issue_ids"])).encode("utf-8")
+            ).hexdigest()[:16]
+            summary = {
+                "id": cluster_id,
+                "issue_ids": cluster["issue_ids"],
+                "titles": cluster["titles"],
+                "primary_issue_id": cluster["primary_issue_id"],
             }
+            for member_id in cluster["issue_ids"]:
+                cluster_by_issue[member_id] = summary
+
+        entries: list[dict[str, Any]] = []
+        for _, issue_dir in candidates[:limit]:
+            issue = _full_issue_record(issue_dir, pmap)
+            location = issue.get("location", {})
+            line_start = int(location.get("line_start") or 1)
+            line_end = int(location.get("line_end") or line_start)
+            context_start = max(1, line_start - context_lines)
+            context_end = min(len(manuscript_lines), line_end + context_lines)
+            context = "\n".join(
+                f"{number}: {manuscript_lines[number - 1]}"
+                for number in range(context_start, context_end + 1)
+            )
             spotter_instructions = None
-        emit_json({
-            "schema_version": AGENT_API_VERSION,
+            spotter_name = issue.get("spotter")
+            if spotter_name:
+                spotter_path = dest / "spotters" / f"{spotter_name}.md"
+                if spotter_path.is_file():
+                    spotter_instructions = _parse_spotter(spotter_path.read_text(encoding="utf-8"))
+            issue_id = str(issue["id"])
+            if view == "compact":
+                issue = {
+                    "id": issue.get("id"),
+                    "state": issue.get("state"),
+                    "title": issue.get("title"),
+                    "body": issue.get("body"),
+                    "spotter": issue.get("spotter"),
+                    "location": issue.get("location"),
+                }
+                spotter_instructions = None
+            entries.append({
+                "issue": issue,
+                "revision_token": _issue_revision_token(issue_dir),
+                "manuscript_context": {
+                    "line_start": context_start,
+                    "line_end": context_end,
+                    "numbered_text": context,
+                },
+                "review_procedure": spotter_instructions,
+                "duplicate_cluster": cluster_by_issue.get(issue_id),
+            })
+
+        manuscript_hash = hashlib.sha256(canonical.read_bytes()).hexdigest()
+        packet_seed = {
             "commit": resolved,
+            "manuscript_sha256": manuscript_hash,
             "state": state,
-            "issue": issue,
-            "manuscript_context": {
-                "line_start": context_start,
-                "line_end": context_end,
-                "numbered_text": context,
-            },
-            "review_procedure": spotter_instructions,
+            "issues": [
+                {"id": entry["issue"]["id"], "revision_token": entry["revision_token"]}
+                for entry in entries
+            ],
+        }
+        packet_id = hashlib.sha256(
+            json.dumps(packet_seed, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        packet = {
+            "schema_version": AGENT_API_VERSION,
+            "packet_schema_version": 1,
+            "packet_id": packet_id,
+            "commit": resolved,
+            "manuscript_sha256": manuscript_hash,
+            "state": state,
+            "issues": entries,
+            # Preserve the original single-item contract for existing agents.
+            "issue": entries[0]["issue"],
+            "manuscript_context": entries[0]["manuscript_context"],
+            "review_procedure": entries[0]["review_procedure"],
+            "revision_token": entries[0]["revision_token"],
+            "duplicate_cluster": entries[0]["duplicate_cluster"],
+            "returned": len(entries),
             "remaining": len(candidates),
-            "allowed_verdicts": ["confirmed", "rejected", "uncertain"],
+            "allowed_verdicts": sorted(VALID_VERDICTS),
+            "response_schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "required": ["packet_id", "commit", "manuscript_sha256", "decisions"],
+                "properties": {
+                    "packet_id": {"const": packet_id},
+                    "commit": {"const": resolved},
+                    "manuscript_sha256": {"const": manuscript_hash},
+                    "decisions": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "required": ["id", "revision_token", "verdict", "notes"],
+                            "properties": {
+                                "id": {"type": "string"},
+                                "revision_token": {"type": "string"},
+                                "verdict": {"enum": sorted(VALID_VERDICTS)},
+                                "notes": {"type": "string"},
+                                "evidence": {},
+                                "state": {"enum": sorted(VALID_STATES)},
+                            },
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "additionalProperties": False,
+            },
             "next_actions": [
                 _agent_action(
-                    "record_investigation",
-                    "Record an evidence-backed verdict after checking the manuscript and related artifacts",
-                    [
-                        "katz", "issue", "investigate", "--id", issue_id[:12],
-                        "--verdict", "<confirmed|rejected|uncertain>",
-                        "--notes", "<evidence-backed notes>",
-                    ],
+                    "record_investigations" if len(entries) > 1 else "record_investigation",
+                    "Validate and record evidence-backed verdicts",
+                    (["katz", "issue", "investigate-batch", "--input", "verdicts.json"]
+                     if len(entries) > 1 else [
+                         "katz", "issue", "investigate", "--id", str(entries[0]["issue"]["id"])[:12],
+                         "--verdict", "<confirmed|rejected|uncertain>",
+                         "--notes", "<evidence-backed notes>",
+                     ]),
                     mutates_state=True,
                 ),
-                _agent_action(
-                    "show_issue",
-                    "Re-read the complete issue record",
-                    ["katz", "issue", "show", issue_id[:12]],
-                    mutates_state=False,
-                ),
             ],
-        })
+        }
+        if len(entries) == 1:
+            packet["next_actions"].append(_agent_action(
+                "show_issue",
+                "Re-read the complete issue record",
+                ["katz", "issue", "show", str(entries[0]["issue"]["id"])[:12]],
+                mutates_state=False,
+            ))
+        if output is not None:
+            write_json(output, packet)
+            packet["output"] = str(output)
+        emit_json(packet)
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)
 

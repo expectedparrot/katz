@@ -201,6 +201,20 @@ katz issue investigate \
   [--evidence "..."] \
   [--state confirmed]        # also update state in same call
 
+katz issue next \
+  [--limit 10] \
+  [--output investigation-packet.json]
+# Return deterministic, stale-safe packets with manuscript context, issue
+# revision tokens, and duplicate-cluster metadata. The default limit is 1.
+
+katz issue investigate-batch \
+  --input verdicts.json \
+  [--apply] \
+  [--allow-partial]
+# Preview and validate by default. --apply writes the same per-issue events as
+# the single-item command. Atomic validation is the default; exact replay is a
+# successful no-op. --allow-partial applies only decisions that validate.
+
 katz issue suggest \
   --id <id-prefix> \
   --text "Suggested fix..."

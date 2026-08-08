@@ -365,8 +365,17 @@ def _agent_state() -> dict[str, Any]:
         ))
     elif issue_counts.get("draft", 0):
         phase = "investigation"
+        draft_count = issue_counts["draft"]
+        packet_command = ["katz", "issue", "next"]
+        purpose = "Get the next complete investigation packet"
+        if draft_count > 5:
+            packet_command += ["--limit", "10", "--output", "investigation-packet.json"]
+            purpose = "Get a bounded batch investigation packet to reduce serial review work"
         actions.append(_agent_action(
-            "next_issue", "Get the next complete investigation packet", ["katz", "issue", "next"], mutates_state=False
+            "next_issue_batch" if draft_count > 5 else "next_issue",
+            purpose,
+            packet_command,
+            mutates_state=False,
         ))
     elif issue_counts.get("confirmed", 0) or issue_counts.get("open", 0):
         phase = "reporting"

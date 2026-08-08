@@ -1,13 +1,14 @@
 """Issue record model: directories, state, edits, history, clusters."""
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any, List, Optional
 
 from .errors import KatzError
 from .manuscript import section_for_range
-from .storage import PaperMap, read_json
+from .storage import PaperMap, now_utc, read_json, write_event_json
 
 
 def _issue_count(dest: Path) -> int:
@@ -18,6 +19,7 @@ def _issue_count(dest: Path) -> int:
 
 
 VALID_STATES = {"draft", "open", "confirmed", "rejected", "resolved", "wontfix"}
+VALID_VERDICTS = {"confirmed", "rejected", "uncertain"}
 
 
 def _issue_dir(dest: Path, issue_id: str) -> Path:
@@ -122,6 +124,71 @@ def _full_issue_record(issue_dir: Path, pmap: PaperMap) -> dict[str, Any]:
     record["suggestions"] = [read_json(f) for f in sorted(suggestions_dir.glob("*.json"))] if suggestions_dir.is_dir() else []
     record["edits"] = _list_issue_edits(issue_dir)
     return record
+
+
+def _issue_revision_token(issue_dir: Path) -> str:
+    """Hash all durable issue state that can affect an investigation decision."""
+    digest = hashlib.sha256()
+    for path in sorted(issue_dir.rglob("*.json")):
+        digest.update(str(path.relative_to(issue_dir)).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _validate_investigation(
+    *,
+    verdict: str,
+    state: str | None,
+) -> str:
+    if verdict not in VALID_VERDICTS:
+        raise KatzError(
+            "Invalid verdict",
+            "validation_error",
+            {"verdict": verdict, "valid": sorted(VALID_VERDICTS)},
+        )
+    if state is not None and state not in VALID_STATES:
+        raise KatzError(
+            "Invalid state",
+            "validation_error",
+            {"state": state, "valid": sorted(VALID_STATES)},
+        )
+    return state or {
+        "confirmed": "confirmed",
+        "rejected": "rejected",
+        "uncertain": "open",
+    }[verdict]
+
+
+def _append_investigation(
+    issue_dir: Path,
+    *,
+    verdict: str,
+    evidence: Any = None,
+    notes: str | None = None,
+    state: str | None = None,
+    timestamp: str | None = None,
+) -> tuple[dict[str, Any], list[Path]]:
+    """Append the canonical investigation and status events for one issue."""
+    target_state = _validate_investigation(verdict=verdict, state=state)
+    event_timestamp = timestamp or now_utc()
+    inv_record: dict[str, Any] = {"verdict": verdict, "timestamp": event_timestamp}
+    if evidence is not None:
+        inv_record["evidence"] = evidence
+    if notes is not None:
+        inv_record["notes"] = notes
+    created = [write_event_json(issue_dir / "investigations", inv_record)]
+    reason = notes[:200] if notes else verdict
+    status_record = {"state": target_state, "reason": reason, "timestamp": event_timestamp}
+    try:
+        created.append(write_event_json(issue_dir / "status", status_record))
+    except Exception:
+        created[0].unlink(missing_ok=True)
+        raise
+    result = dict(inv_record)
+    result["state_updated"] = target_state
+    return result, created
 
 
 def _issue_duplicate_clusters(dest: Path) -> list[dict[str, Any]]:

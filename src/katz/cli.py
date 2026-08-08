@@ -66,6 +66,7 @@ from .commands.issue import (  # noqa: F401  (re-exported for compatibility)
     issue_carry_forward,
     issue_clusters,
     issue_investigate,
+    issue_investigate_batch,
     issue_list,
     issue_merge,
     issue_merge_suggest,
@@ -718,13 +719,14 @@ def ingest(
     allow_partial: bool = typer.Option(False, "--allow-partial", help="Ingest valid rows despite incomplete coverage; records a partial run."),
     state: str = typer.Option("draft", "--state"),
     commit: Optional[str] = typer.Option(None, "--commit"),
+    jobs: Optional[Path] = typer.Option(None, "--jobs", exists=True, readable=True),
 ) -> None:
     """Detect review artifacts safely; preview by default and mutate only with --apply."""
     try:
         detection = _detect_ingest_source(path)
         if detection.get("kind") == "spotter_results":
             _, dest, _, _, _ = load_version(commit)
-            jobs_path = _resolve_audit_jobs(dest, path, None)
+            jobs_path = _resolve_audit_jobs(dest, path, jobs)
             audit = _audit_spotter_results(path, jobs_path)
             audit.pop("_rows", None)
             detection["audit"] = audit
@@ -742,6 +744,7 @@ def ingest(
                     "apply_ingestion",
                     "Apply the detected, version-checked ingestion contract",
                     ["katz", "ingest", str(path), "--apply", "--state", state]
+                    + (["--jobs", str(jobs)] if jobs is not None else [])
                     + (["--allow-partial"] if allow_partial else []),
                     mutates_state=True,
                 )
@@ -764,7 +767,16 @@ def ingest(
                 {"detection": detection},
             )
         if detection["kind"] == "spotter_results":
-            spotter_ingest(path, state=state, commit=commit, allow_partial=allow_partial)
+            # Pass every option explicitly when delegating to a Typer command.
+            # Otherwise omitted parameters retain their OptionInfo declaration
+            # objects, which must never reach business or path-handling code.
+            spotter_ingest(
+                path,
+                state=state,
+                commit=commit,
+                jobs=jobs,
+                allow_partial=allow_partial,
+            )
             return
         if detection["kind"] == "journal_review_results":
             review_ingest(path, state=state, commit=commit)

@@ -690,6 +690,106 @@ def test_spotter_audit_rejects_null_and_accepts_explicit_negative(tmp_path: Path
     assert ingested["issues_found"] == 0
 
 
+def test_unified_ingest_preview_and_apply_accept_explicit_jobs(tmp_path: Path) -> None:
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "unified.jobs.ep"
+    katz(
+        repo, "spotter", "jobs",
+        "--output", str(jobs_path),
+        "--section", "abstract",
+        "--spotters", "causal_language",
+    )
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+    results_path = repo / "unified-results.ep"
+    result = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": {
+            "found": False,
+            "title": "",
+            "quoted_text": "",
+            "description": "",
+        }},
+    )
+    Results(survey=Survey([]), data=[result]).git.save(results_path)
+
+    implicit_preview = katz(repo, "ingest", str(results_path))
+    assert implicit_preview["detection"]["audit"]["jobs_path"] == str(jobs_path.resolve())
+
+    preview = katz(
+        repo, "ingest", str(results_path),
+        "--jobs", str(jobs_path),
+    )
+    assert preview["mode"] == "preview"
+    assert preview["will_mutate"] is False
+    assert preview["detection"]["audit"]["complete"] is True
+    assert preview["next_actions"][0]["command"] == [
+        "katz", "ingest", str(results_path), "--apply", "--state", "draft",
+        "--jobs", str(jobs_path),
+    ]
+
+    applied = katz(
+        repo, "ingest", str(results_path),
+        "--apply", "--jobs", str(jobs_path),
+    )
+    assert applied["results"] == str(results_path)
+    assert applied["result_count"] == 1
+    assert applied["issues_found"] == 0
+    assert applied["issues_filed"] == 0
+    assert applied["skipped"] == 0
+    assert applied["audit"]["complete"] is True
+    assert applied["run_status"] == "ingested"
+
+
+def test_unified_ingest_apply_allows_partial_results(tmp_path: Path) -> None:
+    from edsl import Agent, Jobs, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    jobs_path = repo / "partial.jobs.ep"
+    katz(
+        repo, "spotter", "jobs",
+        "--output", str(jobs_path),
+        "--spotters", "causal_language",
+    )
+    scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
+    results_path = repo / "partial-results.ep"
+    result = Result(
+        agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
+        answer={"spotter_result": {
+            "found": False,
+            "title": "",
+            "quoted_text": "",
+            "description": "",
+        }},
+    )
+    Results(survey=Survey([]), data=[result]).git.save(results_path)
+
+    preview = katz(
+        repo, "ingest", str(results_path),
+        "--jobs", str(jobs_path), "--allow-partial",
+    )
+    assert preview["detection"]["audit"]["complete"] is False
+    assert preview["detection"]["supported_apply"] is True
+    assert preview["next_actions"][0]["command"][-1] == "--allow-partial"
+
+    applied = katz(
+        repo, "ingest", str(results_path),
+        "--apply", "--jobs", str(jobs_path), "--allow-partial",
+    )
+    assert applied["result_count"] == 1
+    assert applied["audit"]["complete"] is False
+    assert applied["run_status"] == "partial"
+
+
 def test_spotter_freetext_verdict_audits_and_ingests(tmp_path: Path) -> None:
     """A free-text answer that reasons then emits a fenced JSON verdict must audit
     as a valid finding and ingest as an anchored issue — never drop to null."""
@@ -1233,6 +1333,143 @@ def test_uncertain_investigation_moves_draft_to_open(tmp_path: Path) -> None:
     assert katz(repo, "issue", "next")["issue"] is None
 
 
+def _batch_decisions(packet: dict, verdicts: list[str]) -> dict:
+    return {
+        "packet_id": packet["packet_id"],
+        "commit": packet["commit"],
+        "manuscript_sha256": packet["manuscript_sha256"],
+        "decisions": [
+            {
+                "id": entry["issue"]["id"],
+                "revision_token": entry["revision_token"],
+                "verdict": verdict,
+                "notes": f"Evidence supports a {verdict} verdict.",
+            }
+            for entry, verdict in zip(packet["issues"], verdicts)
+        ],
+    }
+
+
+def test_issue_batch_packet_preview_apply_and_replay(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    created = [
+        katz(
+            repo, "issue", "write",
+            "--title", f"Batch issue {index}",
+            "--byte-start", str(index), "--byte-end", str(index + 5),
+            "--body", f"Investigate concern {index}.",
+        )
+        for index in range(3)
+    ]
+    packet_path = repo / "packet.json"
+    packet = katz(repo, "issue", "next", "--limit", "3", "--output", str(packet_path))
+    assert packet["returned"] == 3
+    assert packet_path.is_file()
+    assert json.loads(packet_path.read_text())["packet_id"] == packet["packet_id"]
+    assert all(entry["revision_token"] for entry in packet["issues"])
+    assert all("duplicate_cluster" in entry for entry in packet["issues"])
+
+    decision_path = repo / "verdicts.json"
+    decision_path.write_text(
+        json.dumps(_batch_decisions(packet, ["confirmed", "rejected", "uncertain"])),
+        encoding="utf-8",
+    )
+    preview = katz(repo, "issue", "investigate-batch", "--input", str(decision_path))
+    assert preview["mode"] == "preview"
+    assert preview["will_mutate"] is False
+    assert preview["counts"] == {"ready": 3, "invalid": 0, "applied": 0}
+    assert all(katz(repo, "issue", "show", item["id"])["state"] == "draft" for item in created)
+
+    applied = katz(repo, "issue", "investigate-batch", "--input", str(decision_path), "--apply")
+    assert applied["mode"] == "applied"
+    assert applied["counts"]["applied"] == 3
+    assert applied["remaining_draft"] == 0
+    expected_states = {
+        decision["id"]: state
+        for decision, state in zip(
+            json.loads(decision_path.read_text())["decisions"],
+            ["confirmed", "rejected", "open"],
+        )
+    }
+    assert {
+        item["id"]: katz(repo, "issue", "show", item["id"])["state"]
+        for item in created
+    } == expected_states
+    for item in created:
+        shown = katz(repo, "issue", "show", item["id"])
+        assert len(shown["investigations"]) == 1
+        assert len(shown["status_history"]) == 2
+
+    replayed = katz(repo, "issue", "investigate-batch", "--input", str(decision_path), "--apply")
+    assert replayed["mode"] == "replayed"
+    assert replayed["replayed"] is True
+    assert all(len(katz(repo, "issue", "show", item["id"])["investigations"]) == 1 for item in created)
+
+
+def test_issue_batch_atomic_validation_rejects_all_writes(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    issues = [
+        katz(
+            repo, "issue", "write",
+            "--title", f"Atomic issue {index}",
+            "--byte-start", str(index), "--byte-end", str(index + 4),
+            "--body", "Investigate atomically.",
+        )
+        for index in range(2)
+    ]
+    packet = katz(repo, "issue", "next", "--limit", "2")
+    payload = _batch_decisions(packet, ["confirmed", "rejected"])
+    payload["decisions"][1]["revision_token"] = "stale"
+    payload["decisions"].append(dict(payload["decisions"][0]))
+    input_path = repo / "invalid-batch.json"
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    error = katz_fail(
+        repo, "issue", "investigate-batch", "--input", str(input_path), "--apply",
+    )
+    assert error["code"] == "batch_validation_failed"
+    item_errors = [
+        problem["code"]
+        for item in error["details"]["items"]
+        for problem in item.get("errors", [])
+    ]
+    assert "stale_issue" in item_errors
+    assert "duplicate_id" in item_errors
+    for issue in issues:
+        shown = katz(repo, "issue", "show", issue["id"])
+        assert shown["state"] == "draft"
+        assert shown["investigations"] == []
+
+
+def test_issue_batch_partial_mode_applies_only_valid_decisions(tmp_path: Path) -> None:
+    repo, _ = setup_rich_repo(tmp_path)
+    issues = [
+        katz(
+            repo, "issue", "write",
+            "--title", f"Partial issue {index}",
+            "--byte-start", str(index), "--byte-end", str(index + 4),
+            "--body", "Investigate partially.",
+        )
+        for index in range(2)
+    ]
+    packet = katz(repo, "issue", "next", "--limit", "2")
+    payload = _batch_decisions(packet, ["confirmed", "rejected"])
+    payload["decisions"][1]["id"] = "does-not-exist"
+    input_path = repo / "partial-batch.json"
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    applied = katz(
+        repo, "issue", "investigate-batch", "--input", str(input_path),
+        "--allow-partial", "--apply",
+    )
+    assert applied["status"] == "partial"
+    assert applied["counts"] == {"ready": 1, "invalid": 1, "applied": 1}
+    valid_id = payload["decisions"][0]["id"]
+    untouched_id = next(issue["id"] for issue in issues if issue["id"] != valid_id)
+    assert katz(repo, "issue", "show", valid_id)["state"] == "confirmed"
+    assert katz(repo, "issue", "show", untouched_id)["state"] == "draft"
+
+
 def test_issue_clusters_suggests_merge_for_overlapping_findings(tmp_path: Path) -> None:
     repo, _ = setup_rich_repo(tmp_path)
     first = katz(
@@ -1253,6 +1490,11 @@ def test_issue_clusters_suggests_merge_for_overlapping_findings(tmp_path: Path) 
     assert result["cluster_count"] == 1
     assert set(result["clusters"][0]["issue_ids"]) == {first["id"], second["id"]}
     assert result["clusters"][0]["suggested_command"][0:4] == ["katz", "issue", "merge", "--ids"]
+    packet = katz(repo, "issue", "next", "--limit", "2")
+    packet_clusters = [entry["duplicate_cluster"] for entry in packet["issues"]]
+    assert all(cluster is not None for cluster in packet_clusters)
+    assert packet_clusters[0]["id"] == packet_clusters[1]["id"]
+    assert set(packet_clusters[0]["issue_ids"]) == {first["id"], second["id"]}
 
 
 def test_issue_show_accepts_batch_ids(tmp_path: Path) -> None:

@@ -38,28 +38,27 @@ Before investigating individual issues, read the **entire** canonical manuscript
 
 ### 3. Batch investigation (recommended for large sets)
 
-When there are many issues (50+), the one-at-a-time approach is too slow. Instead, use a **batch approach**:
+When there are more than five draft issues, use Katz's stale-safe batch interface:
 
 1. Read the full manuscript and LaTeX source to build understanding.
-2. List all draft issues grouped by section:
+2. Generate a bounded packet containing full issue records, anchored context,
+   revision tokens, and duplicate-cluster summaries:
    ```bash
-   katz issue list --state draft | python3 -c "
-   import sys, json
-   from collections import defaultdict
-   by_section = defaultdict(list)
-   for i in json.load(sys.stdin):
-       by_section[i['location']['section']].append(i)
-   for s, items in sorted(by_section.items()):
-       print(f'\n=== {s} ({len(items)}) ===')
-       for i in items:
-           print(f'  {i[\"id\"][:8]} | L{i[\"location\"].get(\"line_start\",\"?\"):>3} | {i[\"title\"]}')
-   "
+   katz issue next --limit 10 --output investigation-packet.json
    ```
-3. Write a Python script that maps issue IDs to verdicts and calls `katz issue investigate` with `--state` for each:
+3. Write `verdicts.json` using the packet's `response_schema`. Preserve the
+   packet ID, commit, manuscript hash, issue IDs, and revision tokens exactly.
+4. Preview the complete transaction, then apply it only if every decision is
+   accepted:
    ```bash
-   katz issue investigate --id <id> --verdict <v> --notes "..." --state <s>
+   katz issue investigate-batch --input verdicts.json
+   katz issue investigate-batch --input verdicts.json --apply
    ```
-   The `--state` flag records the investigation AND updates the issue state in one call, avoiding the need to run `katz issue update` separately.
+   Validation is atomic by default. Do not use `--allow-partial` unless the
+   valid subset is intentionally independent of rejected entries. Exact replay
+   is safe and does not append duplicate events.
+5. Repeat with a new packet until `remaining` is zero. Use a distinct output
+   filename for every packet so evidence is not overwritten.
 
 #### Common false-positive categories to reject in bulk
 
@@ -129,13 +128,9 @@ katz issue investigate \
   --notes "Explanation of findings and reasoning"
 ```
 
-#### f. Update the issue state
-
-After investigating, update the state:
-
-- If **confirmed**: `katz issue update --id <id> --state confirmed --reason "Investigation confirmed the issue"`
-- If **rejected**: `katz issue update --id <id> --state rejected --reason "Brief explanation"`
-- If **uncertain**: `katz issue update --id <id> --state open --reason "Needs further review"`
+The investigation command also updates state: confirmed → `confirmed`, rejected
+→ `rejected`, and uncertain → `open`. Use `--state` only for an intentional
+override.
 
 ### 5. Report
 

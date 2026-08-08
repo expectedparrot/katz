@@ -227,6 +227,28 @@ def test_issue_next_returns_context_and_allowed_mutation(tmp_path: Path) -> None
     assert status["next_actions"][0]["command"] == ["katz", "issue", "next"]
 
 
+def test_agent_next_recommends_batch_packets_for_many_drafts(tmp_path: Path) -> None:
+    repo, manuscript, _ = setup_repo(tmp_path)
+    katz(repo, "init")
+    katz(repo, "paper", "register", "--canonical", str(manuscript))
+    katz(repo, "paper", "auto-chunk")
+    for index in range(6):
+        katz(
+            repo, "issue", "write",
+            "--title", f"Draft {index}",
+            "--body", "Needs investigation.",
+            "--byte-start", "0", "--byte-end", "5",
+        )
+
+    status = katz(repo, "agent", "status")
+    assert status["phase"] == "investigation"
+    assert status["next_actions"][0]["id"] == "next_issue_batch"
+    assert status["next_actions"][0]["command"] == [
+        "katz", "issue", "next", "--limit", "10",
+        "--output", "investigation-packet.json",
+    ]
+
+
 def test_unified_ingest_detects_jobs_without_mutating(tmp_path: Path) -> None:
     repo, manuscript, _ = setup_repo(tmp_path)
     katz(repo, "init")
