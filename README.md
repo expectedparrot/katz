@@ -18,6 +18,27 @@ Katz can:
 - record decisions, suggested fixes, evaluations, and revision history; and
 - generate navigable review reports from the issue ledger.
 
+Katz also provides a lightweight pre-delivery review for an already-authored
+research report. It does not initialize the manuscript ledger or chunk the
+report. Instead it detects the analysis type, selects relevant report
+spotters, attaches `report.md` and its local images to one model-free Jobs
+package, and normalizes reviews from an externally selected ModelList:
+
+```bash
+katz report review-plan --report writeup/report.md
+ep models create --model <frontier-a> --model <frontier-b> --model <frontier-c> --output report-review.models.ep
+katz report review-jobs --report writeup/report.md --models report-review.models.ep --output report-review.jobs.ep
+ep inspect report-review.jobs.ep
+ep jobs cost report-review.jobs.ep
+# approve the exact cost
+ep run report-review.jobs.ep --output report-review.results.ep
+katz report review-ingest --results report-review.results.ep --report writeup/report.md --output analysis/report-review.json
+```
+
+Use `--analysis-type` to override detection and repeat `--image` for local
+images not referenced by Markdown. This one-shot quality gate is distinct from
+Katz's evidence-linked academic referee workflow.
+
 ![An economist parrot reviewing a manuscript beside mathematical notation and books](docs/katz-economist-parrot.png)
 
 ## Quick start: from a PDF to a review report

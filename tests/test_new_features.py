@@ -459,6 +459,65 @@ def test_paper_review_jobs_embeds_manuscript_and_figure_attachments(tmp_path: Pa
     assert "economics referee" in question_text
 
 
+def test_one_shot_report_review_jobs_detect_type_spotters_and_images(tmp_path: Path) -> None:
+    from edsl import FileStore, Jobs, Model, ModelList
+
+    report = tmp_path / "writeup/report.md"
+    figure = tmp_path / "writeup/figures/result.png"
+    figure.parent.mkdir(parents=True)
+    figure.write_bytes(b"\x89PNG\r\n\x1a\nexample")
+    report.write_text(
+        "# Survey results\n\nNine simulated respondents completed the survey.\n\n"
+        "![Result](figures/result.png)\n",
+        encoding="utf-8",
+    )
+    plan = katz(tmp_path, "report", "review-plan", "--report", str(report))
+    assert plan["analysis_type"] == "survey-simulation"
+    assert {item["name"] for item in plan["spotters"]} >= {"numerical-consistency", "simulation-boundary"}
+
+    output = tmp_path / "report-review.jobs.ep"
+    models = tmp_path / "models.ep"
+    ModelList([Model("test"), Model("test")]).git.save(str(models))
+    built = katz(tmp_path, "report", "review-jobs", "--report", str(report), "--output", str(output), "--models", str(models))
+    assert built["analysis_type"] == "survey-simulation"
+    assert built["model_count"] == 2
+    assert [item["kind"] for item in built["attachments"]] == ["report", "image"]
+    jobs = Jobs.git.load(output)
+    assert isinstance(jobs.scenarios[0]["report"], FileStore)
+    assert isinstance(jobs.scenarios[0]["image_1"], FileStore)
+    assert "simulation-boundary" in jobs.scenarios[0]["spotter_instructions"]
+    assert "{{ image_1 }}" in jobs.survey.questions[0].question_text
+
+
+def test_one_shot_report_review_ingest_returns_bounded_actionable_issues(tmp_path: Path) -> None:
+    from edsl import Agent, Model, Results, Scenario, Survey
+    from edsl.results import Result
+
+    report = tmp_path / "report.md"
+    report.write_text("# Results\n\nThe report says 7 items here and 8 items later.\n", encoding="utf-8")
+    review = {
+        "verdict": "fix",
+        "summary": "One internal inconsistency.",
+        "issues": [{
+            "severity": "error", "category": "consistency", "location": "Results",
+            "evidence": "7 items here and 8 items later", "problem": "The item counts conflict.",
+            "fix": "Use the canonical instrument count throughout.",
+        }],
+    }
+    result = Result(
+        agent=Agent(), scenario=Scenario({"analysis_type": "generic"}), model=Model("test"), iteration=0,
+        answer={"report_review": f"```json\n{json.dumps(review)}\n```"},
+    )
+    results_path = tmp_path / "review-results.ep"
+    Results(survey=Survey([]), data=[result]).git.save(results_path)
+    output = tmp_path / "analysis/report-review.json"
+    ingested = katz(tmp_path, "report", "review-ingest", "--results", str(results_path), "--report", str(report), "--output", str(output), "--limit", "1")
+    assert ingested["review"]["complete"] is True
+    assert ingested["review"]["issue_count"] == 1
+    assert ingested["review"]["issues"][0]["fix"] == "Use the canonical instrument count throughout."
+    assert output.is_file()
+
+
 def test_human_journal_review_add_and_jobs(tmp_path: Path) -> None:
     from edsl import FileStore, Jobs
 

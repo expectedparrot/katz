@@ -329,6 +329,13 @@ the run remains partial and reports cannot present it as a complete review.
 ## `katz report` — HTML Report
 
 ```bash
+katz report review-plan --report writeup/report.md [--analysis-type auto]
+katz report review-jobs --report writeup/report.md \
+  --models report-review.models.ep --output report-review.jobs.ep \
+  [--analysis-type auto] [--image PATH ...]
+katz report review-ingest --results report-review.results.ep \
+  --report writeup/report.md --output analysis/report-review.json [--limit 50]
+
 katz report generate \
   [--output .katz/review.html] \
   [--commit <sha>]
@@ -344,6 +351,14 @@ katz report finalize \
 # does not rewrite unchanged artifacts. Partial evidence remains prominently
 # marked incomplete in both JSON and HTML.
 ```
+
+The `review-*` commands implement a lightweight whole-report quality gate.
+`review-plan` previews automatic analysis-type detection, selected spotters,
+and discovered local Markdown images. `review-jobs` packages the complete
+report and images without embedding models or running inference.
+`review-ingest` validates and deduplicates multi-model JSON reviews into a
+bounded actionable issue artifact. Use the full ledger workflow for academic
+manuscript refereeing; ordinary research reports do not need chunking.
 
 ---
 

@@ -16,6 +16,7 @@ import typer
 import yaml
 
 from ..assets import REPORT_SCRIPT
+from ..edsl_bridge import _save_and_verify_ep
 from ..errors import KatzError, emit_json, fail
 from ..issues import VALID_STATES
 from ..manuscript import validate_location
@@ -24,6 +25,165 @@ from .agent import _agent_action
 
 
 report_app = typer.Typer(help="Generate review reports.")
+
+
+REPORT_REVIEW_PROMPT = """\
+You are the final quality reviewer for a research report that is about to be
+shown to its user. Read the complete Markdown report attachment and inspect
+every attached image. This is a one-shot review, not a section-by-section
+manuscript review.
+
+Report: {{ report }}
+
+Attached images:
+{{ image_attachment_list }}
+
+Analysis type: {{ analysis_type }}
+
+Required spotters:
+{{ spotter_instructions }}
+
+Find only actionable defects that should be corrected before presentation.
+Check internal factual and numerical consistency, traceability of claims to
+reported evidence, whether recommendations follow from findings, calibration
+of claims and limitations, missing or contradictory sections, prose clarity,
+tables, captions, and whether each image is legible and supports the text.
+Do not demand unavailable evidence, invent source facts, or rewrite merely for
+personal stylistic preference.
+
+Return one fenced JSON object and nothing after it:
+```json
+{
+  "verdict": "pass or fix",
+  "summary": "brief overall assessment",
+  "issues": [
+    {
+      "severity": "error or warning",
+      "category": "accuracy, evidence, consistency, scope, clarity, table, image, or accessibility",
+      "location": "heading, quotation, table, or image filename",
+      "evidence": "short exact report quotation or image filename",
+      "problem": "specific defect",
+      "fix": "concrete correction"
+    }
+  ]
+}
+```
+Use verdict=pass and an empty issues list when no substantive correction is
+needed. Every issue must contain all six string fields.
+"""
+
+
+REPORT_SPOTTERS: dict[str, list[tuple[str, str]]] = {
+    "universal": [
+        ("numerical-consistency", "Check repeated counts, percentages, totals, labels, tables, and prose for contradictions."),
+        ("evidence-traceability", "Check that material claims and recommendations trace to evidence actually reported."),
+        ("claim-calibration", "Check causal, population, certainty, and readiness claims against the design and limitations."),
+        ("recommendation-scope", "Check that recommendations are proportionate to what the analysis established."),
+        ("visual-integrity", "Inspect every attached image for legibility, truthful encoding, labels, captions, and agreement with prose."),
+    ],
+    "survey-simulation": [
+        ("design-to-claim", "Check sample, agents, scenarios, questions, and model choices against the conclusions."),
+        ("simulation-boundary", "Check that simulated responses are not described as observed human attitudes or population estimates."),
+        ("result-coverage", "Check that stated objectives, notable results, anomalies, and limitations are carried into discussion."),
+    ],
+    "instrument-pretest": [
+        ("issue-to-revision", "Check that every material diagnosed issue has a traceable revision or explicit no-change rationale."),
+        ("revision-consistency", "Check revised item IDs, item counts, wording, options, and readiness statements for consistency."),
+        ("evidence-tier", "Check that static, simulated, and human evidence are distinguished and the next-step claim fits the tier."),
+    ],
+    "qualitative": [
+        ("theme-grounding", "Check themes against quotations, cases, negative evidence, and uncertainty in the reported corpus."),
+        ("quote-attribution", "Check quotation fidelity, attribution, privacy treatment, and whether excerpts support the interpretation."),
+    ],
+    "decision-analysis": [
+        ("decision-model", "Check alternatives, criteria, weights, directionality, scoring, and references for internal consistency."),
+        ("robustness", "Check whether sensitivity, disagreement, uncertainty, and model dependence qualify the recommendation."),
+    ],
+    "ux": [
+        ("task-trace", "Check task outcomes and claims against the reported traces, screenshots, steps, and stopping conditions."),
+        ("synthetic-user-boundary", "Check that synthetic-user findings are not generalized to real-user prevalence."),
+    ],
+    "literature-review": [
+        ("coverage", "Check search scope, screening, inclusion, citation coverage, and acknowledged blind spots."),
+        ("synthesis", "Check that synthesis distinguishes source claims from the report author's inference."),
+    ],
+    "agent-list": [
+        ("trait-coverage", "Check that every agent trait, value, distribution, and intended use is documented consistently."),
+        ("provenance-and-limits", "Check sourcing, construction provenance, unsupported representativeness, and usage limitations."),
+    ],
+}
+
+
+def _detect_report_analysis_type(text: str) -> tuple[str, list[str]]:
+    lower=text.lower(); matches: list[tuple[str, list[str]]] = []
+    rules = {
+        "instrument-pretest": ["cognitive pretest", "revised instrument", "instrument revision"],
+        "agent-list": ["agent design", "trait codebook", "agentlist"],
+        "qualitative": ["thematic analysis", "interview transcript", "qualitative coding"],
+        "decision-analysis": ["weighted score", "criteria weights", "sensitivity analysis", "decision matrix"],
+        "ux": ["user experience", "task completion", "browser trace", "usability"],
+        "literature-review": ["literature review", "search strategy", "inclusion criteria"],
+        "survey-simulation": ["simulated respondents", "survey results", "agent responses", "simulation"],
+    }
+    for kind,terms in rules.items():
+        found=[term for term in terms if term in lower]
+        if found: matches.append((kind,found))
+    if not matches: return "generic",[]
+    matches.sort(key=lambda item:(len(item[1]),-list(rules).index(item[0])),reverse=True)
+    return matches[0]
+
+
+def _resolved_report_spotters(analysis_type: str) -> list[dict[str,str]]:
+    if analysis_type != "generic" and analysis_type not in REPORT_SPOTTERS:
+        raise KatzError("Unknown report analysis type", "validation_error", {"analysis_type":analysis_type,"valid":["auto","generic",*sorted(k for k in REPORT_SPOTTERS if k != "universal")]})
+    values=[*REPORT_SPOTTERS["universal"],*REPORT_SPOTTERS.get(analysis_type,[])]
+    return [{"name":name,"instructions":instructions} for name,instructions in values]
+
+
+def _report_image_paths(report: Path, explicit: list[Path]) -> list[Path]:
+    text = report.read_text(encoding="utf-8")
+    references = re.findall(r"!\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)", text)
+    references += re.findall(r"<img[^>]+src=[\"']([^\"']+)[\"']", text, flags=re.IGNORECASE)
+    candidates = [*explicit]
+    for value in references:
+        if re.match(r"^[a-z]+://", value, flags=re.IGNORECASE) or value.startswith("data:"):
+            continue
+        candidates.append((report.parent / value).resolve())
+    allowed = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+    result: list[Path] = []
+    seen: set[Path] = set()
+    for path in candidates:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        if not resolved.is_file():
+            raise KatzError("Referenced report image does not exist", "not_found", {"path": str(resolved)})
+        if resolved.suffix.lower() not in allowed:
+            raise KatzError("Unsupported report image format", "validation_error", {"path": str(resolved), "allowed": sorted(allowed)})
+        seen.add(resolved); result.append(resolved)
+    return result
+
+
+def _parse_report_review(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    candidates = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", value, flags=re.DOTALL)
+    candidates.append(value.strip())
+    for candidate in reversed(candidates):
+        try: parsed = json.loads(candidate)
+        except json.JSONDecodeError: continue
+        if isinstance(parsed, dict): return parsed
+    return None
+
+
+def _result_field(result: Any, group: str, key: str) -> Any:
+    try:
+        value = result[group]
+        if isinstance(value, dict): return value.get(key)
+        return getattr(value, key, None)
+    except (KeyError, TypeError): return None
 
 
 def _load_report_module() -> Any:
@@ -324,6 +484,96 @@ def _write_outputs_transactionally(outputs: dict[Path, bytes]) -> None:
     finally:
         for staged in temporary.values():
             staged.unlink(missing_ok=True)
+
+
+@report_app.command("review-plan")
+def report_review_plan(
+    report: Path = typer.Option(...,"--report",exists=True,readable=True),
+    analysis_type: str = typer.Option("auto","--analysis-type"),
+    image: list[Path] = typer.Option([],"--image"),
+) -> None:
+    """Preview one-shot report review configuration without creating Jobs."""
+    try:
+        text=report.read_text(encoding="utf-8")
+        detected,evidence=_detect_report_analysis_type(text)
+        selected=detected if analysis_type=="auto" else analysis_type
+        images=_report_image_paths(report,image)
+        emit_json({"report":str(report.resolve()),"report_sha256":sha256_file(report),"analysis_type":selected,"detected_analysis_type":detected,"detection_evidence":evidence,"spotters":_resolved_report_spotters(selected),"images":[str(path) for path in images],"review_mode":"one-shot","inference":"not_performed"})
+    except KatzError as exc: fail(exc.message,exc.code,exc.details)
+
+
+@report_app.command("review-jobs")
+def report_review_jobs(
+    report: Path = typer.Option(...,"--report",exists=True,readable=True),
+    output: Path = typer.Option(...,"--output","-o"),
+    analysis_type: str = typer.Option("auto","--analysis-type"),
+    image: list[Path] = typer.Option([],"--image"),
+    models: Optional[Path] = typer.Option(None,"--models",exists=True,readable=True),
+) -> None:
+    """Build a model-free one-shot report review Jobs package."""
+    try:
+        if output.suffix != ".ep": raise KatzError("--output must use the .ep extension","validation_error",{"output":str(output)})
+        if output.exists(): raise KatzError(f"{output} already exists","validation_error",{"output":str(output)})
+        try:
+            from edsl import FileStore,Jobs,ModelList,Scenario,ScenarioList
+            from edsl.questions import QuestionFreeText
+        except ImportError as exc: raise KatzError("EDSL is required to create .ep objects","dependency_error",{"install":"python -m pip install edsl"}) from exc
+        text=report.read_text(encoding="utf-8"); detected,evidence=_detect_report_analysis_type(text)
+        selected=detected if analysis_type=="auto" else analysis_type
+        spotters=_resolved_report_spotters(selected); images=_report_image_paths(report,image)
+        scenario: dict[str,Any]={"report":FileStore(str(report.resolve())),"analysis_type":selected,"spotter_instructions":"\n".join(f"- {item['name']}: {item['instructions']}" for item in spotters)}
+        image_lines=[]; attachments=[{"key":"report","filename":report.name,"kind":"report"}]
+        for index,path in enumerate(images,start=1):
+            key=f"image_{index}"; scenario[key]=FileStore(str(path)); image_lines.append(f"- {path.name}: {{{{ {key} }}}}"); attachments.append({"key":key,"filename":path.name,"kind":"image"})
+        prompt=REPORT_REVIEW_PROMPT.replace("{{ image_attachment_list }}","\n".join(image_lines) if image_lines else "- No local images are referenced by the report.")
+        question=QuestionFreeText(question_name="report_review",question_text=prompt)
+        jobs=Jobs(survey=question.to_survey()).by(ScenarioList([Scenario(scenario)]))
+        model_count=0
+        if models is not None:
+            model_list=ModelList.git.load(str(models)); model_count=len(model_list)
+            if not model_count: raise KatzError("Report review requires a non-empty ModelList","validation_error",{"models":str(models)})
+            jobs=jobs.by(model_list)
+        jobs.prompts(); output.parent.mkdir(parents=True,exist_ok=True); saved=_save_and_verify_ep(jobs,output)
+        emit_json({"object_type":"Jobs","output":str(output.resolve()),"report":str(report.resolve()),"report_sha256":sha256_file(report),"analysis_type":selected,"detected_analysis_type":detected,"detection_evidence":evidence,"spotters":spotters,"attachments":attachments,"scenario_count":1,"model_count":model_count,"expected_model_calls":model_count if model_count else "1 × the number of externally selected models","model_specifications":"Embedded from the supplied ModelList." if models else "Select models externally or rebuild with --models ModelList.ep.","inference":"external","saved":saved})
+    except KatzError as exc: fail(exc.message,exc.code,exc.details)
+    except Exception as exc: fail(str(exc),"jobs_creation_error",{"report":str(report),"output":str(output)})
+
+
+@report_app.command("review-ingest")
+def report_review_ingest(
+    results: Path = typer.Option(...,"--results",exists=True,readable=True),
+    report: Path = typer.Option(...,"--report",exists=True,readable=True),
+    output: Path = typer.Option(Path("analysis/report-review.json"),"--output","-o"),
+    limit: int = typer.Option(50,"--limit",min=1,max=200),
+) -> None:
+    """Normalize multi-model one-shot review Results into bounded issues."""
+    try:
+        if output.exists(): raise KatzError(f"{output} already exists","validation_error",{"output":str(output)})
+        try: from edsl import Results
+        except ImportError as exc: raise KatzError("EDSL is required to ingest Results.ep","dependency_error",{"install":"python -m pip install edsl"}) from exc
+        loaded=Results.git.load(results); reviews=[]; parse_failures=[]; merged: dict[str,dict[str,Any]]={}
+        for index,result in enumerate(loaded):
+            raw=_result_field(result,"answer","report_review"); parsed=_parse_report_review(raw)
+            model=_result_field(result,"model","model") or _result_field(result,"model","_model_") or f"reviewer_{index+1}"
+            reviewer=str(model)
+            if not isinstance(parsed,dict) or not isinstance(parsed.get("issues"),list):
+                parse_failures.append({"index":index,"reviewer":reviewer,"reason":"unparseable_review"}); continue
+            valid=[]
+            for item in parsed["issues"]:
+                required=("severity","category","location","evidence","problem","fix")
+                if not isinstance(item,dict) or any(not isinstance(item.get(key),str) or not item[key].strip() for key in required):
+                    parse_failures.append({"index":index,"reviewer":reviewer,"reason":"invalid_issue_schema"}); continue
+                normalized={key:item[key].strip() for key in required}; valid.append(normalized)
+                key=hashlib.sha256(json.dumps({"location":normalized["location"].lower(),"problem":normalized["problem"].lower()},sort_keys=True).encode()).hexdigest()[:16]
+                if key not in merged: merged[key]={"issue_id":f"review_{key}",**normalized,"reviewers":[]}
+                if reviewer not in merged[key]["reviewers"]: merged[key]["reviewers"].append(reviewer)
+            reviews.append({"reviewer":reviewer,"verdict":str(parsed.get("verdict","")),"summary":str(parsed.get("summary","")),"issue_count":len(valid)})
+        issues=sorted(merged.values(),key=lambda item:(0 if item["severity"].lower()=="error" else 1,-len(item["reviewers"]),item["location"]))
+        payload={"schema_version":"1.0","kind":"one-shot-report-review","report":{"path":str(report.resolve()),"sha256":sha256_file(report)},"results":{"path":str(results.resolve()),"sha256":sha256_file(results)},"complete":bool(reviews) and not parse_failures,"review_count":len(reviews),"parse_failures":parse_failures,"issue_count":len(issues),"returned_issue_count":min(len(issues),limit),"truncated":len(issues)>limit,"issues":issues[:limit],"reviews":reviews,"generated_at":now_utc()}
+        output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps(payload,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+        emit_json({"review":payload,"output":str(output.resolve()),"next_action":"Fix supported issues in report.md, rerun deterministic report checks, and regenerate HTML before presentation."})
+    except KatzError as exc: fail(exc.message,exc.code,exc.details)
+    except Exception as exc: fail(str(exc),"review_ingestion_error",{"results":str(results),"report":str(report)})
 
 
 @report_app.command("generate")
