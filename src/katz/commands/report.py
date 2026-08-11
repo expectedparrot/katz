@@ -111,6 +111,13 @@ REPORT_SPOTTERS: dict[str, list[tuple[str, str]]] = {
         ("trait-coverage", "Check that every agent trait, value, distribution, and intended use is documented consistently."),
         ("provenance-and-limits", "Check sourcing, construction provenance, unsupported representativeness, and usage limitations."),
     ],
+    "descriptive-operational": [
+        ("metric-definition", "Check each metric's unit, denominator, aggregation, population, and operational definition for clarity and consistency."),
+        ("time-window-comparability", "Check that compared periods use comparable coverage, inclusion rules, censoring, seasonality, and reporting cutoffs."),
+        ("change-arithmetic", "Check absolute changes, relative changes, percentage-point changes, signs, rounding, and stated baselines."),
+        ("visual-scale", "Check truncated axes, mixed units, native versus normalized scales, labels, and captions for potentially misleading comparisons."),
+        ("descriptive-boundary", "Check that concurrent operational changes are described as associations or trends rather than causal effects."),
+    ],
 }
 
 
@@ -124,6 +131,10 @@ def _detect_report_analysis_type(text: str) -> tuple[str, list[str]]:
         "ux": ["user experience", "task completion", "browser trace", "usability"],
         "literature-review": ["literature review", "search strategy", "inclusion criteria"],
         "survey-simulation": ["simulated respondents", "survey results", "agent responses", "simulation"],
+        "descriptive-operational": [
+            "descriptive operational", "operational totals", "metric snapshot",
+            "first-response time", "customer satisfaction", "key performance indicator",
+        ],
     }
     for kind,terms in rules.items():
         found=[term for term in terms if term in lower]

@@ -489,6 +489,25 @@ def test_one_shot_report_review_jobs_detect_type_spotters_and_images(tmp_path: P
     assert "{{ image_1 }}" in jobs.survey.questions[0].question_text
 
 
+def test_report_review_detects_descriptive_operational_metrics(tmp_path: Path) -> None:
+    report = tmp_path / "report.md"
+    report.write_text(
+        "# Customer support metrics\n\n"
+        "These user-supplied operational totals are descriptive, not causal. "
+        "Median first-response time fell from 10 hours to 6 hours and customer "
+        "satisfaction rose from 72% to 78%.\n",
+        encoding="utf-8",
+    )
+
+    plan = katz(tmp_path, "report", "review-plan", "--report", str(report))
+
+    assert plan["analysis_type"] == "descriptive-operational"
+    assert {item["name"] for item in plan["spotters"]} >= {
+        "metric-definition", "time-window-comparability", "change-arithmetic",
+        "visual-scale", "descriptive-boundary",
+    }
+
+
 def test_one_shot_report_review_ingest_returns_bounded_actionable_issues(tmp_path: Path) -> None:
     from edsl import Agent, Model, Results, Scenario, Survey
     from edsl.results import Result
