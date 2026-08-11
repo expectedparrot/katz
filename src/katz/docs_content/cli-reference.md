@@ -359,6 +359,11 @@ report and images without embedding models or running inference.
 `review-ingest` validates and deduplicates multi-model JSON reviews into a
 bounded actionable issue artifact. Use the full ledger workflow for academic
 manuscript refereeing; ordinary research reports do not need chunking.
+Automatic analysis types include survey simulation, instrument pretesting,
+qualitative analysis, decision analysis, UX, literature review, AgentList
+documentation, and descriptive operational metrics. The latter checks metric
+definitions, period comparability, change arithmetic, visual scales, and the
+boundary between descriptive trends and causal claims.
 
 ---
 
