@@ -80,17 +80,20 @@ katz spotter init-catalog
 katz spotter enable --recommended
 katz spotter jobs --output jobs.ep
 katz spotter models --model gpt-4.1-mini --output models.ep
+katz results plan --jobs jobs.ep --models models.ep
+# Inspect scope/cost, run ep check, and approve execution.
 ep run jobs.ep --model_list models.ep --output results.ep
 katz results audit results.ep --jobs jobs.ep
 katz spotter ingest results.ep --jobs jobs.ep
-katz report generate --output review.html</code></pre>
+katz next</code></pre>
+    <p>After ingestion, investigate draft issues and author <code>writeup/report.md</code>. Run <code>katz validate</code> and <code>katz report finalize --report writeup/report.md</code> to produce the final report. <code>katz report generate</code> creates an initial issue explorer. Read <code>katz docs show reliability</code> for execution plans and retries.</p>
     <h3>Just got a PDF?</h3>
     <p>The "someone emailed me a PDF and I need to review it" flow compresses to one command. No pre-existing repository is required (PDF extraction needs <code>paper2md</code>: <code>uv tool install paper2md</code>).</p>
     <pre><code>katz workspace new pdf-review \
   --from paper.pdf \
   --model gpt-4.1-mini
 cd pdf-review</code></pre>
-    <p><code>--from</code> runs the entire local pipeline: PDF-to-Markdown conversion, ventilation, workspace creation, Git commit, registration, section mapping, the recommended spotter set, and a packaged <code>jobs.ep</code> with a <code>models.ep</code> token budget for the named model. The response records each step's result and then stops — the loop above continues at <code>ep run</code>, because Katz never executes model calls itself. One non-negotiable caveat: PDF conversion is lossy, so open the PDF and <code>paper/paper_ventilated.md</code> side by side and check reading order, tables, equations, and figures <em>before</em> authorizing the run — <a href="#paper2md">chapter 3</a> has the inspection checklist. After the run: <code>katz ingest results.ep --apply</code>, then <code>katz report generate</code>. Chapters 2–7 walk through the longhand equivalent of every step the shortcut takes.</p>
+    <p><code>--from</code> runs the entire local pipeline: PDF-to-Markdown conversion, ventilation, workspace creation, Git commit, registration, section mapping, the recommended spotter set, and a packaged <code>jobs.ep</code> with a <code>models.ep</code> token budget for the named model. The response records each step's result and then stops — the loop above continues at <code>ep run</code>, because Katz never executes model calls itself. One non-negotiable caveat: PDF conversion is lossy, so open the PDF and <code>paper/paper_ventilated.md</code> side by side and check reading order, tables, equations, and figures <em>before</em> authorizing the run — <a href="#paper2md">chapter 3</a> has the inspection checklist. After the run: <code>katz ingest results.ep --apply</code>, then <code>katz next</code> for investigation and validated finalization. Chapters 2–7 walk through the longhand equivalent of every step the shortcut takes.</p>
     <p>The rest of this tutorial explains what each artifact is, why each boundary exists, and how to investigate, human-triage, and track findings across revisions. If you have a LaTeX project rather than a PDF, start with <a href="#paper2md">chapter 3</a> — same shape, but Katz reads the LaTeX source tree directly and audits the conversion for dropped tables.</p>
   </section>
 
@@ -843,11 +846,11 @@ flowchart TD
     "object_type": "ModelList",
     "output": "models.ep",
     "models": ["gpt-4.1-mini"],
-    "max_tokens": 4000,
+    "max_tokens": 16000,
     "next": "ep run &lt;jobs.ep&gt; --model_list models.ep --output &lt;results.ep&gt;"
   }
 }</code></pre>
-    <p>The default 4,000-token ceiling is Katz's recommended floor for the free-text verdict contract. Repeat <code>--model</code> to review with several models in one run; the audit treats each scenario-and-model pair as a separate expected answer, and ingestion later merges same-passage findings across models into one issue with an agreement score.</p>
+    <p>The default 16,000-token ceiling is Katz's recommended floor for the free-text verdict contract. Repeat <code>--model</code> to review with several models in one run; the audit treats each scenario-and-model pair as a separate expected answer, and ingestion later merges same-passage findings across models into one issue with an agreement score.</p>
     <h3>How Katz builds one pilot item</h3>
     <p>Before EDSL contacts a model, Katz creates a scenario: a dictionary containing one manuscript chunk, one spotter, and the provenance needed to reconnect any answer to the registered paper. The JSON below is that generated input record, not model output. One pilot scenario pairs the mapped Summary chunk with the enabled causal-language spotter:</p>
     <pre class="wrap"><code>{
@@ -893,7 +896,8 @@ final lines, return exactly one fenced JSON verdict:
 {"found": true, "title": "short title", "quoted_text": "exact manuscript quotation", "description": "evidence-backed explanation"}
 ```</code></pre>
     <p>At run time, EDSL renders this template once for each scenario. For the example item, <code>{{ review_target }}</code> becomes <code>section "Summary"</code>, <code>{{ spotter_instructions }}</code> becomes the complete causal-language spotter, and <code>{{ manuscript_content }}</code> becomes the exact Summary slice. The resulting prompt—not the scenario JSON—is what the selected model reads. EDSL then stores the model’s answer beside the unchanged scenario in the Results object.</p>
-    <pre><code>ep run pilot.jobs.ep --model_list models.ep --output pilot-results.ep</code></pre>
+    <pre><code>katz results plan --jobs pilot.jobs.ep --models models.ep
+ep run pilot.jobs.ep --model_list models.ep --output pilot-results.ep</code></pre>
     <pre><code>{
   "status": "ok",
   "data": {
@@ -980,7 +984,7 @@ final lines, return exactly one fenced JSON verdict:
       "path": "jobs.ep",
       "commit": "$JOBS_PACKAGE_COMMIT"
     },
-    "next": "katz spotter models --model &lt;model-name&gt; --max-tokens 4000 --output models.ep &amp;&amp; ep run jobs.ep --model_list models.ep --output results.ep"
+    "next": "katz spotter models --model &lt;model-name&gt; --max-tokens 16000 --output models.ep &amp;&amp; ep run jobs.ep --model_list models.ep --output results.ep"
   }
 }</code></pre>
     <h3>What Katz puts in the review package</h3>
@@ -1042,7 +1046,8 @@ demonstrates the issue and explain why it matters. Do not invent text.</code></p
     <pre><code>ep jobs cost jobs.ep</code></pre>
     <p>Estimates the cost of the packaged job. Add <code>--iterations N</code> to estimate repeated runs.</p>
     <h3>Ask a model to review each package item</h3>
-    <pre><code>ep run jobs.ep \
+    <pre><code>katz results plan --jobs jobs.ep --models models.ep
+ep run jobs.ep \
   --model_list models.ep \
   --output results.ep</code></pre>
     <table><thead><tr><th>Argument or option</th><th>Meaning</th></tr></thead><tbody>

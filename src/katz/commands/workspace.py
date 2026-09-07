@@ -9,6 +9,7 @@ from typing import Any, Callable, Optional
 
 import typer
 
+from ..assets import copy_referenced_images
 from ..edsl_bridge import SPOTTER_RECOMMENDED_MAX_TOKENS
 from ..errors import KatzError, capture_envelopes, emit_json, fail
 from ..manuscript import _provenance_sidecar_path, ventilate_markdown
@@ -78,9 +79,7 @@ def _prepare_from_source(
         input_sidecar = _provenance_sidecar_path(from_source)
         if input_sidecar.is_file():
             shutil.copyfile(input_sidecar, _provenance_sidecar_path(prepared))
-        for asset in from_source.parent.iterdir():
-            if asset.is_file() and asset.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}:
-                shutil.copyfile(asset, staging / asset.name)
+        copy_referenced_images(from_source, staging)
     else:
         raise KatzError(
             "--from accepts PDF, LaTeX, or Markdown sources",
@@ -214,10 +213,7 @@ def workspace_new(
             sidecar = _provenance_sidecar_path(canonical)
             if sidecar.is_file():
                 shutil.copyfile(sidecar, _provenance_sidecar_path(workspace_canonical))
-            image_exts = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
-            for asset in canonical.parent.iterdir():
-                if asset.is_file() and asset.suffix.lower() in image_exts:
-                    shutil.copyfile(asset, paper_dir / asset.name)
+            copy_referenced_images(canonical, paper_dir)
 
             source_uri: Optional[str] = None
             source_root: Optional[str] = None
@@ -269,12 +265,17 @@ def workspace_new(
                         )
                         jobs_ready = jobs is not None
                     if model is not None:
-                        _compose_step(
+                        model_result = _compose_step(
                             steps, "spotter_models", spotter_models,
                             models=[model], service=None,
                             max_tokens=SPOTTER_RECOMMENDED_MAX_TOKENS,
-                            reasoning_effort=None, output=Path("models.ep"),
+                            reasoning_effort=None, temperature=1.0, output=Path("models.ep"),
                         )
+                        jobs_ready = jobs_ready and model_result is not None
+                        if jobs_ready:
+                            from ..edsl_bridge import register_execution_plan
+                            plan = register_execution_plan(Path("jobs.ep"), Path("models.ep"))
+                            steps["execution_plan"] = {"status": "ok", "data": plan}
             finally:
                 os.chdir(previous_cwd)
 
@@ -290,7 +291,7 @@ def workspace_new(
                     f"cd {workspace} && ep run jobs.ep --model_list {model_list} --output results.ep"
                 )
                 next_steps.append(
-                    "katz ingest results.ep --apply && katz report generate --output review.html"
+                    "katz results audit results.ep --jobs jobs.ep && katz ingest results.ep --apply && katz next"
                 )
         else:
             next_steps.append(f"cd {workspace} && katz next")
@@ -307,6 +308,6 @@ def workspace_new(
                 "Katz packaged the review but never runs models; the `ep run` step is yours to authorize."
                 if from_source is not None else None
             ),
-        }, next_steps=next_steps)
+        }, next_steps=next_steps, warnings=[{"code": "workspace_incomplete", "step": name, "message": "Setup failed; run katz next in the preserved workspace."} for name, step in steps.items() if step.get("status") == "error"])
     except KatzError as exc:
         fail(exc.message, exc.code, exc.details)

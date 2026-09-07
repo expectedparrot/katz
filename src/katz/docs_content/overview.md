@@ -135,7 +135,7 @@ katz spotter enable <name>            # enable a spotter
 katz issue list --state draft         # list draft issues
 katz issue investigate --id <id> --verdict confirmed --notes "..."
 katz report generate                  # generate HTML report
-katz status                      # bootstrap payload for agents
+katz next                      # bootstrap payload for agents
 katz docs list                        # list documentation topics
 ```
 

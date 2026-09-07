@@ -289,9 +289,10 @@ wheels = [
 [[package]]
 name = "edsl"
 version = "1.0.8.dev1"
-source = { git = "https://github.com/expectedparrot/edsl.git#dc69fbbb6226fb1225484f0972922043b9100ff0" }
+source = { git = "https://github.com/expectedparrot/edsl.git?rev=7a3a3399f2b107b9272ab6ade72f3549ed02e2e9#7a3a3399f2b107b9272ab6ade72f3549ed02e2e9" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "click" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "json-repair" },
@@ -509,7 +510,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
-    { name = "edsl", git = "https://github.com/expectedparrot/edsl.git" },
+    { name = "edsl", git = "https://github.com/expectedparrot/edsl.git?rev=7a3a3399f2b107b9272ab6ade72f3549ed02e2e9" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.9" },

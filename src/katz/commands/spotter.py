@@ -15,6 +15,9 @@ from ..edsl_bridge import (
     SPOTTER_QUESTION_TEXT,
     SPOTTER_RECOMMENDED_MAX_TOKENS,
     SPOTTER_VERDICT_SUFFIX,
+    SPOTTER_FINDINGS_SUFFIX,
+    _fingerprint,
+    ROUTED_SPOTTER_QUESTION_TEXT,
     _answer_is_found,
     _audit_spotter_results,
     _coerce_spotter_answer,
@@ -24,11 +27,13 @@ from ..edsl_bridge import (
     _resolve_audit_jobs,
     _result_value,
     _save_and_verify_ep,
+    register_execution_plan,
 )
 from ..errors import KatzError, emit_json, fail
-from ..issues import VALID_STATES, _issue_dir
+from ..issues import VALID_STATES, _issue_dir, publish_issue_batch
 from ..manuscript import _locate_quoted_text, resolve_location
 from ..storage import (
+    ledger_locked,
     ensure_initialized,
     katz_root,
     load_version,
@@ -41,6 +46,28 @@ from ..storage import (
 
 
 spotter_app = typer.Typer(help="Manage issue spotters.")
+
+
+def _enabled_spotter_definitions(dest: Path, requested_csv: Optional[str]) -> list[dict[str, Any]]:
+    """Load enabled spotters, optionally restricted by a comma-separated list."""
+    enabled_dir = dest / "spotters"
+    requested = (
+        {name.strip() for name in requested_csv.split(",") if name.strip()}
+        if requested_csv else None
+    )
+    definitions: list[dict[str, Any]] = []
+    for path in sorted(enabled_dir.glob("*.md")) if enabled_dir.is_dir() else []:
+        if requested is not None and path.stem not in requested:
+            continue
+        content = path.read_text(encoding="utf-8")
+        definitions.append({"name": path.stem, "content": content, **_parse_spotter(content)})
+    if requested is not None:
+        missing = sorted(requested - {item["name"] for item in definitions})
+        if missing:
+            raise KatzError("Some requested spotters are not enabled", "not_found", {"spotters": missing})
+    if not definitions:
+        raise KatzError("No enabled spotters found", "not_found")
+    return definitions
 
 
 @spotter_app.command("init-catalog")
@@ -305,8 +332,11 @@ def spotter_jobs(
         help="Repackage only the scenarios that did not return a valid answer in this Results file.",
     ),
     commit: Optional[str] = typer.Option(None, "--commit"),
+    models: Optional[Path] = None,
+    jobs: Optional[Path] = None,
+    multiple_findings: bool = False,
 ) -> None:
-    """Build an EDSL Jobs package from enabled spotters and manuscript content."""
+    """Build native Jobs; retries require --jobs identifying the preserved original."""
     try:
         if output.suffix != ".ep":
             raise KatzError("--output must use the .ep extension", "validation_error", {"output": str(output)})
@@ -315,7 +345,18 @@ def spotter_jobs(
 
         Jobs, Scenario, ScenarioList, QuestionDict = _edsl_imports()
         resolved, dest, _, pmap, canonical = load_version(commit)
-        content = canonical.read_text(encoding="utf-8")
+        if from_failures is not None:
+            from ..edsl_bridge import build_retry_packages
+            origin = _resolve_audit_jobs(dest, from_failures, jobs)
+            if origin is None:
+                raise KatzError("Retries require originating Jobs; pass --jobs", "originating_jobs_required")
+            manifest = build_retry_packages(from_failures, origin, output.with_name(output.name + ".retry"), models, single_output=output)
+            record_run(dest, "spotter", "packaged", jobs_path=str(output.resolve()),
+                       expected_results_path=str(_expected_results_path(output).resolve()),
+                       parent_jobs_path=str(origin.resolve()), retry_provenance=manifest)
+            emit_json({**manifest, "output": str(output), "scenario_count": 1})
+            return
+        content = canonical.read_bytes().decode("utf-8")
         enabled_dir = dest / "spotters"
         requested = {name.strip() for name in spotters.split(",") if name.strip()} if spotters else None
 
@@ -392,35 +433,16 @@ def spotter_jobs(
         if pilot is not None:
             scenarios = scenarios[:pilot]
 
-        if from_failures is not None:
-            # Keep only scenarios whose (spotter, section) did not already return a
-            # valid answer — i.e. null/invalid/truncated rows AND scenarios that
-            # never returned at all — so the re-run covers exactly the gap.
-            prior = _audit_spotter_results(from_failures)
-            valid_identities = {
-                (row["scenario"].get("spotter_name"), row["scenario"].get("section_id"))
-                for row in prior["_rows"] if row["valid"]
-            }
-            scenarios = [
-                scenario for scenario in scenarios
-                if (dict(scenario).get("spotter_name"), dict(scenario).get("section_id"))
-                not in valid_identities
-            ]
-            if not scenarios:
-                raise KatzError(
-                    "No failing scenarios to re-run; the Results file is already valid for these spotters/sections",
-                    "validation_error",
-                    {"from_failures": str(from_failures)},
-                )
-
         from edsl.questions import QuestionFreeText
 
         question = QuestionFreeText(
             question_name="spotter_result",
-            question_text=SPOTTER_QUESTION_TEXT + SPOTTER_VERDICT_SUFFIX,
+            question_text=SPOTTER_QUESTION_TEXT + (SPOTTER_FINDINGS_SUFFIX if multiple_findings else SPOTTER_VERDICT_SUFFIX),
         )
         job = Jobs(survey=question.to_survey()).by(ScenarioList(scenarios))
         saved = _save_and_verify_ep(job, output)
+        if models is not None:
+            register_execution_plan(output, models)
         expected_results = _expected_results_path(output)
         record_run(
             dest, "spotter", "packaged",
@@ -481,12 +503,165 @@ def spotter_jobs(
         fail(str(exc), "edsl_error", {"output": str(output)})
 
 
+@spotter_app.command("routed-jobs")
+def spotter_routed_jobs(
+    output: Path = typer.Option(Path("routed.jobs.ep"), "--output", "-o"),
+    section: Optional[str] = typer.Option(None, "--section"),
+    spotters: Optional[str] = typer.Option(None, "--spotters", help="Comma-separated enabled spotter names"),
+    pilot: Optional[int] = typer.Option(None, "--pilot", min=1, help="Keep only the first N section interviews."),
+    commit: Optional[str] = typer.Option(None, "--commit"),
+    models: Optional[Path] = None,
+) -> None:
+    """Build one checkbox-routed spotter Survey interview per manuscript section."""
+    try:
+        if output.suffix != ".ep":
+            raise KatzError("--output must use the .ep extension", "validation_error", {"output": str(output)})
+        if output.exists():
+            raise KatzError(f"{output} already exists", "validation_error", {"output": str(output)})
+
+        Jobs, Scenario, ScenarioList, _ = _edsl_imports()
+        from edsl import Survey
+        from edsl.questions import QuestionCheckBox, QuestionFreeText
+
+        resolved, dest, _, pmap, canonical = load_version(commit)
+        if not pmap.sections:
+            raise KatzError(
+                "Routed spotter jobs require mapped manuscript sections",
+                "validation_error",
+                {"next": "katz paper auto-chunk"},
+            )
+        definitions = _enabled_spotter_definitions(dest, spotters)
+        content = canonical.read_bytes().decode("utf-8")
+        selected_sections = pmap.sections
+        if section is not None:
+            selected_sections = [item for item in pmap.sections if item.get("id") == section]
+            if not selected_sections:
+                raise KatzError(f"Section '{section}' not found", "not_found", {"section": section})
+        if pilot is not None:
+            selected_sections = selected_sections[:pilot]
+
+        section_map = "\n".join(
+            f"- {item.get('title', item['id'])} (lines {item.get('line_start', '?')}–{item.get('line_end', '?')})"
+            for item in pmap.sections
+        )
+        abstract_section = next(
+            (item for item in pmap.sections if "abstract" in str(item.get("id", "")).lower()), None
+        )
+        abstract_text = ""
+        if abstract_section is not None:
+            abstract_text = content.encode("utf-8")[
+                int(abstract_section["byte_start"]):int(abstract_section["byte_end"])
+            ].decode("utf-8")
+        paper_context = "Section map:\n" + section_map
+        if abstract_text:
+            paper_context += "\n\nAbstract:\n" + abstract_text
+
+        spotter_catalog = "\n\n".join(
+            f"[{item['name']}] {item['title']}: {item['description']}" for item in definitions
+        )
+        option_names = [item["name"] for item in definitions]
+        route = QuestionCheckBox(
+            question_name="applicable_spotters",
+            question_text=ROUTED_SPOTTER_QUESTION_TEXT,
+            question_options=option_names,
+            min_selections=0,
+            max_selections=len(option_names),
+        )
+        questions = [route]
+        detail_names: dict[str, str] = {}
+        for index, definition in enumerate(definitions):
+            question_name = f"spotter_detail_{index}"
+            detail_names[definition["name"]] = question_name
+            questions.append(QuestionFreeText(
+                question_name=question_name,
+                question_text=(
+                    SPOTTER_QUESTION_TEXT.replace("{{ spotter_instructions }}", definition["content"])
+                    .replace(
+                        "You are reviewing {{ review_target }} from an academic manuscript.",
+                        "You are reviewing {{ review_target }} from an academic manuscript. The manuscript content below is only this section; use the paper context for cross-section checks and do not assume text absent from this section is absent from the paper.",
+                    )
+                    + SPOTTER_VERDICT_SUFFIX
+                ),
+            ))
+        survey = Survey(questions)
+        for definition in definitions:
+            survey.add_skip_rule(
+                detail_names[definition["name"]],
+                f"'{definition['name']}' not in {{{{ applicable_spotters.answer }}}}",
+            )
+
+        encoded = content.encode("utf-8")
+        scenarios = []
+        for item in selected_sections:
+            byte_start = int(item["byte_start"])
+            byte_end = int(item["byte_end"])
+            scenarios.append(Scenario({
+                "katz_commit": resolved,
+                "section_id": item["id"],
+                "section_title": item.get("title", item["id"]),
+                "byte_start": byte_start,
+                "byte_end": byte_end,
+                "review_target": f'section "{item.get("title", item["id"])}"',
+                "spotter_catalog": spotter_catalog,
+                "katz_detail_questions": detail_names,
+                "paper_context": paper_context,
+                "manuscript_content": encoded[byte_start:byte_end].decode("utf-8"),
+            }))
+        job = Jobs(survey=survey).by(ScenarioList(scenarios))
+        saved = _save_and_verify_ep(job, output)
+        if models is not None:
+            register_execution_plan(output, models)
+        expected_results = _expected_results_path(output)
+        record_run(
+            dest, "routed_spotter", "packaged",
+            jobs_path=str(output.resolve()),
+            expected_results_path=str(expected_results.resolve()),
+            question="applicable_spotters",
+            scenario_count=len(scenarios),
+            spotters=option_names,
+            pilot=pilot,
+        )
+        emit_json({
+            "object_type": "Jobs",
+            "output": str(output),
+            "commit": resolved,
+            "survey_design": "checkbox_router_with_conditional_detail_questions",
+            "router_question": "applicable_spotters",
+            "detail_questions": detail_names,
+            "spotters": option_names,
+            "section_interviews": len(scenarios),
+            "question_count": len(questions),
+            "maximum_model_calls": len(scenarios) * len(questions),
+            "actual_model_calls": "One router plus one call per selected spotter in each section.",
+            "inference": "external",
+            "pilot": pilot is not None,
+            "answer_contract": {
+                "router": "checkbox list of spotter names",
+                "detail": "free text ending in one fenced JSON spotter verdict",
+                "skipped_detail_answers": "not applicable; preserved as skipped by EDSL Survey rules",
+                "recommended_max_tokens": SPOTTER_RECOMMENDED_MAX_TOKENS,
+                "pilot_required_before_large_run": len(scenarios) > 5,
+            },
+            "saved": saved,
+            "next": (
+                f"katz spotter models --model <model-name> --max-tokens "
+                f"{SPOTTER_RECOMMENDED_MAX_TOKENS} --output models.ep && "
+                f"ep run {output} --model_list models.ep --output {expected_results}"
+            ),
+        })
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+    except Exception as exc:
+        fail(str(exc), "edsl_error", {"output": str(output)})
+
+
 @spotter_app.command("models")
 def spotter_models(
     models: List[str] = typer.Option(..., "--model", help="Model name; repeat for multiple models."),
     service: Optional[str] = typer.Option(None, "--service", help="Inference service for all models (e.g. anthropic, openai)."),
     max_tokens: int = typer.Option(SPOTTER_RECOMMENDED_MAX_TOKENS, "--max-tokens", min=1),
     reasoning_effort: Optional[str] = typer.Option(None, "--reasoning-effort"),
+    temperature: float = typer.Option(1.0, "--temperature", help="Sampling temperature; use the provider-supported default when unsure."),
     output: Path = typer.Option(Path("models.ep"), "--output", "-o"),
 ) -> None:
     """Write an EDSL ModelList package with an adequate max_tokens for free-text
@@ -503,15 +678,10 @@ def spotter_models(
         _edsl_imports()
         from edsl import Model, ModelList
 
-        built = []
-        for name in models:
-            kwargs: dict[str, Any] = {"max_tokens": max_tokens}
-            if service:
-                kwargs["service_name"] = service
-            if reasoning_effort:
-                kwargs["reasoning_effort"] = reasoning_effort
-            built.append(Model(name, **kwargs))
-        _save_and_verify_ep(ModelList(built), output)
+        from ..edsl_bridge import build_model_list
+        built = build_model_list(models, service=service, max_tokens=max_tokens,
+                                 reasoning_effort=reasoning_effort, temperature=temperature)
+        _save_and_verify_ep(built, output)
         emit_json({
             "object_type": "ModelList",
             "output": str(output),
@@ -519,6 +689,7 @@ def spotter_models(
             "max_tokens": max_tokens,
             "service": service,
             "reasoning_effort": reasoning_effort,
+            "temperature": temperature,
             "next": f"ep run <jobs.ep> --model_list {output} --output <results.ep>",
         })
     except KatzError as exc:
@@ -528,12 +699,14 @@ def spotter_models(
 
 
 @spotter_app.command("ingest")
+@ledger_locked
 def spotter_ingest(
     results_path: Path = typer.Argument(..., exists=True, readable=True),
     state: str = typer.Option("draft", "--state"),
     commit: Optional[str] = typer.Option(None, "--commit"),
     jobs: Optional[Path] = typer.Option(None, "--jobs", exists=True, readable=True),
     allow_partial: bool = typer.Option(False, "--allow-partial"),
+    models: Optional[Path] = None,
 ) -> None:
     """Parse an EDSL Results package and file manuscript-anchored Katz issues."""
     try:
@@ -544,7 +717,7 @@ def spotter_ingest(
 
         resolved, dest, _, _, canonical = load_version(commit)
         resolved_jobs = _resolve_audit_jobs(dest, results_path, jobs)
-        audit = _audit_spotter_results(results_path, resolved_jobs)
+        audit = _audit_spotter_results(results_path, resolved_jobs, models, expected_commit=resolved)
         audit_rows = audit.pop("_rows")
         if not audit["complete"] and not allow_partial:
             record_run(
@@ -565,7 +738,7 @@ def spotter_ingest(
                 },
             )
         results = Results.git.load(results_path)
-        manuscript = canonical.read_text(encoding="utf-8")
+        manuscript = canonical.read_bytes().decode("utf-8")
         existing_keys: set[str] = set()
         issues_dir = dest / "issues"
         if issues_dir.is_dir():
@@ -580,24 +753,23 @@ def spotter_ingest(
                         existing_keys.add(member_key)
 
         found = filed = skipped = 0
+        duplicate_replays = anchoring_failures = 0
         issue_ids: list[str] = []
         skipped_details: list[dict[str, Any]] = []
         positives: list[dict[str, Any]] = []
-        for result_index, result in enumerate(results):
-            if result_index < len(audit_rows) and not audit_rows[result_index]["valid"]:
+        for row in audit_rows:
+            result = results[row["index"]]
+            scenario = row["scenario"]
+            if scenario.get("katz_commit") != resolved:
+                raise KatzError("Results were generated for a different Katz version", "validation_error",
+                                {"expected": resolved, "actual": scenario.get("katz_commit")})
+            if not row["valid"]:
                 skipped += 1
                 continue
-            answer = _coerce_spotter_answer(_result_value(result, "answer", "spotter_result"))
-            scenario = result["scenario"] if isinstance(result["scenario"], dict) else dict(result["scenario"])
+            answer = row["answer"]
             if not isinstance(answer, dict) or not _answer_is_found(answer.get("found")):
                 continue
             found += 1
-            if scenario.get("katz_commit") != resolved:
-                raise KatzError(
-                    "Results were generated for a different Katz version",
-                    "validation_error",
-                    {"expected": resolved, "actual": scenario.get("katz_commit")},
-                )
             spotter_name = str(scenario.get("spotter_name", ""))
             if not (dest / "spotters" / f"{spotter_name}.md").exists():
                 raise KatzError("Result references a spotter not enabled for this version", "not_found", {"spotter": spotter_name})
@@ -611,6 +783,7 @@ def spotter_ingest(
                 # A positive finding whose quotation cannot be located in its
                 # section region is dropped rather than anchored to a guessed
                 # offset; surface it so the reviewer can recover it by hand.
+                anchoring_failures += 1
                 skipped_details.append({
                     "reason": "quote_not_located" if quoted else "missing_quote",
                     "spotter": spotter_name,
@@ -619,12 +792,29 @@ def spotter_ingest(
                     "quoted_text": quoted[:200],
                 })
                 continue
+            extra_quotes = answer.get("evidence_quotes", [])
+            if (not isinstance(extra_quotes, list)
+                    or any(not isinstance(q, str) or not q or q not in manuscript for q in extra_quotes)):
+                anchoring_failures += 1
+                skipped += 1
+                skipped_details.append({"reason": "evidence_not_located", "title": answer.get("title")})
+                continue
+            comparison_ranges = scenario.get("katz_evidence_ranges", [])
+            if comparison_ranges:
+                evidence = [quoted, *extra_quotes]
+                passages = [manuscript.encode("utf-8")[r["byte_start"]:r["byte_end"]].decode("utf-8")
+                            for r in comparison_ranges]
+                if not all(any(q in passage for q in evidence) for passage in passages):
+                    anchoring_failures += 1
+                    skipped += 1
+                    skipped_details.append({"reason": "comparison_evidence_incomplete", "title": answer.get("title")})
+                    continue
             char_start, char_end = located
             byte_start = range_start + len(region[:char_start].encode("utf-8"))
             byte_end = range_start + len(region[:char_end].encode("utf-8"))
             model = _result_value(result, "model", "model") or _result_value(result, "model", "_model_") or "unknown"
             key_payload = json.dumps(
-                {"commit": resolved, "spotter": spotter_name, "model": str(model), "answer": answer, "scenario": scenario},
+                {"commit": resolved, "spotter": spotter_name, "model": row["model"], "answer": answer, "scenario": scenario},
                 sort_keys=True,
                 default=str,
             )
@@ -634,27 +824,28 @@ def spotter_ingest(
                 "byte_start": byte_start,
                 "byte_end": byte_end,
                 "model": str(model),
+                "model_spec": row["model"],
                 "answer": answer,
                 "result_key": result_key,
             })
 
-        model_count = max(1, len([name for name in audit.get("models", []) if name]))
+        staged_issues = []
+        model_count = max(1, len(audit.get("model_configurations", [])))
         for group in _group_positive_findings(positives):
             member_keys = sorted({member["result_key"] for member in group})
             group_key = hashlib.sha256("\n".join(member_keys).encode("utf-8")).hexdigest()
             if group_key in existing_keys or any(key in existing_keys for key in member_keys):
                 skipped += 1
+                duplicate_replays += 1
                 continue
             primary = group[0]
             models_flagging = sorted({member["model"] for member in group})
-            agreement = round(min(1.0, len(models_flagging) / model_count), 6)
+            agreement = round(min(1.0, len({_fingerprint(m["model_spec"]) for m in group}) / model_count), 6)
             byte_start = min(member["byte_start"] for member in group)
             byte_end = max(member["byte_end"] for member in group)
             issue_id = uuid.uuid4().hex
             timestamp = now_utc()
             issue_dir = _issue_dir(dest, issue_id)
-            (issue_dir / "status").mkdir(parents=True, exist_ok=True)
-            (issue_dir / "investigations").mkdir(parents=True, exist_ok=True)
             record = {
                 "schema_version": 2,
                 "id": issue_id,
@@ -670,17 +861,20 @@ def spotter_ingest(
                     "edsl_result_keys": member_keys,
                     "edsl_model": primary["model"],
                     "edsl_models": models_flagging,
+                    "edsl_model_configurations": [m["model_spec"] for m in group],
                     "agreement": agreement,
-                    "edsl_results_path": str(results_path),
+                    "edsl_results_path": str(results_path.resolve()),
+                    "edsl_member_findings": [member["answer"] for member in group],
                 },
             }
-            write_json(issue_dir / "issue.json", record)
-            write_event_json(issue_dir / "status", {"state": state, "reason": "imported from EDSL Results", "timestamp": timestamp})
+            staged_issues.append((record, {"state": state, "reason": "imported from EDSL Results", "timestamp": timestamp}))
             existing_keys.add(group_key)
             existing_keys.update(member_keys)
             issue_ids.append(issue_id)
             filed += 1
 
+        record_run(dest, "spotter", "validated", audit=audit)
+        publish_issue_batch(dest, staged_issues)
         record_run(
             dest, "spotter", "partial" if not audit["complete"] else "ingested",
             results_path=str(results_path.resolve()),
@@ -688,6 +882,8 @@ def spotter_ingest(
             issues_found=found,
             issues_filed=filed,
             skipped=skipped,
+            duplicate_replays=duplicate_replays,
+            anchoring_failures=anchoring_failures,
             audit=audit,
         )
         emit_json({
@@ -699,6 +895,8 @@ def spotter_ingest(
             "cross_model_merged": max(0, len(positives) - len(_group_positive_findings(positives))),
             "skipped": skipped,
             "skipped_details": skipped_details,
+            "duplicate_replays": duplicate_replays,
+            "anchoring_failures": anchoring_failures,
             "issue_ids": issue_ids,
             "audit": audit,
             "run_status": "partial" if not audit["complete"] else "ingested",
@@ -707,3 +905,33 @@ def spotter_ingest(
         fail(exc.message, exc.code, exc.details)
     except Exception as exc:
         fail(str(exc), "edsl_error", {"results": str(results_path)})
+
+
+@spotter_app.command("compare-jobs")
+def spotter_compare_jobs(
+    left: str = typer.Option(..., "--left"),
+    right: str = typer.Option(..., "--right"),
+    output: Path = typer.Option(..., "--output"),
+    spotters: str = "internal_contradictions",
+    models: Optional[Path] = None,
+    commit: Optional[str] = None,
+) -> None:
+    """Compare two mapped sections using exact evidence from both passages."""
+    from ..edsl_bridge import build_comparison_jobs
+    try:
+        if output.exists() or output.suffix != ".ep":
+            raise KatzError("Use a new .ep output path", "validation_error")
+        resolved, dest, _, pmap, canonical = load_version(commit)
+        sections = {s["id"]: s for s in pmap.sections}
+        if left not in sections or right not in sections or left == right:
+            raise KatzError("Select two different mapped section IDs", "validation_error")
+        job = build_comparison_jobs(resolved, canonical.read_bytes().decode("utf-8"),
+                                    sections[left], sections[right], _enabled_spotter_definitions(dest, spotters))
+        saved = _save_and_verify_ep(job, output)
+        if models is not None:
+            register_execution_plan(output, models)
+        record_run(dest, "spotter", "packaged", jobs_path=str(output.resolve()),
+                   expected_results_path=str(_expected_results_path(output).resolve()), comparison=[left, right])
+        emit_json({"saved": saved, "scenario_count": len(job.scenarios), "comparison": [left, right], "inference": "external"})
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)

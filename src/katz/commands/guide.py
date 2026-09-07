@@ -38,7 +38,7 @@ def guide_root(ctx: typer.Context) -> None:
                 {
                     "stage": "package",
                     "purpose": "Create and verify a native EDSL Jobs artifact.",
-                    "commands": ["katz spotter jobs", "katz paper review-jobs", "katz review jobs"],
+                    "commands": ["katz spotter jobs", "katz spotter routed-jobs", "katz paper review-jobs", "katz review jobs"],
                 },
                 {
                     "stage": "external-execution",
@@ -49,7 +49,7 @@ def guide_root(ctx: typer.Context) -> None:
                 {
                     "stage": "register-and-audit",
                     "purpose": "Audit Results and register them without hiding retries.",
-                    "commands": ["katz results audit", "katz ingest", "katz spotter ingest"],
+                    "commands": ["katz results plan", "katz results audit", "katz results retry", "katz results merge", "katz ingest", "katz spotter ingest"],
                 },
                 {
                     "stage": "investigate-and-report",

@@ -336,7 +336,8 @@ def _agent_state() -> dict[str, Any]:
     run_records = [
         read_json(path) for path in sorted((dest / "runs").glob("*.json"))
     ] if (dest / "runs").is_dir() else []
-    latest_run = run_records[-1] if run_records else None
+    from ..storage import latest_review_run
+    latest_run = latest_review_run(dest)
     review = {
         "initialized": True,
         "active_version": resolved,
@@ -434,7 +435,19 @@ def _agent_state() -> dict[str, Any]:
             ])
     else:
         phase = "automated_review"
-        if latest_run and latest_run.get("status") == "packaged":
+        if latest_run and latest_run.get("status") == "audited" and latest_run.get("kind") != "spotter_pilot":
+            actions.append(_agent_action(
+                "preview_ingestion", "Preview the audited Results before ingestion",
+                ["katz", "ingest", latest_run["results_path"], "--jobs", latest_run["jobs_path"]]
+                + (["--models", latest_run["models_path"]] if latest_run.get("models_path") else []),
+                mutates_state=False))
+        elif latest_run and latest_run.get("status") == "invalid":
+            actions.append(_agent_action(
+                "inspect_failed_results", "Inspect incomplete review observations before retrying",
+                ["katz", "results", "failures", latest_run["results_path"]]
+                + (["--jobs", latest_run["jobs_path"]] if latest_run.get("jobs_path") else []),
+                mutates_state=False))
+        elif latest_run and latest_run.get("status") == "packaged":
             expected_results = Path(str(latest_run.get("expected_results_path", "")))
             jobs_path = Path(str(latest_run.get("jobs_path", "jobs.ep")))
             if expected_results.is_file():
@@ -453,8 +466,11 @@ def _agent_state() -> dict[str, Any]:
                         mutates_state=False,
                     ))
             else:
-                models_file = root / "models.ep"
-                if not models_file.exists():
+                from ..edsl_bridge import _plan_path
+                plan = read_json(_plan_path(jobs_path)) if _plan_path(jobs_path).exists() else None
+                models_file = Path(plan["models_path"]) if plan and plan.get("models_path") else root / "models.ep"
+                embedded_models = bool(plan and plan.get("models_path") is None)
+                if not models_file.exists() and not embedded_models:
                     actions.append(_agent_action(
                         "build_spotter_models",
                         "Create a ModelList with an adequate token budget for free-text spotter runs",
@@ -467,11 +483,17 @@ def _agent_state() -> dict[str, Any]:
                             "in a ModelList before running."
                         ),
                     ))
+                if models_file.exists() and not _plan_path(jobs_path).exists():
+                    actions.append(_agent_action(
+                        "register_execution_plan", "Preserve the expected model configurations before execution",
+                        ["katz", "results", "plan", "--jobs", str(jobs_path), "--models", str(models_file)],
+                        mutates_state=True))
                 actions.append(_agent_action(
                     "run_jobs",
                     "Execute the packaged review with the prepared ModelList (paid, remote)",
-                    ["ep", "run", str(jobs_path), "--model_list", "models.ep",
-                     "--output", str(expected_results)],
+                    ["ep", "run", str(jobs_path)]
+                    + ([] if embedded_models else ["--model_list", str(models_file)])
+                    + ["--output", str(expected_results)],
                     mutates_state=True,
                     requires_network=True,
                     requires_user_approval=True,
@@ -534,12 +556,6 @@ def _agent_state() -> dict[str, Any]:
                     ["ep", "check"],
                     mutates_state=False,
                     requires_network=True,
-                ),
-                _agent_action(
-                    "run_review_jobs", "Run the portable EDSL review package",
-                    ["ep", "run", jobs_path, "--model", "<model-name>", "--output", results_path],
-                    mutates_state=True, requires_network=True, requires_user_approval=True,
-                    reason="The model choice affects cost and review behavior.",
                 ),
             ])
     return {

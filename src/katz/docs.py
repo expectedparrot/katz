@@ -7,6 +7,7 @@ from pathlib import Path
 DOCS_DIR = Path(__file__).parent / "docs_content"
 
 DOCS: dict[str, dict[str, str]] = {
+    "reliability": {"title": "Review Evidence and Execution Plans", "summary": "Audit v2 migration, exact retries, verifier proposals, and preserved artifacts.", "file": "reliability.md"},
     "overview": {
         "title": "Package Overview",
         "summary": "What katz does, when to use it, core concepts, and storage layout.",

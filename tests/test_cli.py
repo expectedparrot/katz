@@ -328,6 +328,7 @@ def test_sentence_segmentation_skips_non_prose(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
+    (tmp_path / "img.png").write_bytes(b"fixture image")
     katz(repo, "init")
     result = katz(repo, "paper", "register", "--canonical", str(canonical))
     assert result["sentences"] == 4  # First, Second, Third, Fourth

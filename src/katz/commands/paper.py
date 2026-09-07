@@ -10,6 +10,7 @@ import typer
 from pathlib import Path
 from typing import Any, List, Optional
 
+from ..assets import copy_referenced_images, referenced_images
 from ..edsl_bridge import (
     ECONOMICS_REVIEW_QUESTION_TEXT,
     _expected_results_path,
@@ -26,6 +27,8 @@ from ..manuscript import (
     segment_sentences,
 )
 from ..storage import (
+    ledger_locked,
+    atomic_write,
     active_commit,
     active_version_path,
     append_jsonl,
@@ -99,6 +102,7 @@ def paper_register(
         fail(exc.message, exc.code, exc.details)
 
 
+@ledger_locked
 def _register_manuscript(
     canonical: Path,
     *,
@@ -151,7 +155,7 @@ def _register_manuscript(
     commit = current_commit()
     checksum = sha256_file(canonical)
 
-    text = canonical.read_text(encoding="utf-8")
+    text = canonical.read_bytes().decode("utf-8")
     sentence_records = segment_sentences(text, source_format=source_format)
     non_ventilated = _count_non_ventilated_lines(text)
 
@@ -184,19 +188,35 @@ def _register_manuscript(
 
     records = [header] + sentence_records
 
-    dest = version_dir(commit)
+    final_dest = version_dir(commit)
+    identity = str(relative_canonical) if relative_canonical is not None else str(canonical.resolve())
+    if final_dest.exists():
+        existing = read_json(final_dest / "version.json")
+        existing_canonical = final_dest / existing.get("canonical", "paper/manuscript.md")
+        if (existing.get("checksum") != checksum
+                or not existing_canonical.is_file()
+                or sha256_file(existing_canonical) != checksum
+                or existing.get("canonical_source", identity) != identity):
+            raise KatzError("This commit already has a different registered manuscript; commit a new version first",
+                            "registration_conflict", {"commit": commit})
+        live_assets = [{"reference": item["reference"], "sha256": item["sha256"]} for item in referenced_images(canonical)]
+        preserved_assets = [{"reference": item["reference"], "sha256": item["sha256"]} for item in existing.get("assets", [])]
+        if "assets" in existing and live_assets != preserved_assets:
+            raise KatzError("Image dependencies changed; register a new committed manuscript version", "registration_conflict")
+        pmap = load_version(commit)[3]
+        atomic_write(active_version_path(), (commit + "\n").encode())
+        return {"registered": True, "replayed": True, "commit": commit,
+                "version_dir": str(final_dest), "checksum": checksum, "sentences": len(pmap.sentences)}
+
+    staging = tempfile.TemporaryDirectory(prefix=".registration-", dir=final_dest.parent)
+    dest = Path(staging.name) / commit
     paper_dest = dest / "paper"
     for directory in [paper_dest, dest / "issues", dest / "chunks"]:
         directory.mkdir(parents=True, exist_ok=True)
 
     shutil.copyfile(canonical, paper_dest / "manuscript.md")
 
-    # Copy sibling image files referenced by the manuscript
-    image_exts = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
-    canonical_dir = canonical.parent
-    for img_file in canonical_dir.iterdir():
-        if img_file.suffix.lower() in image_exts and img_file.is_file():
-            shutil.copyfile(img_file, paper_dest / img_file.name)
+    image_manifest = copy_referenced_images(canonical, paper_dest)
     write_jsonl(dest / "paper_map.jsonl", records)
 
     symbol_table = dest / "symbol_table.json"
@@ -215,6 +235,8 @@ def _register_manuscript(
         "schema_version": 1,
         "commit": commit,
         "registered_at": now_utc(),
+        "canonical_source": identity,
+        "assets": image_manifest,
         "canonical": "paper/manuscript.md",
         "paper_map": "paper_map.jsonl",
         "checksum": checksum,
@@ -222,7 +244,10 @@ def _register_manuscript(
         "parent_commit": parent_commit,
     }
     write_json(dest / "version.json", version)
-    active_version_path().write_text(commit + "\n", encoding="utf-8")
+    dest.rename(final_dest)
+    staging.cleanup()
+    dest = final_dest
+    atomic_write(active_version_path(), (commit + "\n").encode())
 
     result: dict[str, Any] = {
         "registered": True,
@@ -465,7 +490,7 @@ def paper_add_sections(
 
         # Read manuscript size for bounds checking
         manuscript_size = canonical.stat().st_size
-        manuscript_text = canonical.read_text(encoding="utf-8")
+        manuscript_text = canonical.read_bytes().decode("utf-8")
 
         existing_ids = {s["id"] for s in pmap.sections if isinstance(s, dict) and "id" in s}
 
@@ -662,7 +687,7 @@ def paper_find(
         if mode != "exact":
             raise KatzError("Only exact find mode is implemented", "validation_error", {"mode": mode})
         _, _, _, pmap, canonical = load_version(commit)
-        content = canonical.read_text(encoding="utf-8")
+        content = canonical.read_bytes().decode("utf-8")
         haystack = content.lower() if ignore_case else content
         needle = text.lower() if ignore_case else text
         results = []
@@ -708,7 +733,7 @@ def paper_review_jobs(
         paper_dir = dest / "paper"
         image_exts = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
         figure_paths = [
-            path for path in sorted(paper_dir.iterdir())
+            path for path in sorted(paper_dir.rglob("*"))
             if path.is_file() and path.suffix.lower() in image_exts
         ]
 

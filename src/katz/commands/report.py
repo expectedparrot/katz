@@ -15,12 +15,12 @@ from typing import Any, Optional
 import typer
 import yaml
 
-from ..assets import REPORT_SCRIPT
-from ..edsl_bridge import _save_and_verify_ep
+from ..assets import REPORT_SCRIPT, referenced_images
+from ..edsl_bridge import _save_and_verify_ep, audit_result_contract, register_execution_plan
 from ..errors import KatzError, emit_json, fail
 from ..issues import VALID_STATES
 from ..manuscript import validate_location
-from ..storage import load_version, now_utc, read_json, sha256_file
+from ..storage import load_version, now_utc, read_json, sha256_file, write_json
 from .agent import _agent_action
 
 
@@ -141,27 +141,7 @@ def _resolved_report_spotters(analysis_type: str) -> list[dict[str,str]]:
 
 
 def _report_image_paths(report: Path, explicit: list[Path]) -> list[Path]:
-    text = report.read_text(encoding="utf-8")
-    references = re.findall(r"!\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)", text)
-    references += re.findall(r"<img[^>]+src=[\"']([^\"']+)[\"']", text, flags=re.IGNORECASE)
-    candidates = [*explicit]
-    for value in references:
-        if re.match(r"^[a-z]+://", value, flags=re.IGNORECASE) or value.startswith("data:"):
-            continue
-        candidates.append((report.parent / value).resolve())
-    allowed = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
-    result: list[Path] = []
-    seen: set[Path] = set()
-    for path in candidates:
-        resolved = path.resolve()
-        if resolved in seen:
-            continue
-        if not resolved.is_file():
-            raise KatzError("Referenced report image does not exist", "not_found", {"path": str(resolved)})
-        if resolved.suffix.lower() not in allowed:
-            raise KatzError("Unsupported report image format", "validation_error", {"path": str(resolved), "allowed": sorted(allowed)})
-        seen.add(resolved); result.append(resolved)
-    return result
+    return list(dict.fromkeys(item["path"] for item in referenced_images(report, explicit)))
 
 
 def _parse_report_review(value: Any) -> dict[str, Any] | None:
@@ -187,16 +167,8 @@ def _result_field(result: Any, group: str, key: str) -> Any:
 
 
 def _load_report_module() -> Any:
-    if not REPORT_SCRIPT.exists():
-        raise KatzError("Report generator script not found", "not_found", {"path": str(REPORT_SCRIPT)})
-    spec = importlib.util.spec_from_file_location("katz_generate_review_report", REPORT_SCRIPT)
-    if spec is None or spec.loader is None:
-        raise KatzError("Report generator script could not be loaded", "validation_error", {"path": str(REPORT_SCRIPT)})
-    module = importlib.util.module_from_spec(spec)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", SyntaxWarning)
-        spec.loader.exec_module(module)
-    return module
+    from .. import reporting
+    return reporting
 
 
 def _report_source(text: str, path: Path) -> dict[str, Any]:
@@ -270,7 +242,7 @@ def _report_source(text: str, path: Path) -> dict[str, Any]:
 
 
 def _inline_markdown(value: str) -> str:
-    escaped = html.escape(value, quote=False)
+    escaped = html.escape(value, quote=True)
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
     escaped = re.sub(r"\[([^\]]+)\]\((https?://[^\s)]+)\)", r'<a href="\2">\1</a>', escaped)
     escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
@@ -351,7 +323,7 @@ def _markdown_body_html(markdown: str) -> str:
 
 def _ledger_hash(dest: Path) -> str:
     digest = hashlib.sha256()
-    roots = [dest / "version.json", dest / "paper_map.jsonl", dest / "paper_map.json", dest / "issues", dest / "runs"]
+    roots = [dest / name for name in ("version.json", "paper_map.jsonl", "paper_map.json", "issues", "runs", "paper", "evals", "eval_results", "spotters", "reviews", "artifacts")]
     paths: list[Path] = []
     for root in roots:
         if root.is_file():
@@ -384,18 +356,18 @@ def _finalization_snapshot(dest: Path, data: dict[str, Any]) -> dict[str, Any]:
         else:
             validation_errors.append({"code": "invalid_location", "id": issue.get("id"), "message": "Issue location is missing."})
     audit = data["status"].get("review_audit") or {}
-    ingestion = None
-    runs_dir = dest / "runs"
-    if runs_dir.is_dir():
-        for path in reversed(sorted(runs_dir.glob("*.json"))):
-            candidate = read_json(path)
-            if candidate.get("kind") == "spotter" and candidate.get("status") in {"ingested", "partial", "invalid"}:
-                ingestion = candidate
-                break
+    ingestion = data["status"].get("review_run")
+    if ingestion is None:
+        from ..storage import latest_review_run
+        ingestion = latest_review_run(dest)
+    for artifact in (ingestion or {}).get("artifacts", []):
+        artifact_path = Path(artifact["path"])
+        if not artifact_path.is_file() or sha256_file(artifact_path) != artifact["sha256"]:
+            validation_errors.append({"code": "checksum_mismatch", "path": str(artifact_path)})
     expected = audit.get("expected_answers")
     valid = int(audit.get("valid_answers") or 0)
     incomplete = max(0, int(expected) - valid) if isinstance(expected, int) else None
-    skipped = int((ingestion or {}).get("skipped") or 0)
+    skipped = int((ingestion or {}).get("anchoring_failures", (ingestion or {}).get("skipped")) or 0)
     reasons: list[str] = []
     if validation_errors:
         reasons.append("ledger_validation_failed")
@@ -521,10 +493,11 @@ def report_review_jobs(
         text=report.read_text(encoding="utf-8"); detected,evidence=_detect_report_analysis_type(text)
         selected=detected if analysis_type=="auto" else analysis_type
         spotters=_resolved_report_spotters(selected); images=_report_image_paths(report,image)
-        scenario: dict[str,Any]={"report":FileStore(str(report.resolve())),"analysis_type":selected,"spotter_instructions":"\n".join(f"- {item['name']}: {item['instructions']}" for item in spotters)}
+        scenario: dict[str,Any]={"report_sha256": sha256_file(report), "report":FileStore(str(report.resolve())),"analysis_type":selected,"spotter_instructions":"\n".join(f"- {item['name']}: {item['instructions']}" for item in spotters)}
         image_lines=[]; attachments=[{"key":"report","filename":report.name,"kind":"report"}]
         for index,path in enumerate(images,start=1):
             key=f"image_{index}"; scenario[key]=FileStore(str(path)); image_lines.append(f"- {path.name}: {{{{ {key} }}}}"); attachments.append({"key":key,"filename":path.name,"kind":"image"})
+        scenario["image_manifest"] = [{"path": str(p), "sha256": sha256_file(p)} for p in images]
         prompt=REPORT_REVIEW_PROMPT.replace("{{ image_attachment_list }}","\n".join(image_lines) if image_lines else "- No local images are referenced by the report.")
         question=QuestionFreeText(question_name="report_review",question_text=prompt)
         jobs=Jobs(survey=question.to_survey()).by(ScenarioList([Scenario(scenario)]))
@@ -534,6 +507,8 @@ def report_review_jobs(
             if not model_count: raise KatzError("Report review requires a non-empty ModelList","validation_error",{"models":str(models)})
             jobs=jobs.by(model_list)
         jobs.prompts(); output.parent.mkdir(parents=True,exist_ok=True); saved=_save_and_verify_ep(jobs,output)
+        if models is not None:
+            register_execution_plan(output)
         emit_json({"object_type":"Jobs","output":str(output.resolve()),"report":str(report.resolve()),"report_sha256":sha256_file(report),"analysis_type":selected,"detected_analysis_type":detected,"detection_evidence":evidence,"spotters":spotters,"attachments":attachments,"scenario_count":1,"model_count":model_count,"expected_model_calls":model_count if model_count else "1 × the number of externally selected models","model_specifications":"Embedded from the supplied ModelList." if models else "Select models externally or rebuild with --models ModelList.ep.","inference":"external","saved":saved})
     except KatzError as exc: fail(exc.message,exc.code,exc.details)
     except Exception as exc: fail(str(exc),"jobs_creation_error",{"report":str(report),"output":str(output)})
@@ -545,6 +520,8 @@ def report_review_ingest(
     report: Path = typer.Option(...,"--report",exists=True,readable=True),
     output: Path = typer.Option(Path("analysis/report-review.json"),"--output","-o"),
     limit: int = typer.Option(50,"--limit",min=1,max=200),
+    jobs: Optional[Path] = None,
+    models: Optional[Path] = None,
 ) -> None:
     """Normalize multi-model one-shot review Results into bounded issues."""
     try:
@@ -552,12 +529,27 @@ def report_review_ingest(
         try: from edsl import Results
         except ImportError as exc: raise KatzError("EDSL is required to ingest Results.ep","dependency_error",{"install":"python -m pip install edsl"}) from exc
         loaded=Results.git.load(results); reviews=[]; parse_failures=[]; merged: dict[str,dict[str,Any]]={}
+        audit = audit_result_contract(results, jobs, models, "report_review")
+        report_hash = sha256_file(report)
+        for index, result in enumerate(loaded):
+            scenario = result["scenario"]
+            if scenario.get("report_sha256") != report_hash:
+                parse_failures.append({"index": index, "reason": "report_identity_mismatch"})
+            for asset in scenario.get("image_manifest", []):
+                path = Path(asset["path"])
+                if not path.is_file() or sha256_file(path) != asset["sha256"]:
+                    parse_failures.append({"index": index, "reason": "image_identity_mismatch"})
         for index,result in enumerate(loaded):
             raw=_result_field(result,"answer","report_review"); parsed=_parse_report_review(raw)
             model=_result_field(result,"model","model") or _result_field(result,"model","_model_") or f"reviewer_{index+1}"
             reviewer=str(model)
             if not isinstance(parsed,dict) or not isinstance(parsed.get("issues"),list):
                 parse_failures.append({"index":index,"reviewer":reviewer,"reason":"unparseable_review"}); continue
+            if (parsed.get("verdict") not in {"pass", "fix"}
+                    or not isinstance(parsed.get("summary"), str) or not parsed["summary"].strip()
+                    or (parsed.get("verdict") == "pass" and parsed["issues"])):
+                parse_failures.append({"index": index, "reviewer": reviewer, "reason": "invalid_review_verdict"})
+                continue
             valid=[]
             for item in parsed["issues"]:
                 required=("severity","category","location","evidence","problem","fix")
@@ -569,8 +561,8 @@ def report_review_ingest(
                 if reviewer not in merged[key]["reviewers"]: merged[key]["reviewers"].append(reviewer)
             reviews.append({"reviewer":reviewer,"verdict":str(parsed.get("verdict","")),"summary":str(parsed.get("summary","")),"issue_count":len(valid)})
         issues=sorted(merged.values(),key=lambda item:(0 if item["severity"].lower()=="error" else 1,-len(item["reviewers"]),item["location"]))
-        payload={"schema_version":"1.0","kind":"one-shot-report-review","report":{"path":str(report.resolve()),"sha256":sha256_file(report)},"results":{"path":str(results.resolve()),"sha256":sha256_file(results)},"complete":bool(reviews) and not parse_failures,"review_count":len(reviews),"parse_failures":parse_failures,"issue_count":len(issues),"returned_issue_count":min(len(issues),limit),"truncated":len(issues)>limit,"issues":issues[:limit],"reviews":reviews,"generated_at":now_utc()}
-        output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps(payload,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+        payload={"schema_version":"1.0","kind":"one-shot-report-review","report":{"path":str(report.resolve()),"sha256":sha256_file(report)},"results":{"path":str(results.resolve()),"sha256":sha256_file(results)},"complete":bool(reviews) and not parse_failures and audit["complete"],"audit":audit,"review_count":len(reviews),"parse_failures":parse_failures,"issue_count":len(issues),"returned_issue_count":min(len(issues),limit),"truncated":len(issues)>limit,"issues":issues[:limit],"reviews":reviews,"generated_at":now_utc()}
+        output.parent.mkdir(parents=True,exist_ok=True); write_json(output, payload)
         emit_json({"review":payload,"output":str(output.resolve()),"next_action":"Fix supported issues in report.md, rerun deterministic report checks, and regenerate HTML before presentation."})
     except KatzError as exc: fail(exc.message,exc.code,exc.details)
     except Exception as exc: fail(str(exc),"review_ingestion_error",{"results":str(results),"report":str(report)})

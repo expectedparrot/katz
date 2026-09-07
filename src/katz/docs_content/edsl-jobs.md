@@ -1,3 +1,7 @@
+> Before external execution, run `katz results plan --jobs jobs.ep --models models.ep`
+> (or export Jobs with `--models`). Audit v2 requires explicit expected models.
+> See `katz docs show reliability` for migration and exact retry/merge commands.
+
 # EDSL Jobs Workflow
 
 Katz prepares review jobs; EDSL runs them.
@@ -8,6 +12,23 @@ There is no generated Python finder script and Katz does not make model calls.
 ```bash
 katz spotter jobs --output jobs.ep
 ```
+
+For a decomposed review with conditional specialization, package one Survey
+interview per mapped section:
+
+```bash
+katz spotter routed-jobs --spotters causal_language,statistical_errors --output routed.jobs.ep
+```
+
+Each interview begins with a checkbox question describing the selected spotters.
+Katz adds EDSL skip rules so only checked spotters receive a detailed free-text
+question. This is one auditable Survey interview per section, but each answered
+question may still require a separate provider model call.
+
+The default spotter ModelList budget is 16,000 tokens because full-paper reasoning
+can consume substantial hidden reasoning tokens before emitting the structured
+verdict. Use `katz spotter models --max-tokens N` to choose a smaller budget when
+appropriate.
 
 Katz combines the registered manuscript, mapped sections, and enabled spotters.
 Section spotters produce one EDSL scenario per selected section.

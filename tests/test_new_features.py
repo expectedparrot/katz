@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import base64
+import pytest
 from pathlib import Path
 
 
@@ -49,6 +50,14 @@ def katz_fail(repo: Path, *args: str) -> dict:
     error = payload["errors"][0]
     error["details"] = error["context"]
     return error
+
+
+def plan_test_models(repo: Path, jobs_path: Path, models=None) -> None:
+    from edsl import Model, ModelList
+    from katz.edsl_bridge import register_execution_plan
+    path = repo / "expected-models.ep"
+    ModelList(models or [Model("test")]).git.save(path)
+    register_execution_plan(jobs_path, path)
 
 
 RICH_MANUSCRIPT = """\
@@ -155,7 +164,7 @@ def test_register_latex_returns_prepare_action(tmp_path: Path) -> None:
 
 def test_latex_prepare_inlines_input_table_and_preserves_it(tmp_path: Path) -> None:
     if shutil.which("pandoc") is None:
-        return
+        pytest.skip("pandoc is not installed")
     repo, _ = setup_rich_repo(tmp_path)
     latex_dir = repo / "latex"
     tables_dir = latex_dir / "tables"
@@ -233,7 +242,7 @@ def test_latex_prepare_fails_for_missing_input(tmp_path: Path) -> None:
 
 def test_latex_prepare_allows_existing_graphic_outside_repo(tmp_path: Path) -> None:
     if shutil.which("pandoc") is None:
-        return
+        pytest.skip("pandoc is not installed")
     repo, _ = setup_rich_repo(tmp_path)
     latex_dir = repo / "latex"
     latex_dir.mkdir()
@@ -269,7 +278,7 @@ def test_latex_prepare_allows_existing_graphic_outside_repo(tmp_path: Path) -> N
 
 def test_latex_prepare_missing_graphic_requires_allow_lossy(tmp_path: Path) -> None:
     if shutil.which("pandoc") is None:
-        return
+        pytest.skip("pandoc is not installed")
     repo, _ = setup_rich_repo(tmp_path)
     main = repo / "main.tex"
     main.write_text(
@@ -397,8 +406,11 @@ def test_agent_next_drives_run_after_packaging(tmp_path: Path) -> None:
     assert "inspect_jobs" in ids
 
     # With a ModelList present, the run leads.
-    katz(repo, "spotter", "models", "--model", "gpt-4o-mini",
+    katz(repo, "spotter", "models", "--model", "test",
          "--output", str(repo / "models.ep"))
+    nxt2 = katz(repo, "agent", "next")
+    assert nxt2["action"]["id"] == "register_execution_plan"
+    katz(repo, *nxt2["action"]["command"][1:])
     nxt2 = katz(repo, "agent", "next")
     assert nxt2["action"]["id"] == "run_jobs"
     assert nxt2["action"]["command"][0] == "ep"
@@ -415,10 +427,10 @@ def test_spotter_models_writes_modellist_with_max_tokens(tmp_path: Path) -> None
     repo, _ = setup_rich_repo(tmp_path)
     output = repo / "models.ep"
     result = katz(repo, "spotter", "models",
-                  "--model", "gpt-4o", "--model", "gpt-4o-mini",
+                  "--model", "gpt-4o", "--model", "test", "--service", "openai",
                   "--max-tokens", "3500", "--output", str(output))
     assert result["object_type"] == "ModelList"
-    assert result["models"] == ["gpt-4o", "gpt-4o-mini"]
+    assert result["models"] == ["gpt-4o", "test"]
     assert result["max_tokens"] == 3500
     loaded = list(ModelList.git.load(output))
     assert len(loaded) == 2
@@ -433,7 +445,9 @@ def test_paper_review_jobs_embeds_manuscript_and_figure_attachments(tmp_path: Pa
     repo, commit = setup_rich_repo(tmp_path)
     figure = tmp_path / "results.png"
     figure.write_bytes(b"\x89PNG\r\n\x1a\nexample")
-    # Re-register at a new commit so the newly added sibling asset is copied.
+    with (tmp_path / "manuscript.md").open("a") as handle:
+        handle.write("\n![Results](results.png)\n")
+    # Re-register at a new commit so the explicitly referenced asset is copied.
     (repo / "README.md").write_text("# Paper\n\nFigure added.\n", encoding="utf-8")
     git(repo, "add", "README.md")
     git(repo, "commit", "-m", "Add figure")
@@ -477,7 +491,7 @@ def test_one_shot_report_review_jobs_detect_type_spotters_and_images(tmp_path: P
 
     output = tmp_path / "report-review.jobs.ep"
     models = tmp_path / "models.ep"
-    ModelList([Model("test"), Model("test")]).git.save(str(models))
+    ModelList([Model("test"), Model("test", temperature=0.7)]).git.save(str(models))
     built = katz(tmp_path, "report", "review-jobs", "--report", str(report), "--output", str(output), "--models", str(models))
     assert built["analysis_type"] == "survey-simulation"
     assert built["model_count"] == 2
@@ -512,7 +526,7 @@ def test_one_shot_report_review_ingest_returns_bounded_actionable_issues(tmp_pat
     Results(survey=Survey([]), data=[result]).git.save(results_path)
     output = tmp_path / "analysis/report-review.json"
     ingested = katz(tmp_path, "report", "review-ingest", "--results", str(results_path), "--report", str(report), "--output", str(output), "--limit", "1")
-    assert ingested["review"]["complete"] is True
+    assert ingested["review"]["complete"] is False  # Legacy response has no originating Jobs/report binding.
     assert ingested["review"]["issue_count"] == 1
     assert ingested["review"]["issues"][0]["fix"] == "Use the canonical instrument count throughout."
     assert output.is_file()
@@ -575,8 +589,8 @@ def test_human_journal_review_ingest_is_grounded_and_idempotent(tmp_path: Path) 
     results_path = repo / "journal-review-results.ep"
     Results(survey=Survey([]), data=[result]).git.save(results_path)
 
-    first = katz(repo, "review", "ingest", str(results_path))
-    second = katz(repo, "review", "ingest", str(results_path))
+    first = katz(repo, "review", "ingest", str(results_path), "--allow-partial")
+    second = katz(repo, "review", "ingest", str(results_path), "--allow-partial")
     assert first["candidates"] == 1
     assert first["issues_filed"] == 1
     assert second["issues_filed"] == 0
@@ -712,6 +726,7 @@ def test_spotter_audit_rejects_null_and_accepts_explicit_negative(tmp_path: Path
         "--section", "abstract",
         "--spotters", "causal_language",
     )
+    plan_test_models(repo, jobs_path)
     scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
 
     null_path = repo / "audit-results.ep"
@@ -764,6 +779,7 @@ def test_unified_ingest_preview_and_apply_accept_explicit_jobs(tmp_path: Path) -
         "--section", "abstract",
         "--spotters", "causal_language",
     )
+    plan_test_models(repo, jobs_path)
     scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
     results_path = repo / "unified-results.ep"
     result = Result(
@@ -866,6 +882,7 @@ def test_spotter_freetext_verdict_audits_and_ingests(tmp_path: Path) -> None:
         "--section", "abstract",
         "--spotters", "causal_language",
     )
+    plan_test_models(repo, jobs_path)
     scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
     # The scenario carries the exact section region; quote a verbatim sentence
     # from it so the quotation locates cleanly.
@@ -930,6 +947,7 @@ def test_spotter_jobs_from_failures_repackages_only_failures(tmp_path: Path) -> 
     jobs_path = repo / "j.jobs.ep"
     katz(repo, "spotter", "jobs", "--output", str(jobs_path),
          "--section", "abstract", "--spotters", "causal_language")
+    plan_test_models(repo, jobs_path)
     scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
 
     # A null (failed) answer for the one scenario.
@@ -940,7 +958,7 @@ def test_spotter_jobs_from_failures_repackages_only_failures(tmp_path: Path) -> 
     )]).git.save(null_path)
 
     rerun = repo / "rerun.jobs.ep"
-    result = katz(repo, "spotter", "jobs", "--from-failures", str(null_path),
+    result = katz(repo, "spotter", "jobs", "--from-failures", str(null_path), "--jobs", str(jobs_path),
                   "--section", "abstract", "--spotters", "causal_language",
                   "--output", str(rerun))
     assert result["scenario_count"] == 1
@@ -954,10 +972,49 @@ def test_spotter_jobs_from_failures_repackages_only_failures(tmp_path: Path) -> 
         agent=Agent(), scenario=scenario, model=Model("test"), iteration=0,
         answer={"spotter_result": {"found": False, "title": "", "quoted_text": "", "description": ""}},
     )]).git.save(ok_path)
-    err = katz_fail(repo, "spotter", "jobs", "--from-failures", str(ok_path),
+    err = katz_fail(repo, "spotter", "jobs", "--from-failures", str(ok_path), "--jobs", str(jobs_path),
                     "--section", "abstract", "--spotters", "causal_language",
                     "--output", str(repo / "rerun2.jobs.ep"))
     assert err["code"] == "validation_error"
+
+
+def test_routed_spotter_jobs_checkbox_and_skip_logic(tmp_path: Path) -> None:
+    """A routed package is one section interview with checkbox-controlled details."""
+    from edsl import Jobs
+
+    repo, _ = setup_rich_repo(tmp_path)
+    katz(repo, "paper", "auto-chunk")
+    katz(repo, "spotter", "init-catalog")
+    katz(repo, "spotter", "enable", "causal_language")
+    katz(repo, "spotter", "enable", "statistical_errors")
+    jobs_path = repo / "routed.jobs.ep"
+    packaged = katz(
+        repo,
+        "spotter", "routed-jobs",
+        "--section", "abstract",
+        "--spotters", "causal_language,statistical_errors",
+        "--output", str(jobs_path),
+    )
+
+    assert packaged["survey_design"] == "checkbox_router_with_conditional_detail_questions"
+    assert packaged["section_interviews"] == 1
+    assert packaged["question_count"] == 3
+    assert packaged["maximum_model_calls"] == 3
+    jobs = Jobs.git.load(jobs_path)
+    assert len(jobs.scenarios) == 1
+    assert jobs.survey.questions[0].question_name == "applicable_spotters"
+    assert set(jobs.survey.questions[0].question_options) == {
+        "causal_language", "statistical_errors",
+    }
+
+    causal_detail = packaged["detail_questions"]["causal_language"]
+    statistical_detail = packaged["detail_questions"]["statistical_errors"]
+    first = jobs.survey.next_question(
+        "applicable_spotters",
+        {"applicable_spotters.answer": ["statistical_errors"]},
+    )
+    assert first.question_name == statistical_detail
+    assert first.question_name != causal_detail
 
 
 def test_audit_accepts_multiple_models_per_scenario(tmp_path: Path) -> None:
@@ -976,11 +1033,13 @@ def test_audit_accepts_multiple_models_per_scenario(tmp_path: Path) -> None:
     scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
 
     negative = {"found": False, "title": "", "quoted_text": "", "description": ""}
-    model_names = ("gpt-4o", "gpt-4o-mini")
+    model_names = ("test",)
+    model_configs = [Model("test"), Model("test", temperature=0.7)]
+    plan_test_models(repo, jobs_path, model_configs)
     data = [
-        Result(agent=Agent(), scenario=scenario, model=Model(name), iteration=0,
+        Result(agent=Agent(), scenario=scenario, model=model, iteration=0,
                answer={"spotter_result": dict(negative)})
-        for name in model_names
+        for model in model_configs
     ]
     path = repo / "m-results.ep"
     Results(survey=Survey([]), data=data).git.save(path)
@@ -1037,6 +1096,7 @@ def test_ingest_reports_skipped_unlocatable_positive(tmp_path: Path) -> None:
     jobs_path = repo / "s.jobs.ep"
     katz(repo, "spotter", "jobs", "--output", str(jobs_path),
          "--section", "abstract", "--spotters", "causal_language")
+    plan_test_models(repo, jobs_path)
     scenario = Scenario(dict(Jobs.git.load(jobs_path).scenarios[0]))
 
     path = repo / "s-results.ep"

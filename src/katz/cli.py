@@ -276,6 +276,8 @@ app.add_typer(agent_app, name="agent")
 app.add_typer(results_app, name="results")
 app.add_typer(version_app, name="version")
 app.add_typer(workspace_app, name="workspace")
+from .commands.benchmark import benchmark_app
+app.add_typer(benchmark_app, name="benchmark")
 
 
 @app.callback()
@@ -417,6 +419,7 @@ def capabilities() -> None:
             "default": "json",
             "human": "katz --human COMMAND [ARGS]...",
         },
+        "review_contracts": {"spotter_audit": "v2", "execution_plan": "v1", "multiple_findings": "opt-in v2"},
         "ingestion": ["spotter_results", "journal_review_results", "jobs_package", "humanize_results", "narrative_review"],
         "integrations": {
             "edsl": _command_available("ep"),
@@ -442,7 +445,8 @@ def validate(commit: Optional[str] = typer.Option(None, "--commit")) -> None:
     """Validate a katz version without modifying files."""
     try:
         resolved, dest, version, pmap, canonical = load_version(commit)
-        errors: list[dict[str, Any]] = []
+        from .assets import validate_registered_assets
+        errors: list[dict[str, Any]] = validate_registered_assets(dest, version)
         warnings: list[dict[str, Any]] = []
         if version.get("commit") != resolved:
             errors.append({"code": "validation_error", "path": str(dest / "version.json"), "message": "commit mismatch"})
@@ -679,7 +683,7 @@ def _detect_ingest_source(path: Path) -> dict[str, Any]:
                 scenario_keys.update(str(key) for key in dict(scenario))
             except Exception:
                 pass
-    if "spotter_result" in answer_keys:
+    if "spotter_result" in answer_keys or "applicable_spotters" in answer_keys:
         kind = "spotter_results"
         supported = True
         recommended = ["katz", "spotter", "ingest", str(path)]
@@ -723,14 +727,15 @@ def ingest(
     state: str = typer.Option("draft", "--state"),
     commit: Optional[str] = typer.Option(None, "--commit"),
     jobs: Optional[Path] = typer.Option(None, "--jobs", exists=True, readable=True),
+    models: Optional[Path] = None,
 ) -> None:
     """Detect review artifacts safely; preview by default and mutate only with --apply."""
     try:
         detection = _detect_ingest_source(path)
         if detection.get("kind") == "spotter_results":
-            _, dest, _, _, _ = load_version(commit)
+            resolved, dest, _, _, _ = load_version(commit)
             jobs_path = _resolve_audit_jobs(dest, path, jobs)
-            audit = _audit_spotter_results(path, jobs_path)
+            audit = _audit_spotter_results(path, jobs_path, models, expected_commit=resolved)
             audit.pop("_rows", None)
             detection["audit"] = audit
             detection["supported_apply"] = bool(audit["complete"] or allow_partial)
@@ -739,6 +744,12 @@ def ingest(
                     "Spotter Results are incomplete or cannot be matched to their originating Jobs. "
                     "Katz will not interpret missing answers as negative findings."
                 )
+        if detection.get("kind") == "journal_review_results":
+            from .edsl_bridge import audit_result_contract
+            resolved, dest, _, _, _ = load_version(commit)
+            audit = audit_result_contract(path, _resolve_audit_jobs(dest, path, jobs), models, "journal_review_issues", resolved)
+            detection["audit"] = audit
+            detection["supported_apply"] = bool(audit["complete"] or allow_partial)
         if not apply:
             command = detection.get("recommended_command")
             apply_action = None
@@ -748,7 +759,9 @@ def ingest(
                     "Apply the detected, version-checked ingestion contract",
                     ["katz", "ingest", str(path), "--apply", "--state", state]
                     + (["--jobs", str(jobs)] if jobs is not None else [])
-                    + (["--allow-partial"] if allow_partial else []),
+                    + (["--allow-partial"] if allow_partial else [])
+                    + (["--models", str(models)] if models else [])
+                    + (["--commit", commit] if commit else []),
                     mutates_state=True,
                 )
             emit_json({
@@ -779,10 +792,11 @@ def ingest(
                 commit=commit,
                 jobs=jobs,
                 allow_partial=allow_partial,
+                models=models,
             )
             return
         if detection["kind"] == "journal_review_results":
-            review_ingest(path, state=state, commit=commit)
+            review_ingest(path, state=state, commit=commit, jobs=jobs, models=models, allow_partial=allow_partial)
             return
         raise KatzError("No ingestion handler is available", "unsupported_ingestion", {"detection": detection})
     except KatzError as exc:

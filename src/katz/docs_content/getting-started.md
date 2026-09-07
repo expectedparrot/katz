@@ -7,16 +7,18 @@ to a generated HTML report.
 
 ---
 
+See `katz docs show reliability` for execution-plan and audit migration requirements.
+
 ## Step 0 — Bootstrap
 
-Run `katz status` first. It returns the current phase and recommended next steps.
-If the phase is `no_katz`, begin with Step 1. Otherwise skip ahead to the appropriate step.
+Run `katz next` first. It returns the current phase and recommended next steps.
+If the phase is `katz_setup`, begin with Step 1. Otherwise skip ahead to the appropriate step.
 
 ```bash
-katz status
+katz next
 ```
 
-The response includes `state.phase` (where you are) and `state.checklist` (what to do next).
+The response includes `data.phase` (where you are) and `data.action` (what to do next).
 
 ---
 

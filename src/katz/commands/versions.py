@@ -115,8 +115,8 @@ def version_diff(
     try:
         from_commit, _, _, from_pmap, from_canonical = load_version(sha_a)
         to_commit, _, _, to_pmap, to_canonical = load_version(sha_b)
-        from_lines = from_canonical.read_text(encoding="utf-8").splitlines()
-        to_lines = to_canonical.read_text(encoding="utf-8").splitlines()
+        from_lines = from_canonical.read_bytes().decode("utf-8").splitlines()
+        to_lines = to_canonical.read_bytes().decode("utf-8").splitlines()
 
         def section_for_line(pmap: PaperMap, line_number: int) -> str | None:
             for section in pmap.sections:

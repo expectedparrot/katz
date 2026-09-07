@@ -4,6 +4,10 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import os
+import tempfile
+from contextlib import contextmanager
+from functools import wraps
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,8 +46,60 @@ def read_json(path: Path) -> dict[str, Any]:
     return data
 
 
+def atomic_write(path: Path, data: bytes, *, exclusive: bool = False) -> None:
+    """Publish a fully flushed file; failures leave the previous file intact."""
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".katz-write-", delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+    try:
+        if exclusive:
+            os.link(temporary, path)
+        else:
+            os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def write_json(path: Path, data: dict[str, Any]) -> None:
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    atomic_write(path, (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+
+
+@contextmanager
+def ledger_lock(directory: Path):
+    """Serialize ledger mutations; the OS releases the lock after a crash."""
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / ".lock").open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+            handle.write(b"\0")
+            handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def ledger_locked(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with ledger_lock(ensure_initialized()):
+            return function(*args, **kwargs)
+    return wrapped
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -76,13 +132,14 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     lines = [json.dumps(r, ensure_ascii=False, sort_keys=False) for r in records]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write(path, ("\n".join(lines) + "\n").encode("utf-8"))
 
 
 def append_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
-    with path.open("a", encoding="utf-8") as f:
-        for r in records:
-            f.write(json.dumps(r, ensure_ascii=False, sort_keys=False) + "\n")
+    with ledger_lock(path.parent):
+        previous = path.read_bytes() if path.exists() else b""
+        addition = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records)
+        atomic_write(path, previous + addition.encode("utf-8"))
 
 
 def load_paper_map(path: Path) -> PaperMap:
@@ -256,15 +313,65 @@ def write_event_json(directory: Path, data: dict[str, Any]) -> Path:
     stem = candidate.stem
     suffix = candidate.suffix
     counter = 1
-    while candidate.exists():
-        candidate = directory / f"{stem}_{counter}{suffix}"
-        counter += 1
-    write_json(candidate, data)
-    return candidate
+    encoded = (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    while True:
+        try:
+            atomic_write(candidate, encoded, exclusive=True)
+            return candidate
+        except FileExistsError:
+            candidate = directory / f"{stem}_{counter}{suffix}"
+            counter += 1
 
 
 def record_run(dest: Path, kind: str, status: str, **details: Any) -> Path:
     """Append a first-class run lifecycle record to the active version."""
+    audit = details.get("audit") or {}
+    artifacts = []
+    for role in ("jobs", "results", "models"):
+        value = details.get(f"{role}_path") or audit.get(f"{role}_path")
+        if not value:
+            continue
+        path = Path(value).resolve()
+        if not path.is_file():
+            raise KatzError("Run artifact is missing", "not_found", {"path": str(path)})
+        checksum = sha256_file(path)
+        expected = audit.get(f"{role}_sha256")
+        if expected and expected != checksum:
+            raise KatzError("Artifact changed after audit", "checksum_mismatch", {"path": str(path)})
+        directory = dest / "artifacts" / checksum.removeprefix("sha256:")
+        directory.mkdir(parents=True, exist_ok=True)
+        preserved = directory / path.name
+        if not preserved.exists():
+            try:
+                atomic_write(preserved, path.read_bytes(), exclusive=True)
+            except FileExistsError:
+                pass
+        if sha256_file(preserved) != checksum:
+            raise KatzError("Preserved artifact is corrupt", "checksum_mismatch", {"path": str(preserved)})
+        details[f"{role}_path"] = str(path)
+        details[f"{role}_sha256"] = checksum
+        artifacts.append({"role": role, "path": str(preserved), "sha256": checksum})
+        for suffix in (".katz.json", ".retry.json", ".merge.json"):
+            sidecar = path.with_name(path.name + suffix)
+            if not sidecar.is_file():
+                continue
+            sidecar_hash = sha256_file(sidecar)
+            sidecar_dir = dest / "artifacts" / sidecar_hash.removeprefix("sha256:")
+            sidecar_dir.mkdir(parents=True, exist_ok=True)
+            preserved_sidecar = sidecar_dir / sidecar.name
+            if not preserved_sidecar.exists():
+                try:
+                    atomic_write(preserved_sidecar, sidecar.read_bytes(), exclusive=True)
+                except FileExistsError:
+                    pass
+            if sha256_file(preserved_sidecar) != sidecar_hash:
+                raise KatzError("Preserved provenance is corrupt", "checksum_mismatch", {"path": str(preserved_sidecar)})
+            artifacts.append({"role": role + suffix, "path": str(preserved_sidecar), "sha256": sidecar_hash})
+    details["artifacts"] = artifacts
+    details["run_id"] = audit.get("run_id") or details.get("jobs_sha256")
+    version = dest / "version.json"
+    if version.exists():
+        details["manuscript_sha256"] = read_json(version).get("checksum")
     return write_event_json(dest / "runs", {
         "schema_version": 1,
         "kind": kind,
@@ -272,6 +379,29 @@ def record_run(dest: Path, kind: str, status: str, **details: Any) -> Path:
         "timestamp": now_utc(),
         **details,
     })
+
+
+def latest_review_run(dest: Path) -> dict[str, Any] | None:
+    """Select lifecycle evidence for the most recently packaged review, not an unrelated event."""
+    records = [read_json(p) for p in sorted((dest / "runs").glob("*.json"))]
+    records = [r for r in records if r.get("kind") != "verification"]
+    if not records:
+        return None
+    packaged = next((r for r in reversed(records) if r.get("status") == "packaged"), None)
+    if packaged is None:
+        return records[-1]  # Legacy ledger: no packaging record was preserved.
+    matched = []
+    for record in records[records.index(packaged):]:
+        jobs_path = record.get("jobs_path") or (record.get("audit") or {}).get("jobs_path")
+        if record is packaged or jobs_path == packaged.get("jobs_path"):
+            matched.append(record)
+    latest = {**packaged, **matched[-1]}
+    if latest.get("status") == "audited":
+        ingestion = next((r for r in reversed(matched) if r.get("status") == "ingested"
+                          and r.get("results_sha256") == latest.get("results_sha256")), None)
+        if ingestion:
+            latest = {**latest, **ingestion}
+    return latest
 
 
 def _latest_packaged_run(dest: Path, results_path: Path | None = None) -> dict[str, Any] | None:

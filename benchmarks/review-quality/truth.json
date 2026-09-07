@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "purpose": "Synthetic smoke benchmark; not evidence of real-paper review quality",
+  "papers": [
+    {"id": "clean", "path": "clean.md", "split": "development", "defects": []},
+    {"id": "defective", "path": "defective.md", "split": "development", "defects": ["sample-count", "causal-claim"]}
+  ],
+  "defect_evidence": {
+    "sample-count": ["We observe 120 people", "80 participants and 60 nonparticipants"],
+    "causal-claim": ["Participation was not randomized", "The program caused the entire difference"]
+  }
+}

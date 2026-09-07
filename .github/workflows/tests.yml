@@ -1,0 +1,49 @@
+name: Package checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e '.[test]' build
+      - run: python -m compileall -q src
+      - run: git diff --check
+      - run: pytest -q
+      - run: python scripts/check-docs.py
+      - run: python -m build
+      - name: Check installed wheel outside the source tree
+        run: |
+          python -m venv /tmp/katz-wheel
+          /tmp/katz-wheel/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/katz-wheel/bin/katz version
+          /tmp/katz-wheel/bin/katz capabilities
+          /tmp/katz-wheel/bin/katz guide
+          /tmp/katz-wheel/bin/katz docs list
+          /tmp/katz-wheel/bin/katz agent schema envelope
+  pandoc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: sudo apt-get update && sudo apt-get install -y pandoc
+      - run: python -m pip install -e '.[test]'
+      - run: pytest -q -k 'latex or pandoc'

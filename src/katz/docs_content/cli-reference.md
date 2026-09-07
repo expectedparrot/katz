@@ -118,6 +118,7 @@ warnings unless `--allow-lossy` is explicitly authorized.
 katz spotter init-catalog [--preset default]   # populate from built-in catalog
 katz spotter enable --recommended              # activate the default set
 katz spotter jobs --pilot 5 --output pilot.jobs.ep
+katz spotter routed-jobs --spotters causal_language,statistical_errors --output routed.jobs.ep
 katz spotter catalog [--scope section|holistic] # list available spotters
 katz spotter catalog-show <name>               # show a spotter's content
 
@@ -401,3 +402,17 @@ the active version if omitted.
 the canonical manuscript. Use `katz paper find <text>` to look up offsets.
 
 **Filtering by section:** The `--section` flag filters by the section ID from `katz paper sections`.
+
+## Evidence plans and recovery
+
+- `katz results plan --jobs jobs.ep --models models.ep [--iterations N]` freezes the expected execution.
+- `katz results audit results.ep --jobs jobs.ep [--models models.ep]` proves requested coverage.
+- `katz results retry results.ep --jobs jobs.ep --output-dir retries/compatibility` exports failed observations.
+- `katz results merge original.ep retry-results.ep --jobs jobs.ep --retry-plan retry.jobs.ep.retry.json --output merged.ep` preserves merge decisions.
+- `katz spotter compare-jobs --left methods --right results --output comparison.jobs.ep` compares paired passages.
+- `katz spotter jobs --multiple-findings --output findings.jobs.ep` opts into multiple findings.
+- `katz issue verification-jobs --output verification.jobs.ep` packages draft candidates.
+- `katz issue verification-ingest verification-results.ep --jobs verification.jobs.ep` records proposals for adjudication.
+- `katz benchmark score --truth truth.json --judgments judgments.json --output scores.json` scores independently adjudicated reviews; incomplete reviews withhold metrics.
+
+Read `katz docs show reliability` for exact coverage semantics and legacy migration.

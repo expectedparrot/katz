@@ -202,7 +202,7 @@ def issue_carry_forward(
                 "validation_error",
                 {"commit": source_commit},
             )
-        target_text = target_canonical.read_text(encoding="utf-8")
+        target_text = target_canonical.read_bytes().decode("utf-8")
 
         existing_parent_ids: set[str] = set()
         if (target_dest / "issues").is_dir():
@@ -822,7 +822,7 @@ def issue_next(
             emit_json(packet)
             return
         candidates.sort(key=lambda item: (item[0], item[1].name))
-        manuscript_lines = canonical.read_text(encoding="utf-8").splitlines()
+        manuscript_lines = canonical.read_bytes().decode("utf-8").splitlines()
         clusters = _issue_duplicate_clusters(dest)
         cluster_by_issue: dict[str, dict[str, Any]] = {}
         for cluster in clusters:
@@ -981,3 +981,85 @@ def issue_clusters(commit: Optional[str] = typer.Option(None, "--commit")) -> No
 def issue_merge_suggest(commit: Optional[str] = typer.Option(None, "--commit")) -> None:
     """Return duplicate clusters and explicit merge commands without mutating issues."""
     issue_clusters(commit=commit)
+
+
+@issue_app.command("verification-jobs")
+def issue_verification_jobs(
+    output: Path = typer.Option(..., "--output"),
+    models: Optional[Path] = None,
+    commit: Optional[str] = None,
+) -> None:
+    """Package draft candidates for evidence and counterevidence review; no inference."""
+    from ..edsl_bridge import build_verification_jobs, register_execution_plan, _save_and_verify_ep, _expected_results_path
+    from ..issues import _issue_revision_token
+    from ..storage import record_run
+    try:
+        if output.exists() or output.suffix != ".ep":
+            raise KatzError("Use a new .ep output path", "validation_error")
+        resolved, dest, _, pmap, canonical = load_version(commit)
+        candidates = []
+        for path in sorted((dest / "issues").glob("*/issue.json")):
+            issue = _full_issue_record(path.parent, pmap)
+            if issue["state"] == "draft":
+                candidates.append({"id": issue["id"], "revision": _issue_revision_token(path.parent),
+                                   "candidate": {k: issue.get(k) for k in ("title", "body", "location")}})
+        if not candidates:
+            raise KatzError("No draft candidates to verify", "not_found")
+        job = build_verification_jobs(resolved, canonical.read_bytes().decode("utf-8"), candidates)
+        saved = _save_and_verify_ep(job, output)
+        if models is not None:
+            register_execution_plan(output, models)
+        record_run(dest, "verification", "packaged", jobs_path=str(output.resolve()),
+                   expected_results_path=str(_expected_results_path(output).resolve()))
+        emit_json({"saved": saved, "candidates": len(candidates), "inference": "external"})
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)
+
+
+@issue_app.command("verification-ingest")
+def issue_verification_ingest(
+    results: Path = typer.Argument(..., exists=True),
+    jobs: Path = typer.Option(..., "--jobs", exists=True),
+    models: Optional[Path] = None,
+    commit: Optional[str] = None,
+) -> None:
+    """Preserve audited verifier proposals; issue states remain for human adjudication."""
+    from edsl import Results
+    from ..edsl_bridge import audit_result_contract, _fingerprint
+    from ..issues import _issue_revision_token
+    from ..storage import atomic_write, ledger_lock, record_run
+    from .report import _parse_report_review
+    try:
+        resolved, dest, _, _, canonical = load_version(commit)
+        with ledger_lock(dest.parent.parent):
+            audit = audit_result_contract(results, jobs, models, "verification", resolved)
+            if not audit["complete"]:
+                raise KatzError("Verifier Results are incomplete", "incomplete_results", {"audit": audit})
+            manuscript = canonical.read_bytes().decode("utf-8")
+            proposals = []
+            for row in Results.git.load(results):
+                scenario = row["scenario"]
+                _, directory = _issue_dir_for_id(dest, scenario["issue_id"])
+                parsed = _parse_report_review(row["answer"].get("verification"))
+                identity = _fingerprint({"scenario": scenario, "model": row["model"], "answer": parsed})
+                target = directory / "verification" / f"{identity}.json"
+                if target.exists():
+                    continue
+                if _issue_revision_token(directory) != scenario["issue_revision"]:
+                    raise KatzError("Candidate changed since verification was packaged", "stale_issue")
+                if (not isinstance(parsed, dict) or parsed.get("verdict") not in {"confirmed", "rejected", "uncertain"}
+                        or not isinstance(parsed.get("notes"), str) or not parsed["notes"].strip()
+                        or not isinstance(parsed.get("evidence_quotes"), list)
+                        or any(not isinstance(q, str) or not q or q not in manuscript for q in parsed["evidence_quotes"])
+                        or (parsed.get("verdict") == "confirmed" and not parsed["evidence_quotes"])):
+                    raise KatzError("Verifier proposal lacks a valid verdict and exact evidence", "validation_error")
+                proposals.append((target, {"contract": "katz.verification-proposal.v1", "proposed_verdict": parsed["verdict"],
+                    "notes": parsed["notes"], "evidence_quotes": parsed["evidence_quotes"],
+                    "requires_adjudication": True, "run_id": audit["run_id"], "results_sha256": audit["results_sha256"]}))
+            for target, proposal in proposals:
+                target.parent.mkdir(exist_ok=True)
+                atomic_write(target, (json.dumps(proposal, indent=2) + "\n").encode(), exclusive=True)
+            record_run(dest, "verification", "ingested", audit=audit, proposals=len(proposals))
+            emit_json({"proposals": len(proposals), "audit": audit, "next": "katz issue next"})
+    except KatzError as exc:
+        fail(exc.message, exc.code, exc.details)

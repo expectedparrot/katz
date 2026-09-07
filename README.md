@@ -32,7 +32,7 @@ ep inspect report-review.jobs.ep
 ep jobs cost report-review.jobs.ep
 # approve the exact cost
 ep run report-review.jobs.ep --output report-review.results.ep
-katz report review-ingest --results report-review.results.ep --report writeup/report.md --output analysis/report-review.json
+katz report review-ingest --results report-review.results.ep --jobs report-review.jobs.ep --report writeup/report.md --output analysis/report-review.json
 ```
 
 Use `--analysis-type` to override detection and repeat `--image` for local
@@ -63,11 +63,13 @@ decisions that stay yours:
 cd pdf-review
 # 2. Authorize the model run (`ep auth login` once beforehand).
 ep run jobs.ep --model_list models.ep --output results.ep
+katz results audit results.ep --jobs jobs.ep
 katz ingest results.ep --apply
-katz report generate --output review.html
+katz next
 ```
 
-The generated report links every finding to the exact passage that triggered
+Investigate the draft findings, author `writeup/report.md`, then run `katz validate`
+and `katz report finalize --report writeup/report.md`. The generated report links every finding to the exact passage that triggered
 it ([example report](https://expectedparrot.github.io/katz/investigated-review.html)).
 `--from` also accepts LaTeX and Markdown sources; inside an existing paper
 repository, use `katz init` + `katz paper register` instead. The
@@ -88,7 +90,7 @@ Use `uv` to install Katz in an isolated Python 3.11+ tool environment. Include
 EDSL's `ep` executable in the same environment:
 
 uv tool install --python 3.11 --upgrade --force \
-  --with-executables-from "edsl @ git+https://github.com/expectedparrot/edsl.git@main" \
+  --with-executables-from edsl \
   "katz @ git+https://github.com/expectedparrot/katz.git@main"
 
 Verify the installed package, capabilities, and both executable interfaces:
@@ -146,7 +148,7 @@ Katz requires Python 3.11 or newer:
 ```bash
 python -m pip install --user --upgrade uv
 uv tool install --python 3.11 --upgrade --force \
-  --with-executables-from "edsl @ git+https://github.com/expectedparrot/edsl.git@main" \
+  --with-executables-from edsl \
   "katz @ git+https://github.com/expectedparrot/katz.git@main"
 katz version
 katz capabilities
@@ -215,3 +217,11 @@ review cannot support a claim that no issues were found.
 - Run `katz docs list` for packaged documentation topics.
 - Run `katz --help` or `katz COMMAND --help` for CLI details.
 - [MIT License](LICENSE)
+
+## Evidence and compatibility
+
+Katz pins its tested EDSL revision. Execution plans preserve expected model
+configurations before inference; missing model coverage cannot produce a complete
+audit. Read `katz docs show reliability` for audit v2 migration, exact retries and
+merges, paired-section checks, and verifier proposals. Model execution remains an
+explicit external `ep run`.

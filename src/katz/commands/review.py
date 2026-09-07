@@ -10,15 +10,17 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from ..edsl_bridge import (
+    audit_result_contract,
+    _resolve_audit_jobs,
     JOURNAL_REVIEW_PARSE_PROMPT,
     _expected_results_path,
     _result_value,
     _save_and_verify_ep,
 )
 from ..errors import KatzError, emit_json, fail
-from ..issues import VALID_STATES, _issue_dir
+from ..issues import VALID_STATES, _issue_dir, publish_issue_batch
 from ..manuscript import _locate_quoted_text, resolve_location
-from ..storage import load_version, now_utc, read_json, record_run, write_event_json, write_json
+from ..storage import ledger_locked, load_version, now_utc, read_json, record_run, write_event_json, write_json
 
 
 review_app = typer.Typer(help="Register and parse human-written peer reviews.")
@@ -176,10 +178,14 @@ def _parse_json_array_answer(value: Any) -> list[dict[str, Any]]:
 
 
 @review_app.command("ingest")
+@ledger_locked
 def review_ingest(
     results_path: Path = typer.Argument(..., exists=True, readable=True),
     state: str = typer.Option("draft", "--state"),
     commit: Optional[str] = typer.Option(None, "--commit"),
+    jobs: Optional[Path] = None,
+    models: Optional[Path] = None,
+    allow_partial: bool = False,
 ) -> None:
     """File grounded issue candidates parsed from a human journal review."""
     try:
@@ -189,7 +195,21 @@ def review_ingest(
 
         resolved, dest, _, _, canonical = load_version(commit)
         results = Results.git.load(results_path)
-        manuscript = canonical.read_text(encoding="utf-8")
+        manuscript = canonical.read_bytes().decode("utf-8")
+        resolved_jobs = _resolve_audit_jobs(dest, results_path, jobs)
+        audit = audit_result_contract(results_path, resolved_jobs, models, "journal_review_issues", resolved)
+        if not audit["complete"] and not allow_partial:
+            raise KatzError("Human review Results require complete originating Jobs/model coverage", "incomplete_results", {"audit": audit})
+        # Validate the entire batch before creating any issue directories.
+        for result in results:
+            scenario = result["scenario"]
+            if scenario.get("katz_commit") != resolved:
+                raise KatzError("Results were generated for a different Katz version", "validation_error")
+            if not (_review_dir(dest, str(scenario.get("review_id", ""))) / "review.json").is_file():
+                raise KatzError("Result references an unregistered human review", "not_found")
+            for item in _parse_json_array_answer(_result_value(result, "answer", "journal_review_issues")):
+                if any(not isinstance(item.get(k), str) or not item[k].strip() for k in ("title", "body", "quoted_text")):
+                    raise KatzError("Human review finding requires title, body, and exact quotation", "validation_error")
         existing_keys = {
             record.get("meta", {}).get("journal_review_result_key")
             for path in (dest / "issues").glob("*/issue.json")
@@ -198,6 +218,7 @@ def review_ingest(
         } if (dest / "issues").is_dir() else set()
 
         candidates = filed = skipped = 0
+        staged_issues = []
         issue_ids: list[str] = []
         for result in results:
             scenario = result["scenario"] if isinstance(result["scenario"], dict) else dict(result["scenario"])
@@ -229,8 +250,6 @@ def review_ingest(
                 issue_id = uuid.uuid4().hex
                 timestamp = now_utc()
                 issue_dir = _issue_dir(dest, issue_id)
-                (issue_dir / "status").mkdir(parents=True, exist_ok=True)
-                (issue_dir / "investigations").mkdir(parents=True, exist_ok=True)
                 body_parts = [str(item.get("body", "")).strip()]
                 if item.get("reviewer_comment"):
                     body_parts.append(f'Reviewer comment: “{str(item["reviewer_comment"]).strip()}”')
@@ -254,17 +273,19 @@ def review_ingest(
                         "edsl_results_path": str(results_path),
                     },
                 }
-                write_json(issue_dir / "issue.json", record)
-                write_event_json(issue_dir / "status", {
+                staged_issues.append((record, {
                     "state": state,
                     "reason": f"parsed from human journal review {review_id}",
                     "timestamp": timestamp,
-                })
+                }))
                 existing_keys.add(result_key)
                 issue_ids.append(issue_id)
                 filed += 1
+        record_run(dest, "journal_review", "validated", audit=audit)
+        publish_issue_batch(dest, staged_issues)
         record_run(
-            dest, "journal_review", "ingested",
+            dest, "journal_review", "ingested" if audit["complete"] else "partial",
+            audit=audit,
             results_path=str(results_path.resolve()),
             result_count=len(results),
             candidates=candidates,
@@ -275,6 +296,7 @@ def review_ingest(
             "results": str(results_path),
             "commit": resolved,
             "result_count": len(results),
+            "audit": audit,
             "candidates": candidates,
             "issues_filed": filed,
             "skipped": skipped,

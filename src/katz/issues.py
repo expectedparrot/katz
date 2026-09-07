@@ -122,6 +122,7 @@ def _full_issue_record(issue_dir: Path, pmap: PaperMap) -> dict[str, Any]:
     record["investigations"] = _list_investigations(issue_dir)
     suggestions_dir = issue_dir / "suggestions"
     record["suggestions"] = [read_json(f) for f in sorted(suggestions_dir.glob("*.json"))] if suggestions_dir.is_dir() else []
+    record["verification_proposals"] = [read_json(p) for p in sorted((issue_dir / "verification").glob("*.json"))]
     record["edits"] = _list_issue_edits(issue_dir)
     return record
 
@@ -249,3 +250,30 @@ def _issue_duplicate_clusters(dest: Path) -> list[dict[str, Any]]:
             ],
         })
     return clusters
+
+
+def publish_issue_batch(dest: Path, entries: list[tuple[dict, dict]]) -> None:
+    """Stage complete issue directories and roll back new directories if publishing fails."""
+    import shutil
+    import tempfile
+    from .storage import write_json
+    published = []
+    with tempfile.TemporaryDirectory(prefix=".issue-batch-", dir=dest) as temporary:
+        staging = Path(temporary)
+        for record, status in entries:
+            directory = staging / record["id"]
+            (directory / "status").mkdir(parents=True)
+            (directory / "investigations").mkdir()
+            write_json(directory / "issue.json", record)
+            write_event_json(directory / "status", status)
+        try:
+            for record, _ in entries:
+                target = dest / "issues" / record["id"]
+                if target.exists():
+                    raise KatzError("Issue ID already exists", "validation_error", {"id": record["id"]})
+                (staging / record["id"]).rename(target)
+                published.append(target)
+        except BaseException:
+            for target in reversed(published):
+                shutil.rmtree(target)
+            raise

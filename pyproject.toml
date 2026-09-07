@@ -18,7 +18,7 @@ classifiers = [
 ]
 dependencies = [
   "click>=8.1",
-  "edsl @ git+https://github.com/expectedparrot/edsl.git",
+  "edsl @ git+https://github.com/expectedparrot/edsl.git@7a3a3399f2b107b9272ab6ade72f3549ed02e2e9",
   "rich>=13.9",
   "typer>=0.23",
   "pyyaml>=6.0"
@@ -39,6 +39,23 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/katz"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src/katz",
+  "/tests",
+  "/benchmarks/review-quality",
+  "/scripts/check-docs.py",
+  "/docs/index.html",
+  "/docs/investigated-review.html",
+  "/docs/review.html",
+  "/docs/investigated-report-example.png",
+  "/docs/human-triage-survey.png",
+  "/README.md",
+  "/LICENSE",
+  "/AGENTS.md",
+  "/pyproject.toml",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

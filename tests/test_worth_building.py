@@ -514,7 +514,7 @@ def test_workspace_new_from_source_packages_review(tmp_path: Path) -> None:
     result = katz(
         tmp_path, "workspace", "new", str(workspace),
         "--from", str(source),
-        "--model", "gpt-4.1-mini",
+        "--model", "test",
     )
     assert result["registration"]["registered"] is True
     assert result["jobs_ready"] is True
@@ -528,7 +528,7 @@ def test_workspace_new_from_source_packages_review(tmp_path: Path) -> None:
     assert steps["spotter_enable"]["status"] == "ok"
     assert steps["spotter_jobs"]["status"] == "ok"
     assert steps["spotter_jobs"]["data"]["scenario_count"] > 0
-    assert steps["spotter_models"]["data"]["models"] == ["gpt-4.1-mini"]
+    assert steps["spotter_models"]["data"]["models"] == ["test"]
     assert (workspace / "jobs.ep").is_file()
     assert (workspace / "models.ep").is_file()
 

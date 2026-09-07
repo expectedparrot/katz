@@ -170,19 +170,15 @@ embedded `review-paper` instructions below.
 - After investigations identify confirmed issues, ask the user whether they want you to
   create suggested fixes for those issues before generating the final report.
 
-## TeX source and ventilated prose
+## Canonical manuscript preparation
 
-- If `katz paper status` shows `source_format: "tex"`, the manuscript is a `.tex` file.
-  Do NOT suggest running pandoc or converting it to markdown — katz registers TeX directly.
-- If the paper is not yet registered and the source is `.tex`, use `katz guide skill register-paper`
-  and register the `.tex` file directly with `--source-format tex`.
-- **Ventilated prose**: katz segments manuscripts at the sentence level. For accurate tracking,
-  each sentence should be on its own line (one sentence per line, no hard-wrapping within sentences).
-  If the manuscript is not ventilated — sentences run together on the same line — tell the user
-  and offer to help ventilate the `.tex` source before registering. In TeX, this is a simple
-  formatting change: split multi-sentence paragraphs so each sentence ends with a newline.
-- After registration, if katz emits a `"warning"` about non-ventilated lines, surface it to the
-  user and offer to ventilate the source.
+- Use `katz guide` and `katz next` as the workflow source of truth.
+- Prepare PDF and LaTeX sources with `katz paper prepare` before registration.
+- Inspect expanded tables, figures, equations, and source dependencies in the
+  resulting Markdown. Ventilate the Markdown derivative before committing it.
+- Register committed canonical Markdown; keep original source provenance.
+- After ingestion, investigate draft findings, run `katz validate`, and finalize
+  the authored report. `katz report generate` produces an initial issue explorer.
 """
     return prompt
 
