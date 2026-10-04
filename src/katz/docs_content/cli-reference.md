@@ -357,6 +357,15 @@ The `review-*` commands implement a lightweight whole-report quality gate.
 `review-plan` previews automatic analysis-type detection, selected spotters,
 and discovered local Markdown images. `review-jobs` packages the complete
 report and images without embedding models or running inference.
+`review-ingest` exposes `review_status` (`complete`, `partial`, or `failed`),
+`usable_review_count`, `requested_review_count`, and `suggested_user_disclosure`
+both in command output and the saved review. A successful ingestion exit code
+does not mean the optional review succeeded. Pass the originating `--jobs` so
+missing panel members can be counted; without provenance the requested count
+is unknown. Empty and malformed answers receive bounded diagnostics without
+echoing private answer text. Preserve these coverage statements in the final
+handoff. No inference or automatic retry occurs during ingestion.
+
 `review-ingest` validates and deduplicates multi-model JSON reviews into a
 bounded actionable issue artifact. Use the full ledger workflow for academic
 manuscript refereeing; ordinary research reports do not need chunking.
