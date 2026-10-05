@@ -523,7 +523,12 @@ def report_review_ingest(
     jobs: Optional[Path] = None,
     models: Optional[Path] = None,
 ) -> None:
-    """Normalize multi-model one-shot review Results into bounded issues."""
+    """Normalize reviews and expose complete, partial, or failed coverage.
+
+    Successful ingestion does not imply successful review: read review_status
+    and suggested_user_disclosure. Missing panel provenance leaves coverage unknown.
+    """
+    from ..report_review import answer_diagnostic, coverage_summary
     try:
         if output.exists(): raise KatzError(f"{output} already exists","validation_error",{"output":str(output)})
         try: from edsl import Results
@@ -544,7 +549,8 @@ def report_review_ingest(
             model=_result_field(result,"model","model") or _result_field(result,"model","_model_") or f"reviewer_{index+1}"
             reviewer=str(model)
             if not isinstance(parsed,dict) or not isinstance(parsed.get("issues"),list):
-                parse_failures.append({"index":index,"reviewer":reviewer,"reason":"unparseable_review"}); continue
+                metadata = _result_field(result, "raw_model_response", "report_review_response_metadata")
+                parse_failures.append({"index":index,"reviewer":reviewer,"reason":"unparseable_review", **answer_diagnostic(raw, metadata if isinstance(metadata, dict) else None)}); continue
             if (parsed.get("verdict") not in {"pass", "fix"}
                     or not isinstance(parsed.get("summary"), str) or not parsed["summary"].strip()
                     or (parsed.get("verdict") == "pass" and parsed["issues"])):
@@ -559,11 +565,13 @@ def report_review_ingest(
                 key=hashlib.sha256(json.dumps({"location":normalized["location"].lower(),"problem":normalized["problem"].lower()},sort_keys=True).encode()).hexdigest()[:16]
                 if key not in merged: merged[key]={"issue_id":f"review_{key}",**normalized,"reviewers":[]}
                 if reviewer not in merged[key]["reviewers"]: merged[key]["reviewers"].append(reviewer)
-            reviews.append({"reviewer":reviewer,"verdict":str(parsed.get("verdict","")),"summary":str(parsed.get("summary","")),"issue_count":len(valid)})
+            reviews.append({"index":index,"reviewer":reviewer,"verdict":str(parsed.get("verdict","")),"summary":str(parsed.get("summary","")),"issue_count":len(valid)})
         issues=sorted(merged.values(),key=lambda item:(0 if item["severity"].lower()=="error" else 1,-len(item["reviewers"]),item["location"]))
         payload={"schema_version":"1.0","kind":"one-shot-report-review","report":{"path":str(report.resolve()),"sha256":sha256_file(report)},"results":{"path":str(results.resolve()),"sha256":sha256_file(results)},"complete":bool(reviews) and not parse_failures and audit["complete"],"audit":audit,"review_count":len(reviews),"parse_failures":parse_failures,"issue_count":len(issues),"returned_issue_count":min(len(issues),limit),"truncated":len(issues)>limit,"issues":issues[:limit],"reviews":reviews,"generated_at":now_utc()}
+        coverage = coverage_summary(reviews, parse_failures, audit, len(loaded))
+        payload.update(coverage)
         output.parent.mkdir(parents=True,exist_ok=True); write_json(output, payload)
-        emit_json({"review":payload,"output":str(output.resolve()),"next_action":"Fix supported issues in report.md, rerun deterministic report checks, and regenerate HTML before presentation."})
+        emit_json({"review":payload,"output":str(output.resolve()), **coverage})
     except KatzError as exc: fail(exc.message,exc.code,exc.details)
     except Exception as exc: fail(str(exc),"review_ingestion_error",{"results":str(results),"report":str(report)})
 
